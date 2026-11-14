@@ -5,9 +5,12 @@ using DataFrames
 using Serialization
 
 # Kinds whose values gate the comparison; `parameter` and `input` differences are reported only.
-const _GATING_KINDS = ("variable", "dual", "aux", "expression", "stats")
+const _GATING_KINDS = ("variable", "dual", "aux", "expression", "stats", "derived")
 const _STATS_RTOL = 1.0e-9
 const _STATS_GATING_COLUMNS = ("objective_value",)
+# The duals that gate in invariants mode: the regional power-balance rows `read_prices` reads.
+const _ENERGY_PRICE_DUAL_KEY = "dual/CopperPlateBalanceConstraint__Area"
+const _FCAS_DUAL_PREFIX = "dual/NEMConstraintLimit__GenericConstraint__"
 const _GC_SLACK_PREFIXES = ("variable/GenericConstraintSlackUp", "variable/GenericConstraintSlackDown")
 
 _kind(key::AbstractString) = first(split(key, "/"; limit = 2))
@@ -80,12 +83,59 @@ function _mask_gc_slacks(snapshot::AbstractDict)
     return masked
 end
 
+# The FCAS requirement map (constraint, region, service) of a snapshot pair; the candidate's wins.
+function _fcas_requirements(baseline::AbstractDict, candidate::AbstractDict)
+    for snap in (candidate, baseline)
+        haskey(snap, "input/fcas_requirements") && return snap["input/fcas_requirements"]
+    end
+    throw(ArgumentError("invariants mode needs input/fcas_requirements in at least one snapshot."))
+end
+
+# The sum of the FCAS requirement duals per (interval, region, direction), the quantity that is unique at
+# degenerate points: the duals of twin requirement rows (for example R6 and R60) are not, but their sum is.
+# Each (constraint, region, service) requirement adds its constraint's dual, as `read_fcas_prices` does,
+# and the direction is `RAISE` or `LOWER` from the service name. Keys are `derived/fcas_sum__<direction>`.
+function _fcas_dual_sums(snapshot::AbstractDict, requirements::DataFrame)
+    sums = Dict{String, Dict{Tuple{DateTime, String}, Float64}}()
+    for r in eachrow(requirements)
+        key = _FCAS_DUAL_PREFIX * r.constraint
+        haskey(snapshot, key) || continue
+        direction = startswith(r.service, "RAISE") ? "RAISE" : startswith(r.service, "LOWER") ? "LOWER" : r.service
+        acc = get!(sums, "derived/fcas_sum__$direction", Dict{Tuple{DateTime, String}, Float64}())
+        for row in eachrow(snapshot[key])
+            id = (row.DateTime, r.region)
+            acc[id] = get(acc, id, 0.0) + row.value
+        end
+    end
+    out = Dict{String, DataFrame}()
+    for (key, acc) in sums
+        ids = sort!(collect(keys(acc)))
+        out[key] = DataFrame(DateTime = first.(ids), name = last.(ids), value = [acc[i] for i in ids])
+    end
+    return out
+end
+
+# The snapshot reduced to the gating set of invariants mode: everything but the duals, the energy price
+# duals, and the derived FCAS dual sums. The remaining duals are returned separately as the reported set.
+function _invariant_view(snapshot::AbstractDict, requirements::DataFrame)
+    gating = Dict{String, DataFrame}(k => v for (k, v) in snapshot if _kind(k) != "dual" || k == _ENERGY_PRICE_DUAL_KEY)
+    merge!(gating, _fcas_dual_sums(snapshot, requirements))
+    reported = Dict{String, DataFrame}(k => v for (k, v) in snapshot if _kind(k) == "dual" && k != _ENERGY_PRICE_DUAL_KEY)
+    return gating, reported
+end
+
 _allowed(key::AbstractString, patterns) = any(p -> occursin(p, key), patterns)
 
 # Every gating key that is measured or missing on one side, with its largest gap and whether it fails.
 function _gate_rows(
         baseline::AbstractDict, candidate::AbstractDict; atol::Real, allow_new, allow_missing, mask_gc_slacks::Bool,
+        invariants::Bool = false,
     )
+    if invariants
+        requirements = _fcas_requirements(baseline, candidate)
+        baseline, _ = _invariant_view(baseline, requirements)
+        candidate, _ = _invariant_view(candidate, requirements)
+    end
     if mask_gc_slacks
         baseline = _mask_gc_slacks(baseline)
         candidate = _mask_gc_slacks(candidate)
@@ -120,6 +170,10 @@ A key present on one side only is a mismatch unless a regex in `allow_new` or `a
 - `allow_new`, `allow_missing`: regexes of keys the candidate may add or lack.
 - `mask_gc_slacks`: whether generic-constraint slacks are multiplied by the invoked series on both sides
   before comparing.
+- `invariants`: gate only the quantities unique at degenerate points: variables, auxiliary variables,
+  expressions, the objective, the energy price duals (`CopperPlateBalanceConstraint`) and the sum of the
+  FCAS requirement duals per (interval, region, direction), `RAISE` or `LOWER`. Other duals do not gate
+  (see [`reported_dual_differences`](@ref)). Needs `input/fcas_requirements` in a snapshot.
 
 # Returns
 A `Vector` of `(; key, kind, max_abs)` named tuples, empty when the snapshots agree.
@@ -127,10 +181,32 @@ A `Vector` of `(; key, kind, max_abs)` named tuples, empty when the snapshots ag
 function compare_snapshots(
         baseline::AbstractDict, candidate::AbstractDict; atol::Real = 1.0e-9,
         allow_new::AbstractVector{Regex} = Regex[], allow_missing::AbstractVector{Regex} = Regex[],
-        mask_gc_slacks::Bool = false,
+        mask_gc_slacks::Bool = false, invariants::Bool = false,
     )
-    rows = _gate_rows(baseline, candidate; atol, allow_new, allow_missing, mask_gc_slacks)
+    rows = _gate_rows(baseline, candidate; atol, allow_new, allow_missing, mask_gc_slacks, invariants)
     return [(; key = r.key, kind = r.kind, max_abs = r.max_abs) for r in rows if r.mismatch]
+end
+
+"""
+    reported_dual_differences(baseline, candidate; atol = 1.0e-9) -> Vector{NamedTuple}
+
+The duals that do not gate in invariants mode (every dual but the energy price duals) that differ
+beyond `atol` or are on one side only, as `(; key, kind, max_abs)` rows sorted by decreasing gap.
+"""
+function reported_dual_differences(baseline::AbstractDict, candidate::AbstractDict; atol::Real = 1.0e-9)
+    requirements = _fcas_requirements(baseline, candidate)
+    _, rb = _invariant_view(baseline, requirements)
+    _, rc = _invariant_view(candidate, requirements)
+    rows = NamedTuple{(:key, :kind, :max_abs), Tuple{String, String, Float64}}[]
+    for key in union(keys(rb), keys(rc))
+        if haskey(rb, key) && haskey(rc, key)
+            cmp = _compare_tables("dual", rb[key], rc[key], atol)
+            cmp.mismatch && push!(rows, (; key, kind = "dual", cmp.max_abs))
+        else
+            push!(rows, (; key, kind = "dual", max_abs = Inf))
+        end
+    end
+    return sort!(rows; by = r -> r.max_abs, rev = true)
 end
 
 """
@@ -157,6 +233,7 @@ function _parse_compare_args(args::Vector{String})
     allow_new = Regex[]
     allow_missing = Regex[]
     mask = false
+    invariants = false
     i = 1
     while i <= length(args)
         arg = args[i]
@@ -168,6 +245,8 @@ function _parse_compare_args(args::Vector{String})
             push!(allow_missing, Regex(args[i + 1])); i += 2
         elseif arg == "--mask-gc-slacks"
             mask = true; i += 1
+        elseif arg == "--invariants"
+            invariants = true; i += 1
         elseif startswith(arg, "--")
             error("unknown option $arg")
         else
@@ -175,9 +254,9 @@ function _parse_compare_args(args::Vector{String})
         end
     end
     length(positional) == 2 || error(
-        "usage: compare.jl BASELINE_DIR CANDIDATE_DIR [--atol X] [--allow-new REGEX]... [--allow-missing REGEX]... [--mask-gc-slacks]",
+        "usage: compare.jl BASELINE_DIR CANDIDATE_DIR [--atol X] [--allow-new REGEX]... [--allow-missing REGEX]... [--mask-gc-slacks] [--invariants]",
     )
-    return (; baseline = positional[1], candidate = positional[2], atol, allow_new, allow_missing, mask)
+    return (; baseline = positional[1], candidate = positional[2], atol, allow_new, allow_missing, mask, invariants)
 end
 
 # Prints the gate verdict for two capture folders; returns the process exit code.
@@ -187,7 +266,7 @@ function _compare_main(args::Vector{String})
     candidate = deserialize(joinpath(opts.candidate, "snapshot.jls"))
     rows = _gate_rows(
         baseline, candidate; atol = opts.atol, allow_new = opts.allow_new,
-        allow_missing = opts.allow_missing, mask_gc_slacks = opts.mask,
+        allow_missing = opts.allow_missing, mask_gc_slacks = opts.mask, invariants = opts.invariants,
     )
     failures = sort([r for r in rows if r.mismatch]; by = r -> r.max_abs, rev = true)
     worst = maximum((r.max_abs for r in rows if !r.mismatch); init = 0.0)
@@ -198,6 +277,19 @@ function _compare_main(args::Vector{String})
         println("GATE FAIL $(length(failures)) mismatched key(s); worst 10:")
         for r in first(failures, 10)
             println("  $(r.key)  kind=$(r.kind)  max|Δ|=$(r.max_abs)")
+        end
+    end
+    if opts.invariants
+        reported = reported_dual_differences(baseline, candidate; atol = opts.atol)
+        kinds = Dict{String, Int}()
+        for r in reported
+            k = replace(r.key, _FCAS_DUAL_PREFIX => "NEMConstraintLimit/", r"^dual/" => "")
+            k = first(split(k, "__"; limit = 2))
+            kinds[k] = get(kinds, k, 0) + 1
+        end
+        println("non-gating dual differences: $(length(reported)) key(s) by kind $(sort!(collect(kinds)))")
+        for r in first(reported, 10)
+            println("  $(r.key)  max|Δ|=$(r.max_abs)")
         end
     end
     println("parameter max|Δ|=$(param.max_abs) at $(isempty(param.key) ? "(none)" : param.key)")

@@ -8,8 +8,9 @@
 Reads every realized result table of `results`, the optimizer statistics and the invoked input of
 each `GenericConstraint` of `sys` over the intervals of `results`. The keys are `"variable/<key>"`,
 `"dual/<key>"`, `"aux/<key>"`, `"expression/<key>"` and `"parameter/<key>"`, with `<key>` the encoded
-PSI key string, `"stats/optimizer"`, and `"input/constraint_invoked"`, which has one row per interval
-and one column per constraint name.
+PSI key string, `"stats/optimizer"`, `"input/constraint_invoked"`, which has one row per interval
+and one column per constraint name, and `"input/fcas_requirements"`, one row per (constraint, region,
+service) FCAS requirement.
 
 # Arguments
 - `results`: the decision-problem results of a replay.
@@ -37,7 +38,25 @@ function replay_snapshot(results, sys::PSY.System)
     nrow(stats) == length(stamps) || error("$(nrow(stats)) optimizer stat rows for $(length(stamps)) intervals.")
     snapshot["stats/optimizer"] = insertcols(stats, 1, :DateTime => stamps)
     snapshot["input/constraint_invoked"] = _invoked_input(sys, stamps)
+    snapshot["input/fcas_requirements"] = _fcas_requirements_input(sys)
     return snapshot
+end
+
+# One row per FCAS requirement of a `GenericConstraint` of `sys`: the constraint name, region and service.
+function _fcas_requirements_input(sys::PSY.System)
+    input = DataFrame(constraint = String[], region = String[], service = String[])
+    for gc in PSY.get_components(AustralianElectricityMarkets.GenericConstraint, sys)
+        for req in AustralianElectricityMarkets.get_fcas_requirements(gc)
+            push!(
+                input,
+                (
+                    PSY.get_name(gc), AustralianElectricityMarkets.get_region(req),
+                    string(AustralianElectricityMarkets.get_service(req)),
+                ),
+            )
+        end
+    end
+    return input
 end
 
 # The invoked series of every `GenericConstraint` of `sys` at `stamps`, one column per constraint name.
