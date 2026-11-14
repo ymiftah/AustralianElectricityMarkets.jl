@@ -1,7 +1,7 @@
-# Slack and relaxation variables whose results read back in MW rather than system-base per-unit.
+# Slack variables whose results read back in MW rather than system-base per-unit.
 const _NATURAL_UNIT_SLACKS = Union{
     NEMUnitSlack, MNSPSlack,
-    GenericConstraintSlackUp, GenericConstraintSlackDown, GenericConstraintRelaxation,
+    GenericConstraintSlackUp, GenericConstraintSlackDown,
     InterconnectorFlowSlack,
     FCASSlack,
 }

@@ -101,8 +101,8 @@ export FixedLoadTimeSeriesParameter, FixedLoadInvokedTimeSeriesParameter
 export NEMUnitSlack, NEMUnitConstraint
 export NEMConstraintLHS, NEMConstraintLimit,
     NEMConstraintRHSParameter, LinearFactorLimit, FCASMarket
-export GenericConstraintSlackUp, GenericConstraintSlackDown, GenericConstraintRelaxation,
-    GenericConstraintInvocationMaskParameter
+export GenericConstraintSlackUp, GenericConstraintSlackDown,
+    GenericConstraintInvocationParameter
 export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,
     FCASJointCapacityLHS, FCASJointCapacityConstraint, FCASUnitConstraint, FCASSlack,
     FCASOfferBandVariable, FCASOfferLimitParameter, FCASBandWidthParameter, FCASUpperSlopeParameter,

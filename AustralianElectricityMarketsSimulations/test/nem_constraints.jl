@@ -324,12 +324,10 @@ end
         @test isapprox(dual_t1, 0.0; atol = 1.0e-6)
         @test lhs_t1 > tightened_rhs + 1.0e-3
         if use_slacks
-            # The row exists and is violated; its free slack makes it vacuous with a dual of zero.
+            # The row is free at t1 (not invoked): the priced slack stays zero and the dual is zero.
             @test abs(dual_t1) <= 1.0e-9
             slack_t1 = only(subset(PSI.read_variable(res, "GenericConstraintSlackUp__GenericConstraint__$ic1_name"), :DateTime => ByRow(==(t1)))).value
-            relax = PSI.read_variable(res, "GenericConstraintRelaxation__GenericConstraint__$ic1_name")
             @test slack_t1 == 0.0
-            @test sum(abs, relax.value) >= lhs_t1 - tightened_rhs - 1.0e-3
         end
 
         # Invoked at t2: binds exactly like Step 1's single-interval case.
@@ -339,89 +337,71 @@ end
     end
 end
 
-@testset "a recurrent build needs slacks and keeps no slack cost parameter" begin
-    sys = _prepared_system(Dict("N_IC1_LIMIT" => 100.0))
-    _prune_unbuildable_constraints!(sys)
-    gc = _gc(sys, "N_IC1_LIMIT")
-    bare = _decision_model(_nem_service_template(sys; use_slacks = false), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
-    @test PSI.build!(bare; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    bare_container = PSI.get_optimization_container(bare)
-    bare_container.built_for_recurrent_solves = true
-    err = _caught() do
-        PSI.add_constraints!(
-            bare_container, NEMConstraintLimit, gc,
-            PSI.ServiceModel(GenericConstraint, LinearFactorLimit; use_slacks = false),
-        )
-    end
-    @test err isa ArgumentError
-    @test occursin("use_slacks = true", err.msg)
-end
+# The bounds of the row `name` at interval `t` as the optimizer holds them.
+_row_bounds(container, name, t) = PSI.JuMP.MOI.get(
+    PSI.get_jump_model(container), PSI.JuMP.MOI.ConstraintSet(),
+    PSI.get_constraint(container, NEMConstraintLimit(), GenericConstraint, name)[name, t],
+)
 
-@testset "a non-invoked generic constraint is relaxed by an unpriced mask-driven relaxation, an invoked one pays CVP x MPC" begin
+@testset "a non-invoked generic constraint row is free, an invoked one pays CVP x MPC, and a step update toggles the row" begin
     n_raw = let p = _native_forecast_params(augmented_pscb_system())
         p.count + Int(p.horizon / p.interval) - 1
     end
-    invoked_vec = vcat([1.0], fill(0.0, n_raw - 1))  # invoked at interval 1 only
+    invoked_vec = vcat([0.0], fill(1.0, n_raw - 1))  # not invoked at interval 1 only
     probe = _prepared_system(Dict("N_IC1_LIMIT" => 100.0), Dict("N_IC1_LIMIT" => invoked_vec))
     unmeetable = get_sense(_gc(probe, "N_IC1_LIMIT")) == ConstraintSense.GE ? 1.0e6 : -1.0e6
-    sys = _prepared_system(Dict("N_IC1_LIMIT" => unmeetable), Dict("N_IC1_LIMIT" => invoked_vec))
-    _prune_unbuildable_constraints!(sys)
-    model = _decision_model(_nem_service_template(sys; use_slacks = true, mpc = 20_300.0), sys; mpc = 20_300.0, optimizer = HiGHS.Optimizer, horizon = Hour(2))
-    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    container = PSI.get_optimization_container(model)
-    gc = _gc(sys, "N_IC1_LIMIT")
-    name = PSY.get_name(gc)
-    @test AustralianElectricityMarkets.constraint_cvp_factor(gc) == 1.0
-    @test PSI.get_base_power(container) == 100.0
-    @test PSI.get_resolution(container) == Hour(1)
+    for use_slacks in (true, false)
+        sys = _prepared_system(Dict("N_IC1_LIMIT" => unmeetable), Dict("N_IC1_LIMIT" => invoked_vec))
+        _prune_unbuildable_constraints!(sys)
+        model = _decision_model(_nem_service_template(sys; use_slacks = use_slacks, mpc = 20_300.0), sys; mpc = 20_300.0, optimizer = HiGHS.Optimizer, horizon = Hour(2))
+        @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+        container = PSI.get_optimization_container(model)
+        gc = _gc(sys, "N_IC1_LIMIT")
+        name = PSY.get_name(gc)
+        @test AustralianElectricityMarkets.constraint_cvp_factor(gc) == 1.0
+        @test PSI.get_base_power(container) == 100.0
+        @test PSI.get_resolution(container) == Hour(1)
 
-    # The old invoked-times-price parameter is gone; the mask is a constraint coefficient.
-    @test !any(k -> occursin("GenericConstraintSlackCostParameter", string(ISOPT.get_entry_type(k))), keys(PSI.get_parameters(model)))
-    key = PSI.ParameterKey(AEMS.GenericConstraintInvocationMaskParameter, GenericConstraint, name)
-    mask = () -> PSI.get_parameter_column_refs(PSI.get_parameter(container, key), name)
-    @test mask()[1:2] == [0.0, 1.0]
+        # No cost parameter and no relaxation variable remain: the invocation parameter is a row-bound parameter.
+        @test !any(k -> occursin("SlackCostParameter", string(ISOPT.get_entry_type(k))), keys(PSI.get_parameters(model)))
+        key = PSI.ParameterKey(AEMS.GenericConstraintInvocationParameter, GenericConstraint, name)
+        invoked = () -> PSI.get_parameter_column_refs(PSI.get_parameter(container, key), name)
+        @test invoked()[1:2] == [0.0, 1.0]
+        free = PSI.JuMP.MOI.Interval(-Inf, Inf)
+        @test _row_bounds(container, name, 1) == free
+        @test _row_bounds(container, name, 2) != free
 
-    slack_var = only(
-        s for s in (AEMS.GenericConstraintSlackUp, AEMS.GenericConstraintSlackDown)
-            if PSI.has_container_key(container, s, GenericConstraint, name)
-    )
-    slack = PSI.get_variable(container, slack_var(), GenericConstraint, name)
-    relaxation = PSI.get_variable(container, AEMS.GenericConstraintRelaxation(), GenericConstraint, name)
-    con = PSI.get_constraint(container, NEMConstraintLimit(), GenericConstraint, name)
+        if use_slacks
+            # Constant slack price in the invariant objective: weight x base x interval coefficient x MPC.
+            expected = 1.0 * 100.0 * interval_cost_coefficient(1.0, Hour(1)) * 20_300.0
+            invariant = PSI.get_invariant_terms(PSI.get_objective_expression(container))
+            slack_var = only(
+                s for s in (AEMS.GenericConstraintSlackUp, AEMS.GenericConstraintSlackDown)
+                    if PSI.has_container_key(container, s, GenericConstraint, name)
+            )
+            slack = PSI.get_variable(container, slack_var(), GenericConstraint, name)
+            for t in 1:2
+                @test PSI.JuMP.coefficient(invariant, slack[name, t]) ≈ expected
+            end
 
-    # Constant slack price in the invariant objective: weight x base x interval coefficient x MPC; none on the relaxation.
-    expected = 1.0 * 100.0 * interval_cost_coefficient(1.0, Hour(1)) * 20_300.0
-    invariant = PSI.get_invariant_terms(PSI.get_objective_expression(container))
-    for t in 1:2
-        @test PSI.JuMP.coefficient(invariant, slack[name, t]) ≈ expected
-        @test PSI.JuMP.coefficient(invariant, relaxation[name, "up", t]) == 0.0
-        @test PSI.JuMP.coefficient(invariant, relaxation[name, "down", t]) == 0.0
+            PSI.solve!(model)
+            @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+            res = PSI.OptimizationProblemResults(model)
+            slack_df = PSI.read_variable(res, "$(nameof(slack_var))__GenericConstraint__$name")
+            t1, t2 = sort(unique(slack_df.DateTime))[1:2]
+            @test only(subset(slack_df, :DateTime => ByRow(==(t1)))).value == 0.0
+            @test only(subset(slack_df, :DateTime => ByRow(==(t2)))).value > 0.0
+            dual_key = only(k for k in PSI.get_constraint_keys(container) if ISOPT.get_entry_type(k) === AEMS.NEMConstraintLimit && k.meta == name)
+            @test only(subset(PSI.read_dual(res, dual_key), :DateTime => ByRow(==(t1)))).value == 0.0
+        end
+
+        # A simulation step from the second interval re-reads the invoked series and re-applies the bounds.
+        PSI.set_execution_count!(model, 1)
+        _update_step_parameters!(model)
+        PSI.set_execution_count!(model, 0)
+        @test invoked()[1:2] == [1.0, 1.0]
+        @test _row_bounds(container, name, 1) != free
     end
-
-    # Coefficient of the relaxation in the row is 1 - invoked, with its sign.
-    @test PSI.JuMP.normalized_coefficient(con[name, 1], relaxation[name, "up", 1]) == 0.0
-    @test PSI.JuMP.normalized_coefficient(con[name, 2], relaxation[name, "up", 2]) == 1.0
-    @test PSI.JuMP.normalized_coefficient(con[name, 2], relaxation[name, "down", 2]) == -1.0
-
-    PSI.solve!(model)
-    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-    res = PSI.OptimizationProblemResults(model)
-    slack_df = PSI.read_variable(res, "$(nameof(slack_var))__GenericConstraint__$name")
-    relax_df = PSI.read_variable(res, "GenericConstraintRelaxation__GenericConstraint__$name")
-    t1, t2 = sort(unique(slack_df.DateTime))[1:2]
-    @test only(subset(slack_df, :DateTime => ByRow(==(t1)))).value > 0.0
-    @test only(subset(slack_df, :DateTime => ByRow(==(t2)))).value == 0.0
-    @test sum(subset(relax_df, :DateTime => ByRow(==(t2))).value) > 0.0
-    dual_key = only(k for k in PSI.get_constraint_keys(container) if ISOPT.get_entry_type(k) === AEMS.NEMConstraintLimit && k.meta == name)
-    dual_df = PSI.read_dual(res, dual_key)
-    @test only(subset(dual_df, :DateTime => ByRow(==(t2)))).value == 0.0
-
-    # A simulation step from the second interval re-reads the mask and rewrites the row coefficients.
-    PSI.set_execution_count!(model, 1)
-    _update_step_parameters!(model)
-    PSI.set_execution_count!(model, 0)
-    @test mask()[1:2] == [1.0, 1.0]
-    @test PSI.JuMP.normalized_coefficient(con[name, 1], relaxation[name, "up", 1]) == 1.0
 end
 
 @testset "Constraint diagnosis lists each unbuildable constraint with its reason, and tolerates a template that leaves FCAS out" begin

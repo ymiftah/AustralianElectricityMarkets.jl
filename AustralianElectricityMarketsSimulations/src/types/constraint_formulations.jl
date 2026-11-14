@@ -218,26 +218,13 @@ struct GenericConstraintSlackDown <: PSI.VariableType end
 
 
 """
-    GenericConstraintInvocationMaskParameter
+    GenericConstraintInvocationParameter
 
-Constraint-coefficient parameter holding the relaxation mask `1 - invoked` of a
-[`GenericConstraint`](@ref) per interval, read at each simulation step from the constraint's `invoked`
-series. It is the coefficient of [`GenericConstraintRelaxation`](@ref) in the constraint row: `0.0`
-while the constraint is invoked and `1.0` while it is not, so a non-invoked interval's row is
-satisfiable at no cost.
+Constraint-bound parameter holding the invocation (`1.0`/`0.0`) of a [`GenericConstraint`](@ref) per
+interval, read at each simulation step from the constraint's `invoked` series. The row of an
+invoked interval has its bounds and the row of a non-invoked interval is free (`-Inf`, `Inf`).
 """
-struct GenericConstraintInvocationMaskParameter <: PSI.ConstraintCoefficientParameter end
-
-
-"""
-    GenericConstraintRelaxation
-
-Variable type for the unpriced relaxation of a [`GenericConstraint`](@ref) row, built when the owning
-`PSI.ServiceModel` has `use_slacks = true`. The container is indexed `[name, side, t]` with `side` in
-`"up"`/`"down"` and enters the row as `+up - down`, scaled by [`GenericConstraintInvocationMaskParameter`](@ref).
-Both sides are non-negative and carry no objective term.
-"""
-struct GenericConstraintRelaxation <: PSI.VariableType end
+struct GenericConstraintInvocationParameter <: PSI.ConstraintBoundParameter end
 
 
 """
