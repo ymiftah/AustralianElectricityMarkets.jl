@@ -102,3 +102,19 @@ end
     @test !PowerSystems.get_available(off)
     @test _cs_reason(sys, "CS_STATIC_OFF") == :never_invoked
 end
+
+@testset "the contributing-device index matches get_contributing_devices for every constraint" begin
+    hive = mktempdir()
+    create_mock_data(hive; complete_inputs = true)
+    write_mock_interconnector_results(hive)
+    db = aem_connect(HiveConfiguration(hive_location = hive))
+    t = DateTime(2025, 1, 1, 0, 5)
+    sys = nem_system(db, NEMDEConfiguration(); date_range = t:Minute(5):(t + Minute(20)))
+    index = AustralianElectricityMarkets._contributing_device_index(sys)
+    constraints = collect(PowerSystems.get_components(GenericConstraint, sys))
+    @test !isempty(constraints)
+    for gc in constraints
+        expected = Set(PowerSystems.get_name.(PowerSystems.get_contributing_devices(sys, gc)))
+        @test Set(PowerSystems.get_name.(get(index, PowerSystems.IS.get_uuid(gc), PowerSystems.Device[]))) == expected
+    end
+end

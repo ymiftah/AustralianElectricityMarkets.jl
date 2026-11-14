@@ -18,3 +18,51 @@ end
     sys = nem_system(db, NEMDEConfiguration(); date_range = t:Minute(5):(t + Minute(20)))
     @test AustralianElectricityMarkets._replay_interval_stamps(sys) == collect(t:Minute(5):(t + Minute(10)))
 end
+
+@testset "a change of availability after the replay inputs are written is refused, naming the component" begin
+    hive = mktempdir()
+    create_mock_data(hive; complete_inputs = true)
+    write_mock_interconnector_results(hive)
+    db = aem_connect(HiveConfiguration(hive_location = hive))
+    t = DateTime(2025, 1, 1, 0, 5)
+    sys = nem_system(db, NEMDEConfiguration(); date_range = t:Minute(5):(t + Minute(20)))
+    @test isnothing(AustralianElectricityMarkets._check_replay_availability(sys))
+    device = first(AustralianElectricityMarkets.nem_dispatch_devices(sys))
+    PowerSystems.set_available!(device, false)
+    err = try
+        AustralianElectricityMarkets._check_replay_availability(sys)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin("made unavailable: $(nameof(typeof(device))) $(PowerSystems.get_name(device))", err.msg)
+    PowerSystems.set_available!(device, true)
+    @test isnothing(AustralianElectricityMarkets._check_replay_availability(sys))
+    # A system without replay inputs carries no recorded availability.
+    regional = nem_system(db, RegionalNetworkConfiguration())
+    @test_throws ArgumentError AustralianElectricityMarkets._check_replay_availability(regional)
+
+    @testset "a build report written before unavailable_constraints throws instead of a KeyError" begin
+        old = deepcopy(sys)
+        delete!(PowerSystems.get_ext(old)["build_report"], "unavailable_constraints")
+        @test_throws ArgumentError get_build_report(old)
+    end
+end
+
+@testset "the replay inputs refuse single time series off the dispatch interval" begin
+    sys = PowerSystems.System(100.0)
+    bus = PowerSystems.ACBus(; number = 1, name = "b", bustype = PowerSystems.ACBusTypes.REF, angle = 0.0, magnitude = 1.0, voltage_limits = nothing, base_voltage = 1.0, available = true)
+    PowerSystems.add_component!(sys, bus)
+    load = PowerSystems.PowerLoad(; name = "l", available = true, bus, active_power = 0.0, reactive_power = 0.0, base_power = 100.0, max_active_power = 1.0, max_reactive_power = 0.0)
+    PowerSystems.add_component!(sys, load)
+    stamps = DateTime(2025, 1, 1):Hour(1):DateTime(2025, 1, 1, 3)
+    PowerSystems.add_time_series!(sys, load, PowerSystems.SingleTimeSeries("max_active_power", PowerSystems.TimeSeries.TimeArray(collect(stamps), ones(4))))
+    err = try
+        AustralianElectricityMarkets._set_replay_inputs!(sys)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError && occursin("dispatch intervals", err.msg) && occursin("1 hour", err.msg)
+end

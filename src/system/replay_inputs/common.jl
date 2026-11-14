@@ -13,7 +13,21 @@ A `Vector{DateTime}` of the replay interval stamps, empty for a series of one po
 """
 function _replay_interval_stamps(sys::PSY.System)
     initial, n = PSY.check_time_series_consistency(sys, PSY.SingleTimeSeries)
-    return collect(initial .+ (0:(n - 2)) .* Minute(5))
+    return collect(initial .+ (0:(n - 2)) .* DISPATCH_INTERVAL)
+end
+
+
+# Refuses single time series that are not at the dispatch interval, which every replay input is derived on.
+function _check_replay_resolution(sys::PSY.System)
+    resolutions = PSY.get_time_series_resolutions(sys; time_series_type = PSY.SingleTimeSeries)
+    others = [r for r in resolutions if r != DISPATCH_INTERVAL]
+    isempty(others) || throw(
+        ArgumentError(
+            "the replay inputs are derived on $(DISPATCH_INTERVAL) dispatch intervals, but the system has single time " *
+                "series at $(join((string(Dates.canonicalize(Dates.CompoundPeriod(r))) for r in others), ", ")); build it with nem_system(db, NEMDEConfiguration(); date_range)",
+        ),
+    )
+    return
 end
 
 

@@ -84,10 +84,14 @@ The [`NEMBuildReport`](@ref) stored on `sys` by [`set_build_report!`](@ref).
 
 # Returns
 The stored report, or an empty `NEMBuildReport` when none was stored (no constraints were built into `sys`).
+Throws `ArgumentError` for a stored report without `unavailable_constraints`, written by an earlier version.
 """
 function get_build_report(sys)
     data = get(get_ext(sys), "build_report", nothing)
     isnothing(data) && return NEMBuildReport()
+    haskey(data, "unavailable_constraints") || throw(
+        ArgumentError("the build report of the system predates `unavailable_constraints`; rebuild it with nem_system"),
+    )
     return NEMBuildReport(;
         skipped_constraints = data["skipped_constraints"],
         missing_constraint_intervals = DateTime[DateTime(String(t)) for t in data["missing_constraint_intervals"]],

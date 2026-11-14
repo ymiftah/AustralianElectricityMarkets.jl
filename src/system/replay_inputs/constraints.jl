@@ -10,11 +10,24 @@ function _invoked_at_any(constraint::GenericConstraint, stamps)
 end
 
 
+# The contributing devices of every service of `sys`, by service UUID, from one pass over the devices.
+function _contributing_device_index(sys::PSY.System)
+    index = Dict{Base.UUID, Vector{PSY.Device}}()
+    for device in PSY.get_components(PSY.Device, sys)
+        PSY.supports_services(device) || continue
+        for service in PSY.get_services(device)
+            push!(get!(Vector{PSY.Device}, index, IS.get_uuid(service)), device)
+        end
+    end
+    return index
+end
+
+
 # Why `constraint` cannot bind over `stamps`, or `nothing` when it can. A constraint with no contributing
-# device is not unavailable for lack of one.
-function _constraint_unavailable_reason(sys::PSY.System, constraint::GenericConstraint, stamps)
+# device is not unavailable for lack of one. `index` is the `_contributing_device_index` of the system.
+function _constraint_unavailable_reason(index, constraint::GenericConstraint, stamps)
     _invoked_at_any(constraint, stamps) || return :never_invoked
-    devices = PSY.get_contributing_devices(sys, constraint)
+    devices = get(index, IS.get_uuid(constraint), PSY.Device[])
     isempty(devices) || any(PSY.get_available, devices) || return :no_available_device
     return nothing
 end
@@ -43,8 +56,9 @@ function _set_constraint_availability!(sys::PSY.System)
     constraints = sort!(collect(PSY.get_components(GenericConstraint, sys)); by = PSY.get_name)
     isempty(constraints) && return
     rows = Dict{String, Any}[]
+    index = _contributing_device_index(sys)
     for constraint in constraints
-        reason = _constraint_unavailable_reason(sys, constraint, stamps)
+        reason = _constraint_unavailable_reason(index, constraint, stamps)
         isnothing(reason) && continue
         PSY.set_available!(constraint, false)
         push!(rows, Dict{String, Any}("constraint" => PSY.get_name(constraint), "reason" => String(reason)))

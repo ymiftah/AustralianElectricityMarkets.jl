@@ -10,12 +10,14 @@ include("replay_inputs/loss_demand.jl")
 include("replay_inputs/constraints.jl")
 include("replay_inputs/prices.jl")
 include("replay_inputs/forecasts.jl")
+include("replay_inputs/availability.jl")
 
 
 """
     _set_replay_inputs!(sys::PSY.System) -> Nothing
 
-Writes the replay input series derived from the built inputs of `sys`, in a fixed order. The first
+Writes the replay input series derived from the built inputs of `sys`, in a fixed order, after checking that its
+single time series are at the five-minute dispatch interval. The first
 writer adds the energy offer curves of each bidding device, one series per offer side, with the band
 prices referred to the reference node by the side's loss factor. The second adds the fixed-loading
 value and invocation series of each MNSP link direction, named by [`NEM_MNSP_FIXED_LOAD_SERIES`](@ref).
@@ -33,16 +35,18 @@ per unit of the system base. It reads the demand that [`set_demand!`](@ref) writ
 sets the constraints that cannot bind over the replay intervals unavailable, through
 [`_set_constraint_availability!`](@ref). The ninth sets the band prices of each energy, FCAS and MNSP bid from its
 offer series, through [`_set_band_prices!`](@ref). The tenth transforms the single time series of the system into five-minute
-forecast windows, through [`_set_replay_forecasts!`](@ref). No series may be added after it.
+forecast windows, through [`_set_replay_forecasts!`](@ref). No series may be added after it. Last, it records the
+unavailable devices and services the inputs were derived for, through [`_set_replay_availability!`](@ref).
 Called by [`nem_system`](@ref) before its input checks.
 
 # Arguments
 - `sys`: the system built by [`nem_system`](@ref).
 
 # Returns
-`nothing`.
+`nothing`. Throws `ArgumentError` when a single time series of `sys` is not at the dispatch interval.
 """
 function _set_replay_inputs!(sys::PSY.System)
+    _check_replay_resolution(sys)
     _set_referred_energy_offers!(sys)
     _set_mnsp_fixed_loads!(sys)
     _set_dispatch_limits!(sys)
@@ -53,5 +57,6 @@ function _set_replay_inputs!(sys::PSY.System)
     _set_constraint_availability!(sys)
     _set_band_prices!(sys)
     _set_replay_forecasts!(sys)
+    _set_replay_availability!(sys)
     return
 end
