@@ -75,6 +75,7 @@ include("checks/template.jl")
 include("templates/template_nemde.jl")
 include("problems/optimizer.jl")
 include("problems/nem_dispatch.jl")
+include("formulations/closed_loop.jl")
 include("results/read_results.jl")
 include("results/solved.jl")
 include("results/violations.jl")
@@ -105,7 +106,7 @@ export read_solved_interval, read_constraint_violations
 export compare_intervals, comparison_summary, read_interconnector_loss_gaps
 export AbstractNEMDispatch, NEMReplayDispatch,
     RampRateTimeSeriesParameter,
-    InitialPowerTimeSeriesParameter
+    InitialPowerTimeSeriesParameter, NEMInitialPower, NEMInitialFlow
 export nem_dispatch_participants, set_nem_dispatch_models!
 export TieBreakScaleParameter, TieBreakMarket, TieBreakSlackUp,
     TieBreakSlackDown, TieBreakConstraint

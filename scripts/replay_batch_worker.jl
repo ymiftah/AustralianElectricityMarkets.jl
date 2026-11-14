@@ -39,7 +39,7 @@ end
 # Builds, executes and compares one chunk of `steps` in `folder`; returns its tables and phase timings.
 function _replay_chunk(
         db, steps::StepRange{DateTime}, k::Integer, folder::AbstractString;
-        optimizer, time_series_in_memory::Bool, cache_size_mib::Integer, on_phase,
+        optimizer, time_series_in_memory::Bool, cache_size_mib::Integer, on_phase, problem = NEMDispatchProblem,
     )
     template = template_nemde()
     horizon = first(steps):DISPATCH_INTERVAL:(last(steps) + 2DISPATCH_INTERVAL)
@@ -56,7 +56,7 @@ function _replay_chunk(
 
     on_phase(:model_build)
     t1 = time()
-    model = PSI.DecisionModel(NEMDispatchProblem, template, sys; optimizer, initial_time = first(steps), name = _DECISION_NAME)
+    model = PSI.DecisionModel(problem, template, sys; optimizer, initial_time = first(steps), name = _DECISION_NAME)
     skipped = replay_skipped_constraints(sys, template)
     models = PSI.SimulationModels(; decision_models = [model])
     sequence = PSI.SimulationSequence(; models, ini_cond_chronology = PSI.InterProblemChronology())
@@ -114,7 +114,7 @@ function _replay_chunk(
 end
 
 """
-    _replay_day(db, steps::StepRange{DateTime}, folder; optimizer, time_series_in_memory, cache_size_mib, on_phase = _no_phase) -> NamedTuple
+    _replay_day(db, steps::StepRange{DateTime}, folder; optimizer, time_series_in_memory, cache_size_mib, on_phase = _no_phase, problem = NEMDispatchProblem) -> NamedTuple
     _replay_day(db, day::Date, folder; kwargs...) -> NamedTuple
 
 Replays the intervals `steps`, or the trading day `day`, in consecutive [`replay_chunks`](@ref) written to
@@ -131,6 +131,7 @@ published outcome. `on_phase` receives `:preflight`, `:system_build`, `:model_bu
 - `time_series_in_memory`: whether time series are held in memory rather than written per chunk.
 - `cache_size_mib`: the PSI results write cache in MiB.
 - `on_phase`: optional callback receiving the phase names.
+- `problem`: the NEM dispatch problem type, `NEMDispatchProblem` or `NEMClosedLoopDispatchProblem`.
 
 # Returns
 A `NamedTuple` of `chunks` (`chunk`, `start`, `stop`, `n_steps`, `folder`, `system_build_s`,
@@ -139,13 +140,13 @@ A `NamedTuple` of `chunks` (`chunk`, `start`, `stop`, `n_steps`, `folder`, `syst
 """
 function _replay_day(
         db, steps::StepRange{DateTime}, folder::AbstractString;
-        optimizer, time_series_in_memory::Bool, cache_size_mib::Integer, on_phase = _no_phase,
+        optimizer, time_series_in_memory::Bool, cache_size_mib::Integer, on_phase = _no_phase, problem = NEMDispatchProblem,
     )
     chunks = replay_chunks(steps)
     folders = [joinpath(folder, "chunk_$k") for k in eachindex(chunks)]
     outs = map(eachindex(chunks)) do k
         _replay_chunk(
-            db, chunks[k], k, mkpath(folders[k]); optimizer, time_series_in_memory, cache_size_mib, on_phase,
+            db, chunks[k], k, mkpath(folders[k]); optimizer, time_series_in_memory, cache_size_mib, on_phase, problem,
         )
     end
     stacked(field) = reduce(vcat, [getproperty(out, field) for out in outs])
@@ -387,9 +388,10 @@ function main(folder, day::Date)
     end
     package_hashes = ReplayBatchSupport.snapshot_package_sources(package_root, joinpath(day_folder, "package_source"))
     time_series_in_memory = parse(Bool, config["time-series-in-memory"])
+    closed_loop = parse(Bool, get(config, "closed-loop", "false"))
     provenance = Dict(
         "revision" => actual_revision, "supervisor_revision" => config["git_revision"],
-        "time_series_in_memory" => time_series_in_memory,
+        "time_series_in_memory" => time_series_in_memory, "closed_loop" => closed_loop,
         "checkout_status" => checkout_status, "package_source_hashes" => package_hashes, "optimization_level" => Int(Base.JLOptions().opt_level),
         "julia" => string(VERSION), "psi" => string(Base.pkgversion(PSI)),
         "highs_package" => string(Base.pkgversion(HiGHS)),
@@ -438,6 +440,7 @@ function main(folder, day::Date)
             result = _replay_day(
                 db, steps, day_folder;
                 optimizer, time_series_in_memory, cache_size_mib = parse(Int, config["cache-size-mib"]), on_phase,
+                problem = closed_loop ? NEMClosedLoopDispatchProblem : NEMDispatchProblem,
             )
             on_phase(:export)
             totals = save_day(day_folder, result)

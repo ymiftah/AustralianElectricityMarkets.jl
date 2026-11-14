@@ -88,7 +88,7 @@ const STOCK_SIM = stock_simulate(sentinel_system())
     end
 end
 
-@testset "the problem type selects the replay mode; closed-loop replay is refused" begin
+@testset "the problem type selects the replay mode" begin
     @test NEMClosedLoopDispatchProblem <: AbstractNEMDispatchProblem <: PSI.DefaultDecisionProblem
     @test NEMDispatchProblem <: AbstractNEMDispatchProblem
     sys = sentinel_system()
@@ -96,9 +96,6 @@ end
         NEMClosedLoopDispatchProblem, replay_template(sys), sys; optimizer = STOCK_OPTIMIZER, initial_time = TOY_START,
     )
     @test PSI.get_ext(PSI.get_settings(closed))["closed_loop"] === true
-    err = _caught(() -> PSI.validate_template(closed))
-    @test err isa ArgumentError && occursin("closed-loop replay is not implemented", err.msg)
-    @test PSI.build!(closed; output_dir = mktempdir()) == PSI.ModelBuildStatus.FAILED
     open_loop = PSI.DecisionModel(
         NEMDispatchProblem, replay_template(sys), sys; optimizer = STOCK_OPTIMIZER, initial_time = TOY_START,
     )
@@ -108,13 +105,10 @@ end
         @test err isa ArgumentError && occursin(string(kw), err.msg)
     end
     @test_throws ArgumentError PSI.DecisionModel(NEMDispatchProblem, replay_template(sys), sys; ext = Dict{String, Any}())
-    # The state accessors refuse a closed-loop container, and read the observed state otherwise.
     container = PSI.get_optimization_container(STOCK_SIM.model)
     @test !AEMS._closed_loop(container)
-    @test_throws ArgumentError AEMS._initial_mw_accessor(container, ThermalStandard, true)
     initial, covered = AEMS._initial_mw_accessor(container, ThermalStandard, false)
     @test TOY_CHEAP in covered && initial(TOY_CHEAP, 1) isa PSI.JuMP.AffExpr
-    @test_throws ArgumentError AEMS._mnsp_initial_flow_accessor(container, true)
 end
 
 @testset "step 2 reads step-2 data" begin
@@ -914,4 +908,81 @@ end
         slack = PSI.get_variable(container, AEMS.MNSPSlack(), PSY.AreaInterchange, meta)
         @test PSI.JuMP.coefficient(objective, slack[PSY.get_name(ic), 1]) ≈ factor * 17500 * 100 / 12
     end
+end
+
+# Alta ($20) ramps 10 MW per interval from an observed 50 MW; the observed start of step 2 jumps to 100 MW.
+# Park City ($80) covers the rest of 60 then 120 MW of load.
+function closed_loop_system(; alta_initial = [50.0, 100.0])
+    units = [
+        TOY_CHEAP => toy_unit(150.0, [(150.0, 20.0)]; initial = alta_initial, ramp_up = 2.0),
+        TOY_EXPENSIVE => toy_unit(150.0, [(150.0, 80.0)]; initial = [0.0, 0.0], ramp_up = 100.0),
+    ]
+    return nem_toy_system(units, [60.0, 120.0]; horizon = TOY_RESOLUTION)
+end
+
+@testset "closed loop: step 1 from the observed state, step 2 from the step-1 solve" begin
+    open_loop = stock_simulate(closed_loop_system())
+    closed = stock_simulate(closed_loop_system(); problem = NEMClosedLoopDispatchProblem)
+    container = PSI.get_optimization_container(closed.model)
+    @test PSI.has_container_key(container, NEMInitialPower, ThermalStandard)
+    @test !PSI.has_container_key(container, AEMS.InitialPowerTimeSeriesParameter, ThermalStandard)
+    @test closed.objectives[1] ≈ open_loop.objectives[1] atol = TOY_TOLERANCE
+    @test stock_mw(closed.solved[1], TOY_CHEAP) ≈ 60.0 atol = TOY_TOLERANCE
+    @test stock_mw(open_loop.solved[1], TOY_CHEAP) ≈ 60.0 atol = TOY_TOLERANCE
+    # Open loop restarts step 2 from the observed 100 MW; closed loop from the solved 60 MW, so Alta tops out at 70 MW.
+    @test stock_mw(open_loop.solved[2], TOY_CHEAP) ≈ 110.0 atol = TOY_TOLERANCE
+    @test stock_mw(closed.solved[2], TOY_CHEAP) ≈ 70.0 atol = TOY_TOLERANCE
+    @test stock_mw(closed.solved[2], TOY_EXPENSIVE) ≈ 50.0 atol = TOY_TOLERANCE
+    @test stock_price(closed.solved[2]) ≈ 80.0 atol = TOY_TOLERANCE
+    ic = only(i for i in PSI.get_initial_condition(container, NEMInitialPower(), ThermalStandard) if PSY.get_name(PSI.get_component(i)) == TOY_CHEAP)
+    @test PSI.JuMP.fix_value(PSI.get_value(ic)) ≈ 0.6
+end
+
+@testset "closed loop: a battery's ramp rates follow its solved starting output" begin
+    open_loop = stock_simulate(battery_sentinel_system())
+    closed = stock_simulate(battery_sentinel_system(); problem = NEMClosedLoopDispatchProblem)
+    @test closed.objectives[1] ≈ open_loop.objectives[1] atol = TOY_TOLERANCE
+    @test stock_mw(closed.solved[1], TOY_BATTERY) ≈ stock_mw(open_loop.solved[1], TOY_BATTERY) atol = TOY_TOLERANCE
+    # Step 2 ramps from the step-1 solve (15 MW) rather than the observed 0 MW.
+    battery_2 = stock_mw(closed.solved[2], TOY_BATTERY)
+    @test battery_2 >= 15.0 - 5.0 - TOY_TOLERANCE
+end
+
+@testset "closed loop: MNSP and FCAS sentinels build and execute, starting as open loop" begin
+    for build in (() -> mnsp_sentinel_system(), () -> fcas_toy_system(; FCAS_CHANGES...))
+        open_loop = stock_simulate(build())
+        closed = stock_simulate(build(); problem = NEMClosedLoopDispatchProblem)
+        @test closed.objectives[1] ≈ open_loop.objectives[1] atol = TOY_TOLERANCE
+        @test length(closed.objectives) == 2
+    end
+    closed = stock_simulate(mnsp_sentinel_system(); problem = NEMClosedLoopDispatchProblem)
+    container = PSI.get_optimization_container(closed.model)
+    @test PSI.has_container_key(container, NEMInitialFlow, PSY.AreaInterchange)
+end
+
+@testset "closed loop: step 2's FCAS ramping limits are AEM's closed-loop inputs at the step-1 solve" begin
+    sys = fcas_toy_system(; FCAS_CHANGES...)
+    closed = stock_simulate(sys; problem = NEMClosedLoopDispatchProblem)
+    container = PSI.get_optimization_container(closed.model)
+    t2 = last(STOCK_STEPS)
+    base = PSY.get_base_power(sys)
+    checked = 0
+    for T in (ThermalStandard, EnergyReservoirStorage), bid_type in (BidType.RAISEREG, BidType.LOWERREG)
+        PSI.has_container_key(container, AEMS.FCASRampingLimitParameter, T, string(bid_type)) || continue
+        key = PSI.ParameterKey(AEMS.FCASRampingLimitParameter, T, string(bid_type))
+        param = PSI.get_parameter(container, key)
+        array = PSI.get_parameter_array(param)
+        attributes = PSI.get_attributes(param)
+        series = PSI.get_time_series_name(attributes)
+        for (name, uuid) in attributes.component_name_to_ts_uuid
+            device = PSY.get_component(T, sys, name)
+            solved = T <: PSY.Storage ? stock_mw(closed.solved[1], name) : stock_mw(closed.solved[1], name)
+            expected = AustralianElectricityMarkets.closed_loop_input(device, series, t2, solved, base)
+            isnothing(expected) && continue
+            actual = [PSI.JuMP.fix_value(array[uuid, field, 1]) for field in ("joint_ramping", "bdu_ramping")]
+            @test actual ≈ collect(expected) atol = 1.0e-9
+            checked += 1
+        end
+    end
+    @test checked > 0
 end

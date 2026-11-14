@@ -23,10 +23,7 @@ function _set_dispatch_limits!(sys::PSY.System)
         up = _bid_series(device, telemetry.ramp_up_limit, :ramp_up_limit)
         down = _bid_series(device, telemetry.ramp_down_limit, :ramp_down_limit)
         interval_hours = Dates.value(Millisecond(up.resolution)) / (1000 * 60 * 60)
-        pinned = is_non_scheduled_load(device)
-        effective_up, effective_down = _effective_ramp_rates(device, up, down, interval_hours)
-        ramp_up_rate = pinned ? zeros(length(up.values)) : replace(effective_up ./ 60 ./ base, NaN => 0.0)
-        ramp_down_rate = pinned ? zeros(length(down.values)) : replace(effective_down ./ 60 ./ base, NaN => 0.0)
+        ramp_up_rate, ramp_down_rate = _ramp_rate_values(device, up, down, base)
         PSY.add_time_series!(sys, device, single_series(NEM_SERIES.ramp_up_rate, first(up.timestamps), ramp_up_rate, up.resolution))
         PSY.add_time_series!(sys, device, single_series(NEM_SERIES.ramp_down_rate, first(down.timestamps), ramp_down_rate, down.resolution))
         _set_agc_ramp_rates!(sys, device, telemetry, up, down, base, interval_hours)
@@ -49,11 +46,22 @@ function _bid_ramp_rates(device, side::OfferSide, field::Symbol, like)
 end
 
 
+# The ramp rates of `device` over the grid of `up` in system-base per-unit per minute, as the replay inputs
+# write them: zero for a non-scheduled load and where no rate applies. `initial` overrides the observed
+# starting output in MW (one value per stamp), which only a storage device's composite rate reads.
+function _ramp_rate_values(device, up, down, base::Real; initial = nothing)
+    is_non_scheduled_load(device) && return zeros(length(up.values)), zeros(length(down.values))
+    interval_hours = Dates.value(Millisecond(up.resolution)) / (1000 * 60 * 60)
+    effective_up, effective_down = _effective_ramp_rates(device, up, down, interval_hours; initial)
+    return replace(effective_up ./ 60 ./ base, NaN => 0.0), replace(effective_down ./ 60 ./ base, NaN => 0.0)
+end
+
+
 # The per-interval ramp limits of `device` in MW/h over the grid of `up`: a device bid on both sides
 # of the energy market takes the composite cross-zero rate of both its bids, and every other device
 # the per-side rate, each capped by the telemetered limit. A stamp the inputs do not cover is NaN,
-# which leaves the telemetered rate.
-function _effective_ramp_rates(device, up, down, interval_hours::Real)
+# which leaves the telemetered rate. `initial` overrides the observed starting output in MW.
+function _effective_ramp_rates(device, up, down, interval_hours::Real; initial = nothing)
     if !(device isa PSY.Storage)
         side = first(energy_offer_sides(device))
         bid_up = _bid_ramp_rates(device, side, :roc_up, up)
@@ -68,7 +76,7 @@ function _effective_ramp_rates(device, up, down, interval_hours::Real)
     gen_down = _bid_ramp_rates(device, OfferSide.GEN, :roc_down, up)
     load_up = _bid_ramp_rates(device, OfferSide.LOAD, :roc_up, up)
     load_down = _bid_ramp_rates(device, OfferSide.LOAD, :roc_down, up)
-    initial = _aligned_values(device, get_observed_state(device).initial_mw, up)
+    initial = something(initial, _aligned_values(device, get_observed_state(device).initial_mw, up))
     down_telemetry = _aligned_values(device, _nem_unit_data(device).telemetry.ramp_down_limit, up)
     # AEMO Dispatch Procedure (SO_OP_3705) Appendix C: the composite rate of a unit bid on both
     # sides, compared with its SCADA ramp rate.

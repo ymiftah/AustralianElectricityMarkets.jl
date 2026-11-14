@@ -19,12 +19,14 @@ struct NEMDispatchProblem <: AbstractNEMDispatchProblem end
 """
     NEMClosedLoopDispatchProblem <: AbstractNEMDispatchProblem
 
-The closed-loop NEM dispatch replay problem, where each interval starts from the previous solved interval.
-It is not implemented yet: building a model of it throws `ArgumentError`.
+The closed-loop NEM dispatch replay problem: the first interval starts from AEMO's observed state, and each later
+interval of a `Simulation` from the previous interval's solved output. The starting output of each unit and the
+starting flow of each MNSP are [`NEMInitialPower`](@ref) and [`NEMInitialFlow`](@ref) initial conditions, and the
+inputs derived from that state (battery ramp rates, fixed loadings, effective FCAS offers and regulation ramping
+limits) are recomputed each step. Fast-start dispatch modes keep their observed values.
 """
 struct NEMClosedLoopDispatchProblem <: AbstractNEMDispatchProblem end
 
-const _CLOSED_LOOP_UNSUPPORTED = "closed-loop replay is not implemented"
 const _FIXED_TIME_SETTINGS = (:horizon, :interval, :resolution)
 
 """
@@ -67,22 +69,7 @@ function PSI.DecisionModel{M}(
 end
 
 """
-    PSI.validate_template(model::PSI.DecisionModel{NEMClosedLoopDispatchProblem})
-
-Refuses a closed-loop replay model, which is not implemented.
-
-# Arguments
-- `model`: the `PSI.DecisionModel{NEMClosedLoopDispatchProblem}` being built.
-
-# Returns
-Never returns; throws `ArgumentError("closed-loop replay is not implemented")`.
-"""
-function PSI.validate_template(::PSI.DecisionModel{NEMClosedLoopDispatchProblem})
-    throw(ArgumentError(_CLOSED_LOOP_UNSUPPORTED))
-end
-
-"""
-    PSI.validate_template(model::PSI.DecisionModel{NEMDispatchProblem})
+    PSI.validate_template(model::PSI.DecisionModel{<:AbstractNEMDispatchProblem})
 
 Checks that the system carries forecasts and that the availability of its devices and services is the one its
 replay inputs were derived for, sets the Market Price Cap and the network model's balance-slack
@@ -98,14 +85,14 @@ system's forecast initial timestamp when the initial time is unset. The resolved
 cost is set on the model's copy of the template, not on the caller's template.
 
 # Arguments
-- `model`: the `PSI.DecisionModel{NEMDispatchProblem}` being built.
+- `model`: the NEM dispatch `PSI.DecisionModel` being built.
 
 # Returns
 `nothing`. Throws `ArgumentError` from the checks, when the system has no forecasts or its availability changed
 after `nem_system`, or when no Market Price Cap is
 published for the date. The pruning changes the model's copy of the template, not the caller's template.
 """
-function PSI.validate_template(model::PSI.DecisionModel{NEMDispatchProblem})
+function PSI.validate_template(model::PSI.DecisionModel{<:AbstractNEMDispatchProblem})
     sys = PSI.get_system(model)
     PSY.get_time_series_counts(sys).forecast_count > 0 || throw(
         ArgumentError(

@@ -229,10 +229,7 @@ function PSI.construct_device!(
         meta = _energy_limit_parameter_meta(EnergyLimitMaxAvailVariant()),
         time_series_name = _availability_series_name(first(devices), EnergyLimitTimeSeriesParameter),
     )
-    PSI.add_parameters!(
-        container, InitialPowerTimeSeriesParameter, devices, model;
-        time_series_name = NEM_STATE_INPUT_SERIES.initial_mw,
-    )
+    _add_initial_power!(container, devices, model)
     any(is_semi_scheduled, devices) && PSI.add_parameters!(
         container, EnergyLimitTimeSeriesParameter, devices, model;
         meta = _energy_limit_parameter_meta(EnergyLimitUIGFVariant()),
@@ -403,7 +400,8 @@ end
     _initial_mw_accessor(container, T, closed_loop) -> (accessor, covered)
 
 The unit initial MW of a replay interval, as `accessor(name, t) -> JuMP.AffExpr` in system-base per-unit:
-the observed initial MW parameter in an open-loop replay. A closed-loop replay is not implemented.
+the observed initial MW parameter in an open-loop replay, the [`NEMInitialPower`](@ref) initial condition in a
+closed-loop replay.
 
 # Arguments
 - `container`: the `PSI.OptimizationContainer` being built.
@@ -411,10 +409,10 @@ the observed initial MW parameter in an open-loop replay. A closed-loop replay i
 - `closed_loop`: whether the model replays closed loop.
 
 # Returns
-The accessor and the `Set` of device names the parameter covers. Throws `ArgumentError` when `closed_loop`.
+The accessor and the `Set` of device names it covers.
 """
 function _initial_mw_accessor(container::PSI.OptimizationContainer, ::Type{T}, closed_loop::Bool) where {T}
-    closed_loop && throw(ArgumentError(_CLOSED_LOOP_UNSUPPORTED))
+    closed_loop && return _closed_loop_initial_mw(container, T)
     initial, covered = _ts_parameter_accessor(container, InitialPowerTimeSeriesParameter, T)
     accessor(name, t) = convert(JuMP.AffExpr, initial(name, t))
     return accessor, covered
@@ -422,7 +420,7 @@ end
 
 
 function _ramp_base_accessor(container, ::Type{NEMReplayDispatch}, ::Type{T}, names, _) where {T}
-    PSI.has_container_key(container, InitialPowerTimeSeriesParameter, T) || throw(
+    _closed_loop(container) || PSI.has_container_key(container, InitialPowerTimeSeriesParameter, T) || throw(
         ArgumentError(
             "NEMReplayDispatch: the device model registers no initial-power parameter, so the " *
                 "ramp has no base to measure against",

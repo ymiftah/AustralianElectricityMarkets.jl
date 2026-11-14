@@ -42,17 +42,18 @@ end
     _mnsp_initial_flow_accessor(container, closed_loop) -> accessor
 
 The MNSP initial flow of a replay interval, as `accessor(name, t) -> JuMP.AffExpr` in MW: the metered
-initial flow parameter in an open-loop replay. A closed-loop replay is not implemented.
+initial flow parameter in an open-loop replay, the [`NEMInitialFlow`](@ref) initial condition in a closed-loop
+replay.
 
 # Arguments
 - `container`: the `PSI.OptimizationContainer` being built.
 - `closed_loop`: whether the model replays closed loop.
 
 # Returns
-The accessor. Throws `ArgumentError` when `closed_loop`.
+The accessor.
 """
 function _mnsp_initial_flow_accessor(container::PSI.OptimizationContainer, closed_loop::Bool)
-    closed_loop && throw(ArgumentError(_CLOSED_LOOP_UNSUPPORTED))
+    closed_loop && return _closed_loop_initial_flow(container)
     initial, _ = _mnsp_input_accessor(container, MNSPInitialFlowInput())
     accessor(name, t) = convert(JuMP.AffExpr, initial(name, t))
     return accessor

@@ -72,7 +72,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `template_nemde(; exclude_constraints)` takes the user exclusions as a name to reason `Dict`, applied through the `"filter_function"` and `"excluded_constraints"` attributes of the generic-constraint service model. `check_dispatch_envelope(template, sys)` takes no interval window, and `check_template_against_sys` no longer checks the generic constraints.
 
-- The problem type selects the replay mode: `NEMDispatchProblem` and the new `NEMClosedLoopDispatchProblem` are subtypes of the new `AbstractNEMDispatchProblem`. `DecisionModel{M}` fixes the horizon, resolution and interval at one dispatch interval and throws `ArgumentError` when `horizon`, `interval`, `resolution` or `ext` is passed; it records the mode in the `"closed_loop"` setting. Building a `NEMClosedLoopDispatchProblem` model fails with `closed-loop replay is not implemented`. The unit initial MW and the MNSP initial flow are read through one accessor each, so the closed-loop branch can be added without changing the constraints that use them.
+- The problem type selects the replay mode: `NEMDispatchProblem` and the new `NEMClosedLoopDispatchProblem` are subtypes of the new `AbstractNEMDispatchProblem`. `DecisionModel{M}` fixes the horizon, resolution and interval at one dispatch interval and throws `ArgumentError` when `horizon`, `interval`, `resolution` or `ext` is passed; it records the mode in the `"closed_loop"` setting. The unit initial MW and the MNSP initial flow are read through one accessor each, whose closed-loop branch reads the closed-loop initial conditions.
 
 - `PSI.validate_template` of a `NEMDispatchProblem` checks for forecasts before dating the Market Price Cap, and refuses a system whose device or service availability changed after `nem_system` wrote the replay inputs, naming each changed component: the FCAS effective offers, tie-break membership, loss demand terms and constraint availability were derived for the recorded availability.
 
@@ -128,6 +128,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dispatch and price comparisons for the examples' stated scope.
 
 ### Added
+
+- Closed-loop replay: `DecisionModel(NEMClosedLoopDispatchProblem, template, sys; ...)` starts the first interval from AEMO's observed state and each later interval of a `Simulation` from the previous interval's solved output. The starting output of each unit and the starting flow of each MNSP are the new `NEMInitialPower` and `NEMInitialFlow` initial conditions, updated from the simulation's system state, and the inputs derived from that state (battery ramp rates, fixed-loading invocation, effective FCAS offers and regulation ramping limits) are recomputed each step by AEM's own writer code through the new `closed_loop_input` (with `is_state_dependent_input` and `closed_loop_unit_state`). Fast-start dispatch modes keep their observed values. The replay batch runner takes `--closed-loop true`.
 
 - `compare_intervals` joins the published outcome of a set of intervals onto its solved outcome, and `comparison_summary` reports the paired gaps of each metric, as `AustralianElectricityMarketsSimulations` functions. Replay workflows and the batch worker use them in place of their private copies.
 

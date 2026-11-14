@@ -133,15 +133,17 @@ function replay_template(
 end
 
 """
-    replay_simulation(sys, steps; optimizer, template, folder, name, simulation_name) -> (; simulation, model, skipped_constraints)
+    replay_simulation(sys, steps; optimizer, template, folder, name, simulation_name, problem) -> (; simulation, model, skipped_constraints)
 
 Constructs, without building, the PSI simulation of `steps` on `sys`, with the skipped constraints of `template`.
+`problem` is the NEM dispatch problem type, `NEMDispatchProblem` by default.
 """
 function replay_simulation(
         sys::PSY.System, steps; optimizer = nemde_optimizer(), template::PSI.ProblemTemplate = template_nemde(),
         folder::AbstractString = mktempdir(), name = "dispatch", simulation_name = "replication",
+        problem::Type{<:AEMS.AbstractNEMDispatchProblem} = NEMDispatchProblem,
     )
-    model = PSI.DecisionModel(NEMDispatchProblem, template, sys; optimizer, initial_time = first(steps), name)
+    model = PSI.DecisionModel(problem, template, sys; optimizer, initial_time = first(steps), name)
     skipped_constraints = replay_skipped_constraints(sys, template)
     models = PSI.SimulationModels(; decision_models = [model])
     sequence = PSI.SimulationSequence(; models, ini_cond_chronology = PSI.InterProblemChronology())

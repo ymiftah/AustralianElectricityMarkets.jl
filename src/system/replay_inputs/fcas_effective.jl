@@ -150,12 +150,13 @@ function _fcas_fast_start_flags(device, stamps::Vector{DateTime})
 end
 
 
-# The window of `device` over `stamps`, read at the interval `resolution` of the system base `base`.
-function _fcas_window(device, stamps::Vector{DateTime}, resolution::Dates.Period, base::Float64)
+# The window of `device` over `stamps`, read at the interval `resolution` of the system base `base`. `states`
+# overrides the observed state at each stamp, with `initial_mw` in MW.
+function _fcas_window(device, stamps::Vector{DateTime}, resolution::Dates.Period, base::Float64; states = nothing)
     telemetry = get_telemetry(device)
     status = _fcas_telemetry_window(device, telemetry.agc_status, stamps)
     uigf = _fcas_telemetry_window(device, telemetry.uigf, stamps)
-    states = [NEMUnitState(s.initial_mw / base, s.dispatch_mode) for s in observed_unit_states(device, stamps)]
+    states = [NEMUnitState(s.initial_mw / base, s.dispatch_mode) for s in something(states, observed_unit_states(device, stamps))]
     return _FCASWindow(
         stamps, resolution, base, states, _fcas_fast_start_flags(device, stamps),
         isnothing(uigf) ? nothing : uigf ./ base,

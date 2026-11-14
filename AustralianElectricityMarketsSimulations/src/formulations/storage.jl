@@ -77,10 +77,7 @@ function PSI.construct_device!(
         haskey(PSI.get_time_series_names(model), param) || continue
         PSI.add_parameters!(container, param, devices, model)
     end
-    PSI.add_parameters!(
-        container, InitialPowerTimeSeriesParameter, devices, model;
-        time_series_name = NEM_STATE_INPUT_SERIES.initial_mw,
-    )
+    _add_initial_power!(container, devices, model)
 
     _add_fixed_load_arguments!(container, devices, model)
 

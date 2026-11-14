@@ -2,10 +2,14 @@ import PowerSimulations as PSI
 import PowerSystems as PSY
 const AEMS = AustralianElectricityMarketsSimulations
 
-@testset "no per-step update methods" begin
-    for f in (PSI.update_container_parameter_values!, PSI.update_parameter_values!, PSI._update_parameter_values!)
+@testset "per-step update methods only for the closed-loop model" begin
+    # An open-loop replay keeps PowerSimulations' own per-step updates; only a closed-loop model recomputes state inputs.
+    for f in (PSI.update_container_parameter_values!, PSI._update_parameter_values!)
         @test all(m -> parentmodule(m) !== AEMS, methods(f))
     end
+    ours = [m for m in methods(PSI.update_parameter_values!) if parentmodule(m) === AEMS]
+    @test !isempty(ours)
+    @test all(m -> occursin("NEMClosedLoopDispatchProblem", string(m.sig)), ours)
 end
 
 @testset "Pinned PowerSimulations.jl fork resolves the area-balance dual to an Area-keyed container" begin

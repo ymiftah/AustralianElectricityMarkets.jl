@@ -9,3 +9,21 @@ function _unit_observed(device)
     unit = AustralianElectricityMarkets._nem_unit_data(device)
     return isnothing(unit) ? nothing : unit.observed_state
 end
+
+
+"""
+    NEMInitialPower <: PSI.InitialConditionType
+
+The starting output of a replay unit in a closed-loop replay, in system-base per-unit (net of charging for a
+battery): AEMO's observed output at the first interval, then the previous interval's solved output.
+"""
+struct NEMInitialPower <: PSI.InitialConditionType end
+
+
+"""
+    NEMInitialFlow <: PSI.InitialConditionType
+
+The starting flow of an MNSP in a closed-loop replay, in MW: the metered flow at the first interval, then the
+previous interval's solved flow.
+"""
+struct NEMInitialFlow <: PSI.InitialConditionType end

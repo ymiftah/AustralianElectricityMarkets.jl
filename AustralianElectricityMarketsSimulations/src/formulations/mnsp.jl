@@ -210,9 +210,13 @@ function _add_mnsp_link_variables!(container::PSI.OptimizationContainer, devices
             meta = dir, time_series_name = _mnsp_max_avail_series(dir),
         )
     end
+    closed_loop = _closed_loop(container)
     for (meta, series) in _MNSP_OPERATING_SERIES
+        # A closed-loop replay carries the starting flow as an initial condition.
+        closed_loop && meta == _mnsp_input_meta(MNSPInitialFlowInput()) && continue
         PSI.add_parameters!(container, MNSPOperatingParameter, mnsp, device_model; meta, time_series_name = series)
     end
+    closed_loop && _add_initial_flow!(container, mnsp)
     _add_mnsp_limit_variables!(container, mnsp)
     link_var = PSI.add_variable_container!(
         container, MNSPLinkFlowVariable(), PSY.AreaInterchange, names, directions, time_steps,

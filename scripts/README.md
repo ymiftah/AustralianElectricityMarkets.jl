@@ -133,6 +133,11 @@ julia -O1 --project=AustralianElectricityMarketsSimulations/test \
 `--time-series-in-memory true` holds the time series in memory (default `false`, on disk), which cuts
 per-step parameter updates but raises peak memory.
 
+`--closed-loop true` replays each interval after the first from the previous interval's solved output instead
+of AEMO's observed state (`NEMClosedLoopDispatchProblem`). It is a counterfactual run: its gap to NEMDE grows with
+the gap between the solved and metered trajectories. Each day's `provenance.toml` records `closed_loop`, and the
+statistics report never pools closed-loop with open-loop days.
+
 `--start` and `--intervals` replay one range of consecutive intervals instead of whole trading days.
 `--start` is an interval-ending time on a five-minute boundary, and the range must end within the
 trading day of `--start`. Both options must be given together, and they replace `--first`, `--last`

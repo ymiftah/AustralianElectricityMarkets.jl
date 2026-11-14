@@ -125,8 +125,8 @@ fork's `ConstraintCoefficientParameter`, and the generic-constraint invocation b
 `<: AbstractNEMDispatchProblem <: PSI.DefaultDecisionProblem`; the template carries no mode.
 `DecisionModel{M}` fixes the horizon, resolution and interval at one dispatch interval and rejects them
 and `ext` as keywords, so PSI's auto-transform never adds a second forecast set; it records
-`ext["closed_loop"]`. Until milestone 2, `validate_template` on the closed-loop type throws
-`closed-loop replay is not implemented`.
+`ext["closed_loop"]`. Milestone 1 refused the closed-loop type in `validate_template`; milestone 2 implements
+it ([0102](0102-closed-loop-replay.md)).
 
 The two raw state quantities, unit initial MW and MNSP initial flow, are read through one accessor each
 (`_initial_mw_accessor`, `_mnsp_initial_flow_accessor`), given the `closed_loop` flag read once per build

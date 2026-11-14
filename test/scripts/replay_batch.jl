@@ -25,6 +25,9 @@ using .ReplayBatchSupport
     @test parse_options(String[])["time-series-in-memory"] == "false"
     @test parse_options(["--time-series-in-memory", "true"])["time-series-in-memory"] == "true"
     @test_throws ArgumentError parse_options(["--time-series-in-memory", "yes"])
+    @test parse_options(String[])["closed-loop"] == "false"
+    @test parse_options(["--closed-loop", "true"])["closed-loop"] == "true"
+    @test_throws ArgumentError parse_options(["--closed-loop", "maybe"])
     @test dirname(parse_options(String[])["output"]) == "/run/media/simba/Store/aem_validation"
     range = parse_options(["--start", "2026-06-04T04:05:00", "--intervals", "10"])
     @test length(batch_steps(range, Date(2026, 6, 4))) == 10

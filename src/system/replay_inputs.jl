@@ -11,6 +11,7 @@ include("replay_inputs/constraints.jl")
 include("replay_inputs/prices.jl")
 include("replay_inputs/forecasts.jl")
 include("replay_inputs/availability.jl")
+include("replay_inputs/closed_loop.jl")
 
 
 """

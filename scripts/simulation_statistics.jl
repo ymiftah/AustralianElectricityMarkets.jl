@@ -493,7 +493,7 @@ module SimulationStatistics
     end
 
     function provenance_signature(provenance)
-        keys_ = ("revision", "psi", "aem", "aem_simulations", "hdf5", "julia", "optimization_level", "intervention", "mip_rel_gap", "mip_abs_gap", "package_source_hashes")
+        keys_ = ("revision", "psi", "aem", "aem_simulations", "hdf5", "julia", "optimization_level", "intervention", "mip_rel_gap", "mip_abs_gap", "package_source_hashes", "closed_loop")
         return to_json(Dict{String, Any}(k => get(provenance, k, nothing) for k in keys_); indent = 0)
     end
 

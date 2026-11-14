@@ -107,7 +107,7 @@ end
 
 
 """
-    _fixed_load_step_series(device, stamps::AbstractVector{DateTime}) -> Vector{NamedTuple}
+    _fixed_load_step_series(device, stamps::AbstractVector{DateTime}; states = observed_unit_states(device, stamps)) -> Vector{NamedTuple}
 
 The fixed-loading target and invocation of `device` at each of `stamps`, as `(; target, invoked)`. The
 target is on the net-injection axis in MW: the generation side's loading plus the load side's, with a
@@ -117,14 +117,14 @@ loading and the unit's [`observed_unit_states`](@ref) state.
 # Arguments
 - `device`: the NEM device.
 - `stamps`: the first timestamps of the intervals, consecutive at the series' resolution.
+- `states`: the unit's state at each stamp, `initial_mw` in MW; the observed state by default.
 
 # Returns
 A `Vector` the length of `stamps` of `(; target, invoked)` named tuples, `target` in MW and `invoked` a `Bool`.
 """
-function _fixed_load_step_series(device, stamps::AbstractVector{DateTime})
+function _fixed_load_step_series(device, stamps::AbstractVector{DateTime}; states = observed_unit_states(device, stamps))
     gens = _fixed_load_mw_series(device, OfferSide.GEN, stamps)
     loads = _fixed_load_mw_series(device, OfferSide.LOAD, stamps)
-    states = observed_unit_states(device, stamps)
     storage = device isa PSY.Storage
     return map(eachindex(stamps)) do i
         state = states[i]
