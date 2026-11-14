@@ -90,7 +90,7 @@ end
     @test get_registration(gen).schedule_type == ScheduleType.SEMI_SCHEDULED
     @test get_time_series_values(SingleTimeSeries, gen, "bid_energy_max_avail_gen") ≈ [101.0, 102.0, 103.0]
     @test get_time_series_values(SingleTimeSeries, gen, "telemetry_uigf"; ignore_scaling_factors = true) ≈ [41.0, 42.0, 43.0]
-    @test !has_time_series(gen, DeterministicSingleTimeSeries, "bid_energy_max_avail_gen")
+    @test has_time_series(gen, DeterministicSingleTimeSeries, "bid_energy_max_avail_gen")
     @test !isempty(collect(get_components(FCASService, sys)))
     ic = get_component(AreaInterchange, sys, "IC2")
     @test !isempty(get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPBid, ic))

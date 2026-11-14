@@ -35,15 +35,14 @@ const VIOLATION_STEPS = VIOLATION_START:REAL_RESOLUTION:(VIOLATION_START + REAL_
 const db = aem_connect(HiveConfiguration(hive_location = REAL_HIVE))
 
 # The system over `steps` and the two intervals after them, with `nem_system` validating its inputs,
-# then `prepare_replay!` and the built and executed replay of `template`; throws unless both the build
-# and the execution succeed.
+# then the built and executed replay of `template`; throws unless both the build and the execution succeed.
 function replay_real(steps; template = template_nemde())
     date_range = first(steps):DISPATCH_INTERVAL:(last(steps) + 2DISPATCH_INTERVAL)
     sys = nem_system(db, NEMDEConfiguration(); date_range)
-    skipped = prepare_replay!(sys, template, steps)
     model = PSI.DecisionModel(
         NEMDispatchProblem, template, sys; optimizer = nemde_optimizer(), initial_time = first(steps), name = "dispatch",
     )
+    skipped = replay_skipped_constraints(sys, template)
     models = PSI.SimulationModels(; decision_models = [model])
     sequence = PSI.SimulationSequence(; models, ini_cond_chronology = PSI.InterProblemChronology())
     simulation = PSI.Simulation(;
@@ -215,12 +214,19 @@ end
             for d in PSY.get_contributing_devices(sys, svc)
                 direction = AEM.fcas_bid_direction(d, bid_type)
                 for decremental in (direction == FCASBidDirection.BOTH ? (false, true) : (direction == FCASBidDirection.DECREMENTAL,))
-                    raw = AEMS._get_fcas_trapezium(d, bid_type, first(date_range), horizon; decremental = decremental)
-                    scaled = get_scaled_fcas_trapezium(d, bid_type, first(date_range), horizon; decremental = decremental)
-                    n_regulation_trapeziums += length(raw)
-                    n_regulation_trapeziums_scaled += count(
-                        i -> !isequal(Tuple(raw[i]), Tuple(scaled[i])), eachindex(raw),
-                    )
+                    # The writer's per-unit window and scaled trapeziums, against the bid's own raw values per-unit.
+                    stamps = [first(date_range) + (i - 1) * Minute(5) for i in 1:horizon]
+                    window = AEM._fcas_window(d, stamps, Minute(5), AEM._fcas_system_base(d))
+                    scaled = AEM._fcas_side(window, d, bid_type, decremental).trapeziums
+                    bid = AEM._fcas_side_bid(d, bid_type, AEM.offer_side(decremental))
+                    raw_max_avail = AEM._fcas_bid_window(d, bid.max_avail, :max_avail, stamps)
+                    points = AEM._fcas_bid_window(d, bid.trapezium, :trapezium, stamps)
+                    raw = [Float64[p..., m] ./ window.base for (p, m) in zip(points, raw_max_avail)]
+                    five(t) = [t.enablement_min, t.low_breakpoint, t.high_breakpoint, t.enablement_max, t.max_avail]
+                    # Scaling only narrows: it never widens the span or raises MaxAvail.
+                    @test all(i -> five(scaled[i])[1] >= raw[i][1] && five(scaled[i])[4] <= raw[i][4] && five(scaled[i])[5] <= raw[i][5], eachindex(scaled))
+                    n_regulation_trapeziums += length(scaled)
+                    n_regulation_trapeziums_scaled += count(i -> five(scaled[i]) != raw[i], eachindex(scaled))
                 end
             end
         end

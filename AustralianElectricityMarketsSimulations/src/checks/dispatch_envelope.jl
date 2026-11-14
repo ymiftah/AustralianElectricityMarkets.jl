@@ -1,23 +1,23 @@
 """
-    check_dispatch_envelope(template, sys, initial_time, n_intervals) -> Nothing
+    check_dispatch_envelope(template, sys) -> Nothing
 
 Validates complete, finite, non-negative separate energy availability and UIGF inputs for
-NEM dispatch devices over the requested intervals. Conflicts with ramping are
-resolved by the model's priced violation variables.
+NEM dispatch devices over the replay intervals of `sys` (`replay_intervals(sys)`). Conflicts with
+ramping are resolved by the model's priced violation variables.
 
 # Arguments
 - `template`: the dispatch template.
-- `sys`: the system whose time series are checked.
-- `initial_time`: the first interval timestamp.
-- `n_intervals`: the number of intervals to check.
+- `sys`: the system built by [`nem_system`](@ref), whose time series are checked.
 
 # Returns
-`nothing`; invalid or missing energy inputs raise `ArgumentError`.
+`nothing`; invalid or missing energy inputs, or a system without replay intervals, raise `ArgumentError`.
 """
-function check_dispatch_envelope(template::PSI.ProblemTemplate, sys::PSY.System, initial_time::DateTime, n_intervals::Integer)
+function check_dispatch_envelope(template::PSI.ProblemTemplate, sys::PSY.System)
+    intervals = replay_intervals(sys)
+    isempty(intervals) && throw(ArgumentError("check_dispatch_envelope: the system has a single forecast window and no replay intervals"))
     for model in values(PSI.get_device_models(template))
         PSI.get_formulation(model) <: AbstractNEMDispatch || continue
-        _check_energy_limit_series(sys, model, initial_time, n_intervals)
+        _check_energy_limit_series(sys, model, first(intervals), length(intervals))
     end
     return
 end
@@ -47,26 +47,22 @@ function _require_valid_input(name::AbstractString, values, label::AbstractStrin
 end
 
 
-# The energy-availability series names a device's dispatch reads (its `NEMDispatchInputs` keys), its UIGF
-# key (`nothing` unless semi-scheduled), and the setter that attaches them.
+# The energy-availability series names a device's dispatch reads, its UIGF key (`nothing` unless
+# semi-scheduled), and the remedy for a missing series.
 function _energy_limit_series(d::PSY.Storage)
-    inputs = _dispatch_inputs_attribute(d)
-    keys = (inputs.energy_availability, inputs.energy_availability_decremental)
-    return _key_names(keys), nothing, "call set_effective_offers!"
+    names = [
+        _availability_series_name(d, PSI.ActivePowerOutTimeSeriesParameter),
+        _availability_series_name(d, PSI.ActivePowerInTimeSeriesParameter),
+    ]
+    return names, nothing, _SETTER_REMEDY
 end
 
 function _energy_limit_series(d)
-    inputs = _dispatch_inputs_attribute(d)
-    names = _key_names((inputs.energy_availability,))
+    names = [_availability_series_name(d, EnergyLimitTimeSeriesParameter)]
     if !is_semi_scheduled(d)
-        return names, nothing, "call set_effective_offers!"
+        return names, nothing, _SETTER_REMEDY
     end
     uigf = AustralianElectricityMarkets.get_telemetry(d).uigf
     isnothing(uigf) && throw(ArgumentError("$(PSY.get_name(d)): semi-scheduled but has no UIGF; call set_unit_conditions!"))
-    return names, uigf, "call set_effective_offers!"
-end
-
-# The names of the series behind the keys that are attached.
-function _key_names(keys)
-    return [PSY.get_name(key) for key in keys if !isnothing(key)]
+    return names, uigf, _SETTER_REMEDY
 end

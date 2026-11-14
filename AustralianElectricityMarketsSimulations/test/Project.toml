@@ -14,13 +14,14 @@ PowerSystems = "bcd98974-b02a-5e2f-9ee0-a103f5c450dd"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
+Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 TimeSeries = "9e3dc215-6440-5c97-bce1-76c03772f85e"
 
 [sources]
-HDF5 = {url = "https://github.com/JuliaIO/HDF5.jl.git", rev = "4c4592a397a4e4f6045a56003ca4d038c8eb3a78"}
-PowerSimulations = {rev = "81c0259d18196c7d7c0a040f7638fc00fc37d327", url = "https://github.com/ymiftah/PowerSimulations.jl.git"}
+HDF5 = {rev = "4c4592a397a4e4f6045a56003ca4d038c8eb3a78", url = "https://github.com/JuliaIO/HDF5.jl.git"}
+PowerSimulations = {rev = "3d504be45c4e6a4b53aededaf6dc8d88f328c35b", url = "https://github.com/ymiftah/PowerSimulations.jl.git"}
 
 [compat]
 HDF5 = "0.17.5"

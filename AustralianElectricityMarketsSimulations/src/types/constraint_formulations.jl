@@ -132,7 +132,7 @@ struct FCASUnitConstraint <: PSI.ConstraintType end
     FCASOfferLimitParameter
 
 Time-series parameter of a device's effective FCAS offer limits for one market and side, read from
-its `"fcas_effective_<BIDTYPE>[_decremental]"` series ([`set_effective_offers!`](@ref)), per-unit
+its `"fcas_effective_<BIDTYPE>[_decremental]"` series ([`fcas_effective_series_name`](@ref)), per-unit
 of the system base, with a field axis `"max_avail"`, `"enablement_min"`, `"enablement_max"`. Keyed by
 device type with meta `"<BIDTYPE>[_decremental]"`.
 """
@@ -175,24 +175,12 @@ struct FCASLowerSlopeParameter <: PSI.ConstraintCoefficientParameter end
     FCASRampingLimitParameter
 
 Time-series parameter of a device's regulation ramping limits for one regulation market, read from
-its `"fcas_ramping_limits_<BIDTYPE>"` series ([`set_effective_offers!`](@ref)), per-unit of the
+its `"fcas_ramping_limits_<BIDTYPE>"` series ([`fcas_ramping_series_name`](@ref)), per-unit of the
 system base, with a field axis `"joint_ramping"` ([`FCASUnitConstraint`](@ref) right-hand
 side) and `"bdu_ramping"` ([`FCASUnitConstraint`](@ref) right-hand side). Keyed by device type
 with meta `"<BIDTYPE>"`.
 """
 struct FCASRampingLimitParameter <: PSI.TimeSeriesParameter end
-
-
-"""
-    FCASBandPriceParameter
-
-Time-series cost parameter pricing [`FCASOfferBandVariable`](@ref)s: its value is each band's offer
-price in `\$/MWh`, read from the offer's service series: the service name for the generation side and
-`"<service>_decremental"` for the load side (`0.0` for a band not offered). Each band's cost target scales the
-price by the system base power and the interval length in hours. Meta `"<group>_gen"` or `"<group>_load"`, one
-parameter per device type and side.
-"""
-struct FCASBandPriceParameter <: PSI.TimeSeriesCostParameter end
 
 
 """
@@ -230,14 +218,13 @@ struct GenericConstraintSlackDown <: PSI.VariableType end
 
 
 """
-    GenericConstraintSlackCostParameter
+    GenericConstraintInvocationParameter
 
-Time-series cost parameter pricing a [`GenericConstraint`](@ref)'s elastic slacks: its value is
-the constraint's invoked mask (`1.0`/`0.0`) per interval, read at each simulation step. Each
-slack's cost target scales the mask by the system base power, the interval coefficient of
-`GENERICCONSTRAINTWEIGHT` and the Market Price Cap, so a non-invoked interval's slack costs nothing.
+Constraint-bound parameter holding the invocation (`1.0`/`0.0`) of a [`GenericConstraint`](@ref) per
+interval, read at each simulation step from the constraint's `invoked` series. The row of an
+invoked interval has its bounds and the row of a non-invoked interval is free (`-Inf`, `Inf`).
 """
-struct GenericConstraintSlackCostParameter <: PSI.TimeSeriesCostParameter end
+struct GenericConstraintInvocationParameter <: PSI.ConstraintBoundParameter end
 
 
 """

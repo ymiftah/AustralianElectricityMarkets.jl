@@ -84,14 +84,3 @@ Time-series parameter of an MNSP link's `MAXAVAIL`, in MW, read from its
 `"link_<direction>_max_avail"` series. Meta `"forward"` or `"reverse"` names the link.
 """
 struct MNSPMaxAvailParameter <: PSI.TimeSeriesParameter end
-
-
-"""
-    MNSPBandPriceParameter
-
-Time-series cost parameter pricing an MNSP link's [`MNSPLinkBandVariable`](@ref)s: its value is
-each band's offer price in `\$/MWh` per interval, read from the link's `"link_<direction>_offer"`
-series (`0.0` for a band not offered). Each band's cost target scales the price by the system base
-power and the interval length in hours. Meta `"forward"` or `"reverse"`.
-"""
-struct MNSPBandPriceParameter <: PSI.TimeSeriesCostParameter end

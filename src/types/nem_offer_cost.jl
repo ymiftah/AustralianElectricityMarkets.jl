@@ -35,7 +35,7 @@ const FCASTrapeziumPoints = NamedTuple{
 """
     NEMEnergyBid(; direction, offer_curves, max_avail, roc_up, roc_down, fixed_load = nothing,
         minimum_load = nothing, fast_start_profile = nothing, daily_energy_constraint = nothing,
-        normal_status = nothing, energy_limit = nothing)
+        normal_status = nothing, energy_limit = nothing, band_prices = nothing)
 
 One side of a unit's energy offer as AEMO bid it: each field is a static value or a key of the
 time series that holds it on the unit, or `nothing` where AEMO publishes no value.
@@ -53,6 +53,8 @@ time series that holds it on the unit, or `nothing` where AEMO publishes no valu
 - `daily_energy_constraint`: `DAILYENERGYCONSTRAINT`, MWh.
 - `normal_status`: `NORMALSTATUS`, `true` for `ON`.
 - `energy_limit`: `ENERGYLIMIT`, MWh.
+- `band_prices`: the ten band prices of the trading day in \$/MWh at the reference node, padded with `0.0`,
+  or `nothing` until the replay inputs are written.
 """
 struct NEMEnergyBid <: PSY.DeviceParameter
     direction::BidDirection
@@ -66,23 +68,29 @@ struct NEMEnergyBid <: PSY.DeviceParameter
     daily_energy_constraint::Union{Nothing, IS.StaticTimeSeriesKey, Float64}
     normal_status::Union{Nothing, IS.StaticTimeSeriesKey, Bool}
     energy_limit::Union{Nothing, IS.StaticTimeSeriesKey, Float64}
+    band_prices::Union{Nothing, NTuple{10, Float64}}
 end
 
 function NEMEnergyBid(;
         direction::BidDirection, offer_curves, max_avail, roc_up, roc_down,
         fixed_load = nothing, minimum_load = nothing, fast_start_profile = nothing,
         daily_energy_constraint = nothing, normal_status = nothing, energy_limit = nothing,
+        band_prices = nothing,
     )
     f = _bid_number
     return NEMEnergyBid(
         direction, offer_curves, f(max_avail), f(roc_up), f(roc_down), f(fixed_load), f(minimum_load),
-        fast_start_profile, f(daily_energy_constraint), normal_status, f(energy_limit),
+        fast_start_profile, f(daily_energy_constraint), normal_status, f(energy_limit), _band_prices(band_prices),
     )
 end
 
 # A static numeric bid value as `Float64` (JSON reads `0.0` back as an integer); any other value as is.
 _bid_number(x::Real) = Float64(x)
 _bid_number(x) = x
+
+# Band prices as a ten-tuple of `Float64`; JSON reads the tuple back as a vector.
+_band_prices(::Nothing) = nothing
+_band_prices(x::Union{Tuple, AbstractVector}) = NTuple{10, Float64}(Float64.(x))
 
 function Base.:(==)(a::NEMEnergyBid, b::NEMEnergyBid)
     return all(f -> _field_equal(getfield(a, f), getfield(b, f)), fieldnames(NEMEnergyBid))
@@ -94,7 +102,7 @@ end
 
 
 """
-    NEMFCASBid(; service, direction, offer_curves, max_avail, trapezium)
+    NEMFCASBid(; service, direction, offer_curves, max_avail, trapezium, band_prices = nothing)
 
 One direction of a unit's offer for one FCAS market, as AEMO bid it.
 
@@ -104,6 +112,8 @@ One direction of a unit's offer for one FCAS market, as AEMO bid it.
 - `offer_curves`: the ten price bands, in MW and \$/MW, as `PiecewiseStepData`.
 - `max_avail`: `MAXAVAIL`, MW.
 - `trapezium`: the [`FCASTrapeziumPoints`](@ref) of the bid, MW.
+- `band_prices`: the ten band prices of the trading day in \$/MWh, padded with `0.0`, or `nothing` until the
+  replay inputs are written.
 """
 struct NEMFCASBid <: PSY.DeviceParameter
     service::BidType
@@ -111,12 +121,13 @@ struct NEMFCASBid <: PSY.DeviceParameter
     offer_curves::Union{IS.StaticTimeSeriesKey, PiecewiseStepData}
     max_avail::Union{IS.StaticTimeSeriesKey, Float64}
     trapezium::Union{IS.StaticTimeSeriesKey, FCASTrapeziumPoints}
+    band_prices::Union{Nothing, NTuple{10, Float64}}
 end
 
 function NEMFCASBid(;
-        service::BidType, direction::BidDirection, offer_curves, max_avail, trapezium,
+        service::BidType, direction::BidDirection, offer_curves, max_avail, trapezium, band_prices = nothing,
     )
-    return NEMFCASBid(service, direction, offer_curves, _bid_number(max_avail), trapezium)
+    return NEMFCASBid(service, direction, offer_curves, _bid_number(max_avail), trapezium, _band_prices(band_prices))
 end
 
 function Base.:(==)(a::NEMFCASBid, b::NEMFCASBid)

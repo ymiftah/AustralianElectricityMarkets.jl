@@ -6,18 +6,18 @@ const STOCK_OPTIMIZER = PSI.JuMP.optimizer_with_attributes(
     HiGHS.Optimizer, "output_flag" => false, "mip_rel_gap" => 0.0, "mip_abs_gap" => 1.0e-10,
 )
 const STOCK_STEPS = TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION)
-# Step 1: Alta ramp-bound at 60 MW, Park City 40 MW at $80. Step 2: N_TOY_LIMIT holds Alta at 65 MW, Park City 55 MW at $60.
+# Step 1: Alta ramp-bound at 60 MW, Park City 40 MW at $60. Step 2: N_TOY_LIMIT holds Alta at 65 MW, Park City 55 MW at $60.
 function sentinel_system(;
         alta_availability = [100.0, 90.0],
         alta_initial = [50.0, 70.0], alta_ramp_down = [100.0, 90.0], invoked = 1.0
     )
     units = [
         TOY_CHEAP => toy_unit(
-            100.0, [[(100.0, 20.0)], [(100.0, 30.0)]]; initial = alta_initial,
+            100.0, [(100.0, 20.0)]; initial = alta_initial,
             ramp_up = [2.0, 1.0], ramp_down = alta_ramp_down, availability = alta_availability,
         ),
         TOY_EXPENSIVE => toy_unit(
-            100.0, [[(100.0, 80.0)], [(100.0, 60.0)]]; initial = [40.0, 30.0],
+            100.0, [(100.0, 60.0)]; initial = [40.0, 30.0],
             ramp_up = [100.0, 90.0], ramp_down = [100.0, 90.0], availability = [100.0, 95.0],
         ),
     ]
@@ -90,8 +90,8 @@ end
 
 @testset "step 2 reads step-2 data" begin
     expected = [
-        (step = 1, cheap = 60.0, expensive = 40.0, price = 80.0, objective = 4400 / 12, limit_price = 0.0),
-        (step = 2, cheap = 65.0, expensive = 55.0, price = 60.0, objective = 5250 / 12, limit_price = -30.0),
+        (step = 1, cheap = 60.0, expensive = 40.0, price = 60.0, objective = 3600 / 12, limit_price = 0.0),
+        (step = 2, cheap = 65.0, expensive = 55.0, price = 60.0, objective = 4600 / 12, limit_price = -40.0),
     ]
     for e in expected
         k = e.step
@@ -128,8 +128,11 @@ end
 
 @testset "a constraint invoked at no step is left out and reported with its reason" begin
     never = sentinel_system(; invoked = [0.0, 0.0])
-    @test AEMS.never_invoked_constraints(never, STOCK_STEPS) == Dict("N_TOY_LIMIT" => :never_invoked)
-    @test AEMS.never_invoked_constraints(sentinel_system(; invoked = [1.0, 0.0]), STOCK_STEPS) == Dict{String, Symbol}()
+    AustralianElectricityMarkets._set_constraint_availability!(never)
+    @test AustralianElectricityMarkets.get_unavailable_constraints(never) == DataFrame(; constraint = ["N_TOY_LIMIT"], reason = [:never_invoked])
+    invoked_once = sentinel_system(; invoked = [1.0, 0.0])
+    AustralianElectricityMarkets._set_constraint_availability!(invoked_once)
+    @test isempty(AustralianElectricityMarkets.get_unavailable_constraints(invoked_once))
     out_never = run_replay(never, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
     row_never = only(filter(:constraint => ==("N_TOY_LIMIT"), out_never.skipped_constraints))
     @test (row_never.reason, row_never.n_missing) == (:never_invoked, 0)
@@ -203,9 +206,9 @@ const MASK_CASES = [
             else
                 # The masked row's dual is zero up to simplex arithmetic.
                 @test abs(new.gc) <= 1.0e-9 && abs(gc_sim[t]) <= 1.0e-9
-                # The masked row is violated (vacuous), its slack takes the violation, and no violation is reported.
+                # The masked row is free: its priced slack stays zero and no violation is reported.
                 slack = only(PSI.read_variable(new.results, "$(c.slack)__GenericConstraint__N_TOY_LIMIT").value)
-                @test slack >= (c.sense == ConstraintSense.LE ? 40.0 : 30.0) - TOY_TOLERANCE
+                @test slack == 0.0
                 v = read_constraint_violations(new.results, sys)
                 @test nrow(v) == 0 || !any(==("generic_constraint"), v.family)
             end
@@ -237,7 +240,7 @@ end
     @test abs(duals["N_TOY_LIMIT@B"][t1]) <= 1.0e-9 && abs(duals["N_TOY_LIMIT@A"][t2]) <= 1.0e-9
 end
 
-@testset "a recurrent build without slacks throws" begin
+@testset "a recurrent build without slacks builds, since non-invoked rows are freed by the invocation parameter" begin
     sys = masked_system(ConstraintSense.LE, TOY_CHEAP, 60.0)
     template = replay_template(sys; template = energy_template())
     PSI.set_service_model!(template, "N_TOY_LIMIT", PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "N_TOY_LIMIT"; duals = [NEMConstraintLimit]))
@@ -250,7 +253,7 @@ end
         sequence = PSI.SimulationSequence(; models = models, ini_cond_chronology = PSI.InterProblemChronology()),
         simulation_folder = mktempdir(), initial_time = TOY_START,
     )
-    @test_throws ArgumentError PSI.build!(sim; store_systems_in_results = false)
+    @test PSI.build!(sim; store_systems_in_results = false) == PSI.SimulationBuildStatus.BUILT
 end
 
 # A battery whose net ramp-down floor exceeds raw generation availability in step 1 only.
@@ -286,27 +289,29 @@ end
 end
 
 # Area 2 adds Solitude ($50) and an 80 MW load; the interchange is an MNSP whose forward link
-# offers 30 MW at $10 and 100 MW at $40 (MAXAVAIL 200) in step 1, 100 MW at $5 (MAXAVAIL 60) in step 2.
-function mnsp_sentinel_system()
+# offers 30 MW at $10 and 100 MW at $40 (MAXAVAIL 200) in step 1, 60 MW at $10 and 40 MW at $40 (MAXAVAIL 60)
+# in step 2; the band prices are constant over the day.
+function mnsp_sentinel_system(; mutate! = nothing)
     units = [
         TOY_CHEAP => toy_unit(300.0, [(300.0, 20.0)]; initial = 100.0, ramp_up = 100.0),
         "Solitude" => toy_unit(200.0, [(200.0, 50.0)]; initial = 50.0, ramp_up = 100.0),
     ]
-    forward = [(200.0, [(30.0, 10.0), (100.0, 40.0)]), (60.0, [(100.0, 5.0)])]
+    forward = [(200.0, [(30.0, 10.0), (100.0, 40.0)]), (60.0, [(60.0, 10.0), (40.0, 40.0)])]
     reverse_link = (100.0, [(100.0, 10.0)])
     return nem_toy_system(
         units, 50.0; horizon = TOY_RESOLUTION,
         interchange = toy_interchange(; load_mw = 80.0, breakpoints = [-1000.0, 1000.0], mnsp = (forward, reverse_link)),
+        mutate!,
     )
 end
 stock_area_price(solved, area) = only(filter(:REGIONID => ==(area), solved.prices).ROP)
 stock_flow(solved) = only(solved.interconnectors.MWFLOW)
 stock_loss(solved) = only(solved.interconnectors.MWLOSSES)
 
-@testset "MNSP band widths, prices and MAXAVAIL change between steps: simulation equals standalone solves" begin
+@testset "MNSP band widths and MAXAVAIL change between steps: simulation equals standalone solves" begin
     expected = [
         (flow = 30.0, solitude = 50.0, alta = 80.0, price2 = 50.0, objective = 4400 / 12),
-        (flow = 60.0, solitude = 20.0, alta = 110.0, price2 = 50.0, objective = 3500 / 12),
+        (flow = 60.0, solitude = 20.0, alta = 110.0, price2 = 50.0, objective = 3800 / 12),
     ]
     sim = stock_simulate(mnsp_sentinel_system())
     @test PSI.is_milp(PSI.get_optimization_container(sim.model))
@@ -362,7 +367,7 @@ end
     ]
     sys = loss_curve_sentinel_system()
     ic = PSY.get_component(PSY.AreaInterchange, sys, TOY_INTERCHANGE)
-    @test PSY.get_time_series_values(PSY.SingleTimeSeries, ic, "loss_demand_coefficient") ≈ [0.05, 0.1]
+    @test PSY.get_time_series_values(PSY.SingleTimeSeries, ic, "loss_demand_coefficient") ≈ [0.05, 0.1, 0.1]
     sim = stock_simulate(sys)
     container = PSI.get_optimization_container(sim.model)
     @test PSI.built_for_recurrent_solves(container) && PSI.is_milp(container)
@@ -511,14 +516,6 @@ end
 
 end
 
-@testset "the tie-break pre-flight check" begin
-    moved = tie_sentinel_system(; park_price = [10.0, 12.0])
-    @test_throws ArgumentError check_tie_break_pairs(moved, STOCK_STEPS)
-    @test_throws ArgumentError run_replay(moved, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
-    @test isnothing(check_tie_break_pairs(tie_sentinel_system(), STOCK_STEPS))
-    # Prices change between steps, but no band is ever tied.
-    @test isnothing(check_tie_break_pairs(sentinel_system(), STOCK_STEPS))
-end
 
 # Alta ($20, 100 MW) and Park City ($80, 100 MW) offer RAISEREG on rectangles: Alta 25 MW at $5, Park City 20 MW at $10.
 # Alta's AGC ramp rate is `alta_ramp` MW/h (360 MW/h is 30 MW per interval); `F_REG` requires `reg_req` MW.
@@ -792,10 +789,12 @@ end
     # exclude_constraints leaves a constraint out with its reason, and rejects an unknown name.
     skipped = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
     sys = sentinel_system()
-    replay_template(sys; skipped, exclude_constraints = Dict("N_TOY_LIMIT" => :never_invoked))
+    replay_template(sys; template = template_nemde(; exclude_constraints = Dict("N_TOY_LIMIT" => :never_invoked)), skipped)
     @test only(skipped) == (constraint = "N_TOY_LIMIT", reason = :never_invoked, n_missing = 0)
-    @test !PSY.get_available(PSY.get_component(GenericConstraint, sys, "N_TOY_LIMIT"))
-    @test_throws r"exclude_constraints names N_ABSENT" replay_template(sentinel_system(); exclude_constraints = Dict("N_ABSENT" => :x))
+    @test PSY.get_available(PSY.get_component(GenericConstraint, sys, "N_TOY_LIMIT"))
+    @test_throws r"exclude_constraints names N_ABSENT" replay_template(
+        sentinel_system(); template = template_nemde(; exclude_constraints = Dict("N_ABSENT" => :x)),
+    )
 end
 
 @testset "tie-break service model follows the template" begin
@@ -826,10 +825,8 @@ end
 end
 
 @testset "MNSP metered ramp and fixed-loading inputs update between simulation steps" begin
-    sys = mnsp_sentinel_system()
-    ic = only(collect(PSY.get_components(PSY.AreaInterchange, sys)))
     names = AustralianElectricityMarkets.NEM_MNSP_SERIES
-    derived = AEMS.NEM_MNSP_FIXED_LOAD_SERIES
+    derived = AustralianElectricityMarkets.NEM_MNSP_FIXED_LOAD_SERIES
     # The bid's fixed loading is NaN where AEMO publishes NULL, so the first step is not invoked.
     inputs = (
         names.initial_flow => [0.0, 50.0],
@@ -844,12 +841,15 @@ end
         derived.forward_value => [0.0, 20.0],
         derived.forward_invoked => [0.0, 1.0],
     )
-    for (name, values) in inputs
-        PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, ic, name)
-        AustralianElectricityMarkets.replace_single_series!(sys, ic, PSY.SingleTimeSeries(; name, data = PSY.TimeSeries.TimeArray(collect(STOCK_STEPS), values)))
+    # The raw inputs are edited before the replay inputs are written, which derive the fixed loading from them.
+    function set_raw_inputs!(sys, _stamps)
+        ic = only(collect(PSY.get_components(PSY.AreaInterchange, sys)))
+        for (name, values) in inputs
+            AustralianElectricityMarkets.replace_single_series!(sys, ic, PSY.SingleTimeSeries(; name, data = PSY.TimeSeries.TimeArray(collect(STOCK_STEPS), values)))
+        end
     end
-    AEMS._set_mnsp_fixed_loads!(sys)
-    PSY.transform_single_time_series!(sys, TOY_RESOLUTION, TOY_RESOLUTION)
+    sys = mnsp_sentinel_system(; mutate! = set_raw_inputs!)
+    ic = only(collect(PSY.get_components(PSY.AreaInterchange, sys)))
     sim = stock_simulate(sys)
     @test stock_flow.(sim.solved) ≈ [10.0, 20.0] atol = TOY_TOLERANCE
     for (name, values) in expected
@@ -868,6 +868,4 @@ end
         slack = PSI.get_variable(container, AEMS.MNSPSlack(), PSY.AreaInterchange, meta)
         @test PSI.JuMP.coefficient(objective, slack[PSY.get_name(ic), 1]) ≈ factor * 17500 * 100 / 12
     end
-    # The Market Price Cap is fixed per simulation: a range across 1 July is refused before build.
-    @test_throws ArgumentError AEMS.check_single_financial_year(DateTime(2025, 6, 30, 23, 55):Minute(5):DateTime(2025, 7, 1, 0, 5))
 end

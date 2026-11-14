@@ -7,15 +7,8 @@
         time_series_in_memory = false, time_series_directory = mktempdir()
     )
     DuckDB.close(db.db)
-    @test PowerSystems.get_time_series_counts(sys).forecast_count == 0
-    AEMS.set_effective_offers!(sys)
-    @test AEMS._prepare_replay_forecasts!(sys) === sys
-    forecasts = PowerSystems.get_time_series_counts(sys).forecast_count
-    @test AEMS._prepare_replay_forecasts!(sys) === sys
-    @test PowerSystems.get_time_series_counts(sys).forecast_count == forecasts
-    @test_throws r"cover" replay_simulation(sys, (t + Hour(1)):Minute(5):(t + Hour(1)))
-    @test_throws ArgumentError replay_simulation(sys, t:Minute(10):(t + Minute(10)))
-    @test_throws ArgumentError replay_simulation(sys, t:Minute(5):(t - Minute(5)))
+    @test PowerSystems.get_time_series_counts(sys).forecast_count > 0
+    @test replay_intervals(sys) == collect(t:Minute(5):(t + Minute(5)))
     folder = mktempdir()
     replay = replay_simulation(sys, steps; name = "custom_dispatch", simulation_name = "custom_run", folder)
     simulation = replay.simulation

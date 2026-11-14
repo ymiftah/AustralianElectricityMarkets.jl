@@ -108,7 +108,7 @@ IS.get_internal(link::NEMMNSPLink) = link.internal
 
 
 """
-    NEMMNSPBid(; direction, offer_curves, max_avail, ramp_up, fixed_load = nothing)
+    NEMMNSPBid(; direction, offer_curves, max_avail, ramp_up, fixed_load = nothing, band_prices = nothing)
 
 One direction of an MNSP's offer as AEMO bid it, held on the MNSP's `AreaInterchange`. Each field is a static
 value or a key of the time series that holds it on that interchange.
@@ -121,6 +121,8 @@ value or a key of the time series that holds it on that interchange.
   the net flow's decrease is the opposite direction's `ramp_up`.
 - `fixed_load`: the link's `FIXEDLOAD`, MW, with NaN at the intervals where AEMO publishes NULL, or `nothing`
   when it is NULL over the whole range.
+- `band_prices`: the ten band prices of the trading day in \$/MWh, padded with `0.0`, or `nothing` until the
+  replay inputs are written.
 - `internal`: `InfrastructureSystems` bookkeeping.
 """
 struct NEMMNSPBid <: PSY.SupplementalAttribute
@@ -129,15 +131,17 @@ struct NEMMNSPBid <: PSY.SupplementalAttribute
     max_avail::Union{IS.StaticTimeSeriesKey, Float64}
     ramp_up::Union{IS.StaticTimeSeriesKey, Float64}
     fixed_load::Union{Nothing, IS.StaticTimeSeriesKey, Float64}
+    band_prices::Union{Nothing, NTuple{10, Float64}}
     internal::IS.InfrastructureSystemsInternal
 end
 
 function NEMMNSPBid(;
-        direction::MNSPDirection, offer_curves, max_avail, ramp_up, fixed_load = nothing,
+        direction::MNSPDirection, offer_curves, max_avail, ramp_up, fixed_load = nothing, band_prices = nothing,
         internal::IS.InfrastructureSystemsInternal = IS.InfrastructureSystemsInternal(),
     )
     return NEMMNSPBid(
-        direction, offer_curves, _bid_number(max_avail), _bid_number(ramp_up), _bid_number(fixed_load), internal,
+        direction, offer_curves, _bid_number(max_avail), _bid_number(ramp_up), _bid_number(fixed_load),
+        _band_prices(band_prices), internal,
     )
 end
 

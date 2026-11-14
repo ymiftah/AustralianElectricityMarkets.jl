@@ -164,8 +164,8 @@ function _add_fcas_parameter!(
 end
 
 
-# PowerSimulations adds the FCAS offer and ramping parameters on the axes of `_fcas_parameter_axes`, and
-# the band prices on the band axis. Every FCAS parameter is read at unit multiplier.
+# PowerSimulations adds the FCAS offer and ramping parameters on the axes of `_fcas_parameter_axes`.
+# Every FCAS parameter is read at unit multiplier.
 function PSI.calc_additional_axes(
         ::PSI.OptimizationContainer,
         param::Union{FCASOfferLimitParameter, FCASBandWidthParameter, FCASRampingLimitParameter, FCASUpperSlopeParameter, FCASLowerSlopeParameter},
@@ -174,17 +174,10 @@ function PSI.calc_additional_axes(
     return _fcas_parameter_axes(param)
 end
 
-function PSI.calc_additional_axes(
-        ::PSI.OptimizationContainer, ::FCASBandPriceParameter,
-        ::Union{Vector{D}, IS.FlattenIteratorWrapper{D}}, ::PSI.DeviceModel{D, W},
-    ) where {D <: PSY.Device, W <: PSI.AbstractDeviceFormulation}
-    return (_FCAS_BAND_LABELS,)
-end
-
 function PSI.get_multiplier_value(
         ::Union{
             FCASOfferLimitParameter, FCASBandWidthParameter, FCASRampingLimitParameter,
-            FCASUpperSlopeParameter, FCASLowerSlopeParameter, FCASBandPriceParameter,
+            FCASUpperSlopeParameter, FCASLowerSlopeParameter,
         },
         ::PSY.StaticInjection, ::AbstractNEMDispatch,
     )
@@ -195,8 +188,9 @@ end
 """
     _check_fcas_effective_series(container, devices, bid_type, directions)
 
-Throws `ArgumentError` naming every device in `devices` without a forecast of its
-[`set_effective_offers!`](@ref) series for `bid_type`.
+Throws `ArgumentError` naming every device in `devices` without a series of its
+[`fcas_effective_series_name`](@ref) offer for `bid_type`, or without its [`fcas_ramping_series_name`](@ref)
+limits in a regulation market.
 
 # Returns
 `nothing`.
@@ -213,7 +207,7 @@ function _check_fcas_effective_series(container::PSI.OptimizationContainer, devi
     isempty(uncovered) || throw(
         ArgumentError(
             "FCASMarket: $(length(uncovered)) device(s) carry no effective $(string(bid_type)) offer forecast: " *
-                "$(join(uncovered, ", ")). Call set_effective_offers!(sys) before transform_single_time_series!.",
+                "$(join(uncovered, ", ")). Build the System with nem_system(db, NEMDEConfiguration(); date_range) first.",
         ),
     )
     return
@@ -706,92 +700,36 @@ end
 
 
 """
-    _fcas_band_price_batches(group, svc, devices, decremental) -> Vector{Tuple{String, String, Vector}}
+    _add_fcas_band_costs!(container, group, svc)
 
-Groups the devices of one side of an offer group by the name of their bid's offer curve series, one
-`(meta, series name, devices)` batch per name. The meta is [`_fcas_band_price_meta`](@ref)'s when the
-side has one name, and suffixed with the batch's position otherwise.
-
-# Returns
-`Vector{Tuple{String, String, Vector}}`.
-"""
-function _fcas_band_price_batches(group, svc::FCASService, devices, decremental::Bool)
-    bid_type = get_bid_type(svc)
-    names = [IS.get_name(AustralianElectricityMarkets._fcas_offer_key(device, bid_type, offer_side(decremental))) for device in devices]
-    unique_names = unique(names)
-    base = _fcas_band_price_meta(group, decremental)
-    return [
-        (length(unique_names) == 1 ? base : "$(base)_$i", name, devices[names .== name])
-            for (i, name) in enumerate(unique_names)
-    ]
-end
-
-
-"""
-    _add_fcas_band_costs!(container, group, svc, devices_template)
-
-Prices the [`FCASOfferBandVariable`](@ref)s of an [`_fcas_offer_groups`](@ref) `group` through
-[`FCASBandPriceParameter`](@ref) time-series cost parameters: one per device type and side, of meta
-`"<group.meta>_gen"` or `"<group.meta>_load"`, read from the bids' `offer_curves` series (see
-[`_fcas_band_price_batches`](@ref)). A side whose devices bid different series names gets one parameter per
-name, of metas `"<group.meta>_gen_1"`, `"<group.meta>_gen_2"`, and so on (`_load_<i>` on the load side). Each
-band's cost target is its price in `\$/MWh` times the system base
-power and the interval length in hours.
+Prices the [`FCASOfferBandVariable`](@ref)s of an [`_fcas_offer_groups`](@ref) `group` in the invariant objective
+expression. Each band's cost is its `band_prices` entry (`\$/MWh`, the day price of the device's bid on that side)
+times the system base power and the interval length in hours.
 
 # Arguments
 - `container`: the optimization container of the model being built.
 - `group`: the offer group.
 - `svc`: the `FCASService` of the group.
-- `devices_template`: the template's device models, supplying the model of each device type.
 
 # Returns
 `nothing`.
 """
-function _add_fcas_band_costs!(container::PSI.OptimizationContainer, group, svc::FCASService, devices_template)
+function _add_fcas_band_costs!(container::PSI.OptimizationContainer, group, svc::FCASService)
     bands = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, group.meta)
     labels = axes(bands)[2]
-    metas = Dict{Tuple{Bool, String}, String}()
-    for decremental in (false, true)
-        side = [device for (device, dec) in group.offers if dec == decremental]
-        isempty(side) && continue
-        for (meta, ts_name, batch) in _fcas_band_price_batches(group, svc, side, decremental)
-            for device in batch
-                metas[(decremental, PSY.get_name(device))] = meta
-            end
-            for D in unique(typeof.(batch))
-                devices = D[device for device in batch if device isa D]
-                PSI.add_parameters!(
-                    container, FCASBandPriceParameter, devices, _fcas_device_model(devices_template, D);
-                    meta = meta, time_series_name = ts_name,
-                )
-            end
+    scale = PSI.get_base_power(container) * interval_hours(PSI.get_resolution(container))
+    for (device, decremental) in group.offers
+        dname = PSY.get_name(device)
+        bid = AustralianElectricityMarkets._fcas_side_bid(device, get_bid_type(svc), offer_side(decremental))
+        prices = isnothing(bid) ? nothing : bid.band_prices
+        isnothing(prices) && throw(
+            ArgumentError("$dname has no $(get_bid_type(svc)) band prices; run the replay input stage."),
+        )
+        for t in PSI.get_time_steps(container), (b, label) in enumerate(labels)
+            PSI.add_to_objective_invariant_expression!(container, (scale * prices[b]) * bands[dname, label, t])
         end
     end
-    scale = PSI.get_base_power(container) * interval_hours(PSI.get_resolution(container))
-    for (device, decremental) in group.offers, t in PSI.get_time_steps(container), (b, label) in enumerate(labels)
-        dname = PSY.get_name(device)
-        key = PSI.ParameterKey(FCASBandPriceParameter, typeof(device), metas[(decremental, dname)])
-        PSI.add_cost_target!(container, key, dname, (b,), t, bands[dname, label, t], scale)
-    end
     return
-end
-
-
-"""
-    _fcas_band_price_meta(group, decremental::Bool) -> String
-
-The meta of a band-price parameter of `group` on the side `decremental`: `<group.meta>_gen` for the
-generation side or `<group.meta>_load` for the load side.
-
-# Arguments
-- `group`: the offer group of [`_fcas_offer_groups`](@ref).
-- `decremental`: `true` for the load side.
-
-# Returns
-A `String`.
-"""
-function _fcas_band_price_meta(group, decremental::Bool)
-    return "$(group.meta)_$(decremental ? "load" : "gen")"
 end
 
 
@@ -884,7 +822,7 @@ function PSI.construct_service!(
     end
 
     for group in groups
-        _add_fcas_band_costs!(container, group, svc, devices_template)
+        _add_fcas_band_costs!(container, group, svc)
     end
     return
 end

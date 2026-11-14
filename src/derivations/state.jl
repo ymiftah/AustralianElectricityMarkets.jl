@@ -1,4 +1,23 @@
 """
+    _max_active_power(availability, initial_mw, ramp_down_rate, Δ) -> Float64
+
+The upper dispatch limit of one unit in one interval: its `availability`, raised to the ramp-down
+floor `initial_mw - ramp_down_rate × Δ` when that floor is higher.
+
+# Arguments
+- `availability`: the dispatch envelope upper bound, in MW or per unit of the base.
+- `initial_mw`: the unit's metered output at the start of the interval, in the same unit.
+- `ramp_down_rate`: the ramp-down rate per hour, in the same unit.
+- `Δ`: the interval length in hours.
+
+# Returns
+A `Float64` in the same unit as `availability`.
+"""
+function _max_active_power(availability::Real, initial_mw::Real, ramp_down_rate::Real, Δ::Real)
+    return max(availability, initial_mw - ramp_down_rate * Δ)
+end
+
+"""
     max_active_power_floor(availability, ramp_down_rate, interval_hours, state::NEMUnitState) -> Float64
 
 The upper dispatch limit of one unit in one interval: `availability`, raised to the ramp-down floor
@@ -80,7 +99,7 @@ end
 
 
 """
-    fcas_state_stranded_ok(trap::FCASTrapezium, state::NEMUnitState; storage::Bool = false) -> Bool
+    fcas_state_stranded_ok(trap::FCASTrapezium, state::NEMUnitState, storage::Bool) -> Bool
 
 Whether the unit's starting output lies inside the enablement span of `trap`, AEMO *FCAS Model in
 NEMDE* §5's stranded pre-condition. The caller ANDs the result with the other §5 conditions. A
@@ -95,7 +114,7 @@ NEMDE* §5's stranded pre-condition. The caller ANDs the result with the other �
 # Returns
 `Bool`.
 """
-function fcas_state_stranded_ok(trap::FCASTrapezium, state::NEMUnitState; storage::Bool = false)
+function fcas_state_stranded_ok(trap::FCASTrapezium, state::NEMUnitState, storage::Bool)
     point = storage ? state.initial_mw : max(state.initial_mw, 0.0)
     return get_enablement_min(trap) <= point <= get_enablement_max(trap)
 end
@@ -174,7 +193,7 @@ end
 The joint energy and FCAS limit of one direction: `state.initial_mw` plus the AGC ramping
 `capability` on the upper form (energy is dispatched and the regulation side delivered) and minus it
 on the lower form. A `PowerSystems.ControllableLoad`'s LOWERREG row takes the upper form
-([`fcas_upper_regulation_service`](@ref)). `capability` and the result are in the same unit as
+(`fcas_upper_regulation_service`). `capability` and the result are in the same unit as
 `state.initial_mw`.
 
 # Arguments
@@ -280,4 +299,22 @@ function _composite_down_ramp(initial_mw::Real, gen_down::Real, load_up::Real, p
     iszero(gen_down) && return 0.0
     abs(initial_mw / gen_down) >= period && return Float64(gen_down)
     return ((period - abs(initial_mw / gen_down)) * load_up + initial_mw) / period
+end
+
+
+"""
+    mnsp_fixed_load(raw::Float64) -> NTuple{2, Float64}
+
+The fixed-loading value and invocation flag of an MNSP link direction in one interval, from the bid's
+`FIXEDLOAD` in MW: `(0.0, 0.0)` where AEMO publishes NULL (`NaN`), otherwise `(raw, 1.0)`.
+
+# Arguments
+- `raw`: the bid's `FIXEDLOAD` at the interval, MW, `NaN` where unpublished.
+
+# Returns
+`(value, invoked)`: the loading in MW and the invocation flag.
+"""
+function mnsp_fixed_load(raw::Float64)::NTuple{2, Float64}
+    isnan(raw) && return (0.0, 0.0)
+    return (raw, 1.0)
 end

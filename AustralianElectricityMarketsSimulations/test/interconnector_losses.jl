@@ -96,7 +96,7 @@ function _loss_test_system(;
     )
     ic1 = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
     PSY.add_supplemental_attribute!(sys, ic1, model)
-    coefficients && set_loss_demand_coefficients!(sys)
+    coefficients && AustralianElectricityMarkets._set_loss_demand_coefficients!(sys)
     # Regenerate the DeterministicSingleTimeSeries views removed above, on the fixture's own hourly grid; PSI
     # finds no load parameter to add when no PowerLoad carries one.
     PSY.transform_single_time_series!(sys, Hour(2), Hour(1))
@@ -402,12 +402,12 @@ end
     @test all(abs(gap) < 1.0e-6 for gap in gaps.gap_mw)
 end
 
-@testset "a build without the loss demand coefficient series fails, naming its setter" begin
+@testset "a build without the loss demand coefficient series fails, naming nem_system" begin
     sys = _loss_test_system(; demand_coefficients = Dict("2" => 1.0e-4), coefficients = false)
     model = _decision_model(_loss_template(sys), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     folder = mktempdir()
     @test PSI.build!(model; output_dir = folder) == PSI.ModelBuildStatus.FAILED
-    @test any(f -> occursin("set_loss_demand_coefficients!", read(f, String)), readdir(folder; join = true))
+    @test any(f -> occursin("nem_system", read(f, String)), readdir(folder; join = true))
 end
 
 @testset "the demand term is the flow's coefficient and follows the available loads" begin
@@ -453,75 +453,6 @@ end
     end
 end
 
-@testset "the loss demand setter evaluates each model's demand term per interval" begin
-    # The mock hive supplies real NEM magnitudes; `_loss_test_system`'s hand-built model covers the
-    # formulation side, this covers the series the setter writes from cached demand.
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
-    as_of = Date(2025, 1, 2)
-    sys = nem_system(db, RegionalNetworkConfiguration())
-    @test_logs (:warn, r"no resolvable loss model") match_mode = :any attach_interconnector_losses!(sys, db, as_of)
-    # No demand series yet: nothing to evaluate the loss factor at.
-    @test_throws r"no \"loss_demand\" series" set_loss_demand_coefficients!(sys)
-    date_range = DateTime(2025, 1, 1, 0, 0):Minute(5):DateTime(2025, 1, 1, 1, 0)
-    attach_demand!(sys, db, date_range; resolution = Minute(5))
-    set_loss_demand_coefficients!(sys)
-    base_power = PSY.get_base_power(sys)
-    ic1 = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
-    model = only(PSY.get_supplemental_attributes(AEMS.InterconnectorLossModel, ic1))
-    loss_demand_mw(region) = PSY.with_units_base(sys, "NATURAL_UNITS") do
-        PSY.get_time_series_values(PSY.SingleTimeSeries, PSY.get_component(PSY.PowerLoad, sys, "$region Load"), "loss_demand")
-    end
-    # Per-unit coefficient times per-unit demand equals the MW coefficient times MW demand.
-    expected = sum(c / base_power .* loss_demand_mw(r) for (r, c) in model.demand_coefficients)
-    coefficient = PSY.get_time_series_values(PSY.SingleTimeSeries, ic1, "loss_demand_coefficient")
-    @test coefficient ≈ expected
-    @test any(!iszero, coefficient)
-    @test PSY.get_time_series_timestamps(PSY.SingleTimeSeries, ic1, "loss_demand_coefficient") ==
-        PSY.get_time_series_timestamps(PSY.SingleTimeSeries, PSY.get_component(PSY.PowerLoad, sys, "VIC1 Load"), "loss_demand")
-    @test !PSY.has_time_series(PSY.get_component(PSY.AreaInterchange, sys, "IC6"), PSY.SingleTimeSeries, "loss_demand_coefficient")
-
-    # An unavailable load drops out of its region's demand, and re-running replaces the series.
-    PSY.set_available!(PSY.get_component(PSY.PowerLoad, sys, "VIC1 Load"), false)
-    set_loss_demand_coefficients!(sys)
-    without_vic = sum(
-        (c / base_power .* loss_demand_mw(r) for (r, c) in model.demand_coefficients if r != "VIC1");
-        init = zeros(length(coefficient)),
-    )
-    @test PSY.get_time_series_values(PSY.SingleTimeSeries, ic1, "loss_demand_coefficient") ≈ without_vic
-end
-
-@testset "the loss demand setter rejects a load on a bus with no area" begin
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
-    sys = nem_system(db, RegionalNetworkConfiguration())
-    @test_logs (:warn, r"no resolvable loss model") match_mode = :any attach_interconnector_losses!(sys, db, Date(2025, 1, 2))
-    date_range = DateTime(2025, 1, 1, 0, 0):Minute(5):DateTime(2025, 1, 1, 1, 0)
-    attach_demand!(sys, db, date_range; resolution = Minute(5))
-    PSY.set_area!(PSY.get_bus(PSY.get_component(PSY.PowerLoad, sys, "VIC1 Load")), nothing)
-    err = _caught(() -> set_loss_demand_coefficients!(sys))
-    @test err isa ArgumentError
-    @test occursin("on a bus with no area", sprint(showerror, err))
-end
-
-@testset "the loss demand setter rejects a load series off the common timestamps" begin
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
-    sys = nem_system(db, RegionalNetworkConfiguration())
-    @test_logs (:warn, r"no resolvable loss model") match_mode = :any attach_interconnector_losses!(sys, db, Date(2025, 1, 2))
-    date_range = DateTime(2025, 1, 1, 0, 0):Minute(5):DateTime(2025, 1, 1, 1, 0)
-    attach_demand!(sys, db, date_range; resolution = Minute(5))
-    load = PSY.get_component(PSY.PowerLoad, sys, "VIC1 Load")
-    original = PSY.get_time_series(PSY.SingleTimeSeries, load, "loss_demand")
-    stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, load, "loss_demand")
-    values = PSY.get_time_series_values(PSY.SingleTimeSeries, load, "loss_demand")
-    PSY.remove_time_series!(sys, PSY.SingleTimeSeries, load, "loss_demand")
-    PSY.add_time_series!(
-        sys, load,
-        single_series("loss_demand", first(stamps) + Minute(5), values, PSY.get_resolution(original)),
-    )
-    err = _caught(() -> set_loss_demand_coefficients!(sys))
-    @test err isa ArgumentError
-    @test occursin("is not on the timestamps", sprint(showerror, err))
-end
-
 @testset "loss equations use the loss_demand series when a load carries one" begin
     # `loss_demand` is 1.5x the dispatch `max_active_power` series: the demand term must follow it.
     sys = _loss_test_system(;
@@ -551,15 +482,6 @@ end
     PSI.set_device_model!(template, PSY.AreaInterchange, AEMS.NEMInterconnectorLoss)
     model = _decision_model(template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.FAILED
-end
-
-@testset "the loss demand setter rejects a load on an area-less bus" begin
-    sys = _loss_test_system()
-    load = first(PSY.get_components(PSY.PowerLoad, sys))
-    PSY.set_area!(PSY.get_bus(load), nothing)
-    err = _caught(() -> set_loss_demand_coefficients!(sys))
-    @test err isa ArgumentError
-    @test occursin(PSY.get_name(load), sprint(showerror, err))
 end
 
 @testset "no available AreaInterchange builds without loss variables" begin
@@ -599,6 +521,7 @@ function _mnsp_operating_series!(sys; initial = 0.0, up = 1000.0, down = 1000.0,
             AustralianElectricityMarkets.NEMMNSPBid(;
                 direction,
                 offer_curves = bid.offer_curves,
+                band_prices = bid.band_prices,
                 max_avail = bid.max_avail,
                 ramp_up = _add_key!(sys, ic, stamps, getproperty(names, Symbol(dir, "_ramp_rate")), fill(Float64(ramp), length(stamps))),
                 fixed_load = _add_key!(
@@ -608,20 +531,18 @@ function _mnsp_operating_series!(sys; initial = 0.0, up = 1000.0, down = 1000.0,
             ),
         )
     end
-    AEMS._set_mnsp_fixed_loads!(sys)
-    PSY.transform_single_time_series!(sys, Hour(2), Hour(1))
     return ic
 end
 
 """
-    _attach_mnsp_offers!(sys; forward, reverse, forward_tlfs = (1.0, 1.0), reverse_tlfs = (1.0, 1.0), forward_after = nothing)
+    _attach_mnsp_offers!(sys; forward, reverse, forward_tlfs = (1.0, 1.0), reverse_tlfs = (1.0, 1.0), operating = (;))
 
 Gives `IC1` (area `"1"` to `"2"`) an MNSP offer per link and re-transforms the system's series.
-`forward` and `reverse` are `(max_avail_mw, [(band_mw, price), ...])`, constant over the loads' series
-unless `forward_after` (the same bands list) replaces the forward offer from the second timestamp on.
+`forward` and `reverse` are `(max_avail_mw, [(band_mw, price), ...])`, constant over the loads' series.
+`operating` holds the keywords of `_mnsp_operating_series!`, applied before the derived fixed loading is written.
 """
 function _attach_mnsp_offers!(
-        sys; forward, reverse, forward_tlfs = (1.0, 1.0), reverse_tlfs = (1.0, 1.0), forward_after = nothing,
+        sys; forward, reverse, forward_tlfs = (1.0, 1.0), reverse_tlfs = (1.0, 1.0), operating = (;),
     )
     ic = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
     load = first(PSY.get_components(PSY.PowerLoad, sys))
@@ -631,11 +552,7 @@ function _attach_mnsp_offers!(
             ("forward", forward, forward_tlfs), ("reverse", reverse, reverse_tlfs),
         )
         curve = offer_curve(bands)
-        offers = if dir == "forward" && !isnothing(forward_after)
-            [i == 1 ? curve : offer_curve(forward_after) for i in eachindex(grid)]
-        else
-            fill(curve, length(grid))
-        end
+        offers = fill(curve, length(grid))
         direction = dir == "forward" ? AustralianElectricityMarkets.MNSPDirection.FORWARD : AustralianElectricityMarkets.MNSPDirection.REVERSE
         names = AustralianElectricityMarkets.NEM_MNSP_SERIES
         for old in PSY.get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPBid, ic)
@@ -656,14 +573,15 @@ function _attach_mnsp_offers!(
             AustralianElectricityMarkets.NEMMNSPBid(;
                 direction,
                 offer_curves = _add_key!(sys, ic, grid, getproperty(names, Symbol(dir, "_offer")), offers),
+                band_prices = AustralianElectricityMarkets._day_band_prices(offers, fill(true, length(offers)), "IC1 $dir"),
                 max_avail = _add_key!(sys, ic, grid, getproperty(names, Symbol(dir, "_max_avail")), fill(Float64(max_avail), length(grid))),
                 ramp_up = _add_key!(sys, ic, grid, getproperty(names, Symbol(dir, "_ramp_rate")), fill(1000.0, length(grid))),
                 fixed_load = _add_key!(sys, ic, grid, getproperty(names, Symbol(dir, "_fixed_load")), fill(NaN, length(grid))),
             ),
         )
     end
-    _mnsp_operating_series!(sys)
-    AEMS._set_mnsp_fixed_loads!(sys)
+    _mnsp_operating_series!(sys; operating...)
+    AustralianElectricityMarkets._set_mnsp_fixed_loads!(sys)
     PSY.transform_single_time_series!(sys, Hour(2), Hour(1))
     return ic
 end
@@ -729,46 +647,31 @@ end
     @test_throws r"incomplete directional offer inputs" AEMS._check_mnsp_offers(PSY.get_component(PSY.AreaInterchange, partial, "IC1"))
 end
 
-@testset "MNSP band prices are native time-series cost targets" begin
+@testset "MNSP band prices are typed day-constants in the invariant objective expression" begin
     sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
     _attach_mnsp_offers!(
         sys; forward = (500.0, [(200.0, 10.0), (300.0, 25.0)]), reverse = (500.0, [(500.0, 10.0)]),
-        forward_after = [(200.0, 40.0), (300.0, 5.0)],
     )
+    ic = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
+    @test AEMS._mnsp_bid(ic, "forward").band_prices == (10.0, 25.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     model = _decision_model(_loss_template(sys), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
-    base_power = PSI.get_base_power(container)
-    hours = AEMS.interval_hours(PSI.get_resolution(container))
-    key = PSI.ParameterKey(AEMS.MNSPBandPriceParameter, PSY.AreaInterchange, "forward")
-    prices = PSI.get_parameter_array(container, key)
-    price_column() = PSI.get_parameter_column_refs(PSI.get_parameter(container, key), "IC1")
-    multiplier = PSI.get_parameter_multiplier_array(container, key)
-    labels = axes(prices)[2]
-    bands = PSI.get_variable(container, AEMS.MNSPLinkBandVariable(), PSY.AreaInterchange, "forward")
-    @test all(==(1.0), multiplier)
-    @test [price_column()[b, 1] for b in labels[1:2]] == [10.0, 25.0]
-    @test [price_column()[b, 2] for b in labels[1:2]] == [40.0, 5.0]
-    @test all(==(0.0), [price_column()[b, t] for b in labels[3:end], t in 1:2])
-
-    # Each band's cost is price * (base power * interval hours), the coefficient of its band variable.
-    function check_band_costs(expected)
-        variant = PSI.get_variant_terms(PSI.get_objective_expression(container))
+    @test !isdefined(AEMS, :MNSPBandPriceParameter)
+    @test all(k -> nameof(PSI.IS.Optimization.get_entry_type(k)) != :MNSPBandPriceParameter, keys(PSI.get_parameters(container)))
+    cost_types = [PSI.IS.Optimization.get_entry_type(k) for k in keys(PSI.get_parameters(container))]
+    @test !any(T -> T <: PSI.TimeSeriesCostParameter, cost_types)
+    @test !PSI.get_objective_expression(container).has_variant_contributors
+    scale = PSI.get_base_power(container) * AEMS.interval_hours(PSI.get_resolution(container))
+    invariant = PSI.get_invariant_terms(PSI.get_objective_expression(container))
+    for (dir, expected) in (("forward", [10.0, 25.0]), ("reverse", [10.0, 0.0]))
+        bands = PSI.get_variable(container, AEMS.MNSPLinkBandVariable(), PSY.AreaInterchange, dir)
+        labels = axes(bands)[2]
         for t in 1:2, (b, label) in enumerate(labels)
-            price = b <= size(expected, 1) ? expected[b, t] : 0.0
-            @test PSI.JuMP.coefficient(variant, bands["IC1", label, t]) == price * (base_power * hours)
+            price = b <= length(expected) ? expected[b] : 0.0
+            @test PSI.JuMP.coefficient(invariant, bands["IC1", label, t]) == scale * price
         end
     end
-    check_band_costs([10.0 40.0; 25.0 5.0])
-
-    # After one execution the window starts at the second timestamp; the update re-applies the costs.
-    PSI.set_execution_count!(model, 1)
-    PSI.cost_function_unsynch(container)
-    PSI.reset_variant_terms(PSI.get_objective_expression(container))
-    PSI.update_container_parameter_values!(container, model, key, PSI.DatasetContainer{PSI.InMemoryDataset}())
-    PSI.set_execution_count!(model, 0)
-    @test [price_column()[b, t] for b in labels[1:2], t in 1:2] == [40.0 40.0; 5.0 5.0]
-    check_band_costs([40.0 40.0; 5.0 5.0])
 end
 
 @testset "MNSP link offers bound and price the interconnector flow" begin

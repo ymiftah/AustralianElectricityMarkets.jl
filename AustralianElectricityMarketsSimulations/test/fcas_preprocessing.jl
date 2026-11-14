@@ -1,4 +1,4 @@
-# `set_effective_offers!` against the values the FCAS build reads over one-interval windows.
+# The effective FCAS offers against the values the FCAS build reads over one-interval windows.
 
 # A populated system over `date_range`, using the AEM setters for the preprocessing tests.
 function fcas_replay_system(db, date_range)
@@ -6,13 +6,13 @@ function fcas_replay_system(db, date_range)
     attach_demand!(sys, db, date_range; resolution = DISPATCH_INTERVAL)
     set_market_bids!(sys, db, date_range; resolution = DISPATCH_INTERVAL)
     attach_dispatch_limits!(sys, db, date_range)
-    set_effective_offers!(sys)
+    AustralianElectricityMarkets._set_replay_inputs!(sys)
     set_mnsp_offers!(sys, db, date_range)
     PSY.transform_single_time_series!(sys, DISPATCH_INTERVAL, DISPATCH_INTERVAL)
     return sys
 end
 
-@testset "set_effective_offers! masks each interval's offer by its own enablement" begin
+@testset "the effective FCAS offer masks each interval's offer by its own enablement" begin
     sys = fcas_toy_system(; alta_agc = [1, 0], park_initial = [40.0, 2.0], alta_reg_avail = [15.0, 8.0])
     inactive = FCAS_INACTIVE_LIMIT_MW / PSY.get_base_power(sys)
     values(device, name) = PSY.get_time_series_values(PSY.SingleTimeSeries, PSY.get_component(PSY.Device, sys, device), name)
@@ -31,7 +31,7 @@ end
     ramping = values(TOY_CHEAP, "fcas_ramping_limits_RAISEREG")
     @test ramping[1] == (0.5 + 0.2, inactive) && ramping[2] == (inactive, inactive)
     # The battery's §6.4 limit is its 20 MW AGC ramping capability.
-    @test last.(values(TOY_BATTERY, "fcas_ramping_limits_RAISEREG")) ≈ [0.2, 0.2]
+    @test last.(values(TOY_BATTERY, "fcas_ramping_limits_RAISEREG")) ≈ [0.2, 0.2, 0.2]
 end
 
 @testset "joint ramping is exempt for a fast-start unit in modes 0 to 2" begin

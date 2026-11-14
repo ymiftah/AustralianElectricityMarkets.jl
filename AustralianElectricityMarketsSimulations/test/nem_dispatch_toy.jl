@@ -601,40 +601,7 @@ end
     end
 end
 
-@testset "tie groups" begin
-    band(price, name, band = 1) = (; price, name, band)
-    tol = TIE_BREAK_CVP_FACTOR
-    groups = AEMS.tie_groups
-    @test groups([band(5.0, "a"), band(5.0, "b"), band(5.0, "c")]) == [[1, 2, 3]]
-    # A run of one unit's bands is no group; zero-width bands are grouped like any other.
-    @test groups([band(5.0, "a", 1), band(5.0, "a", 2), band(7.0, "b")]) == Vector{Int}[]
-    @test groups([band(5.0, "a", 2), band(5.0, "a", 1), band(5.0, "b")]) == [[2, 1, 3]]
-    # Prices beyond the tolerance stay separate, within it they tie; a transitive chain throws.
-    @test groups([band(5.0, "a"), band(5.0 + 2tol, "b")]) == Vector{Int}[]
-    @test groups([band(5.0, "a"), band(5.0 + 0.5tol, "b")]) == [[1, 2]]
-    @test_throws r"transitive ties are not supported" groups([band(5.0, "a"), band(5.0 + 0.8tol, "b"), band(5.0 + 1.6tol, "c")])
-end
-
-@testset "tie-break scale series" begin
-    third = "Solitude"
-    sys = nem_toy_system(
-        [
-            TOY_CHEAP => toy_unit(168.0, [(168.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
-            TOY_EXPENSIVE => toy_unit(46.0, [(46.0, 10.0), (10.0, 30.0)]; initial = 0.0, ramp_up = 100.0),
-            third => toy_unit(122.0, [(122.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
-        ],
-        168.0,
-    )
-    scale(name, k) = PSY.get_time_series_values(
-        PSY.SingleTimeSeries, PSY.get_component(ThermalStandard, sys, name), "tie_break_scale_$k",
-    )
-    @test scale(TOY_CHEAP, 1) ≈ [1.0, 1.0]
-    @test scale(TOY_EXPENSIVE, 1) ≈ fill(46.0 / 168.0, 2)
-    @test scale(third, 1) ≈ fill(122.0 / 168.0, 2)
-    # Park City's $30 band ties with no other unit, so it carries no scale.
-    @test !PSY.has_time_series(PSY.get_component(ThermalStandard, sys, TOY_EXPENSIVE), PSY.SingleTimeSeries, "tie_break_scale_2")
-
-    # A tied contributor without its scale series fails the build.
+@testset "a tied contributor without its scale series fails the build" begin
     unscaled = nem_toy_system(
         [
             TOY_CHEAP => toy_unit(100.0, [(100.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
@@ -654,7 +621,7 @@ end
     status, log = _toy_build_log(model)
     @test status == PSI.ModelBuildStatus.FAILED
     @test occursin("tie-break: 2 unit(s) with price-tied bands carry no tie-break scale forecast: Alta, Park City.", log)
-    @test occursin("Call set_effective_offers!(sys) before transform_single_time_series!.", log)
+    @test occursin("Build the system with nem_system before transform_single_time_series!.", log)
 end
 
 @testset "a unit carrying tie-break scales must be modelled" begin
@@ -688,7 +655,7 @@ end
     @test occursin("tie-break: 1 unit(s) carry tie-break scales but have no energy offer band variables in the model: $TOY_BATTERY.", log)
 end
 
-@testset "an energy offer series without a recorded bid fails the tie-break build by name" begin
+@testset "an energy offer series without a recorded bid fails the build by name" begin
     sys = nem_toy_system(
         [
             TOY_CHEAP => toy_unit(100.0, [(100.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
@@ -702,7 +669,7 @@ end
     PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
     status, log = _toy_build_log(toy_model(sys; template))
     @test status == PSI.ModelBuildStatus.FAILED
-    @test occursin("tie-break: $TOY_CHEAP has an energy offer series but no recorded NEMEnergyBid", log)
+    @test occursin("$TOY_CHEAP has an energy offer series but no NEMEnergyBid on the", log)
 end
 
 @testset "empty bands priced alike do not form tie groups" begin
@@ -724,41 +691,6 @@ end
     @test out.dispatch_mw[TOY_CHEAP] ≈ 30.0 atol = TOY_TOLERANCE
     @test out.dispatch_mw[TOY_EXPENSIVE] ≈ 20.0 atol = TOY_TOLERANCE
 end
-
-@testset "a band empty at the first interval but not later keeps its tie and a zero scale" begin
-    sys = nem_toy_system(
-        [
-            TOY_CHEAP => toy_unit(100.0, [[(60.0, 20.0), (0.0, 50.0)], [(60.0, 20.0), (30.0, 50.0)]]; initial = 0.0, ramp_up = 100.0),
-            TOY_EXPENSIVE => toy_unit(100.0, [(40.0, 20.0), (40.0, 50.0)]; initial = 0.0, ramp_up = 100.0),
-        ],
-        60.0,
-    )
-    scale(name, k) = PSY.get_time_series_values(
-        PSY.SingleTimeSeries, PSY.get_component(ThermalStandard, sys, name), "tie_break_scale_$k",
-    )
-    @test scale(TOY_CHEAP, 2) ≈ [0.0, 30.0 / 40.0]
-    @test scale(TOY_EXPENSIVE, 2) ≈ [1.0, 1.0]
-end
-
-@testset "set_effective_offers! removes scales left by an earlier call" begin
-    # The fixture attaches a stale scale in `mutate!` and runs the setter afterwards.
-    sys = nem_toy_system(
-        [
-            TOY_CHEAP => toy_unit(100.0, [(60.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
-            TOY_EXPENSIVE => toy_unit(100.0, [(40.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
-        ],
-        50.0;
-        mutate! = (sys, stamps) -> PSY.add_time_series!(
-            sys, PSY.get_component(ThermalStandard, sys, TOY_CHEAP),
-            AustralianElectricityMarkets.single_series("tie_break_scale_7", TOY_START, fill(0.5, length(stamps)), TOY_RESOLUTION),
-        ),
-    )
-    alta = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
-    @test !PSY.has_time_series(alta, PSY.SingleTimeSeries, "tie_break_scale_7")
-    @test PSY.has_time_series(alta, PSY.SingleTimeSeries, "tie_break_scale_1")
-end
-
-include("tie_break_validation.jl")
 
 @testset "tie-break scale rows skip devices excluded by the device model's filter_function" begin
     third = "Solitude"
@@ -830,32 +762,6 @@ end
     @test sort!(collect(keys(rows.data))) == [("1_offer", k, 1) for k in 1:3]
     @test Set(keys(up.data)) == Set(keys(rows.data)) == Set(keys(down.data))
     @test all(k -> PSI.JuMP.value(up[k...]) + PSI.JuMP.value(down[k...]) < 1.0e-8, keys(rows.data))
-end
-
-@testset "set_effective_offers! attaches one EnergyTieBreak over the units with an energy offer" begin
-    sys = nem_toy_system(
-        [
-            TOY_CHEAP => toy_unit(100.0, [(60.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
-            TOY_EXPENSIVE => toy_unit(100.0, [(40.0, 30.0)]; initial = 0.0, ramp_up = 100.0),
-        ],
-        50.0;
-        batteries = [TOY_BATTERY => toy_battery(100.0, 10.0, 50.0, 1.0; initial = 0.0, ramp_up = 100.0)],
-        tie_break_scales = false,
-    )
-    service = PSY.get_component(EnergyTieBreak, sys, TIE_BREAK_SERVICE_NAME)
-    @test isnothing(service)
-    # The derivation runs before the forecasts are built, as `prepare_replay!` does.
-    PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries)
-    set_effective_offers!(sys)
-    set_effective_offers!(sys)
-    services = collect(PSY.get_components(EnergyTieBreak, sys))
-    @test length(services) == 1
-    # No band ties here; every unit with an energy offer still contributes, so the build-time checks run.
-    contributors = PSY.get_contributing_devices(sys, only(services))
-    @test sort!(PSY.get_name.(contributors)) == sort!([TOY_CHEAP, TOY_EXPENSIVE, TOY_BATTERY])
-    for device in contributors
-        @test count(s -> s isa EnergyTieBreak, PSY.get_services(device)) == 1
-    end
 end
 
 @testset "duals requested on the tie-break service model fail the build" begin

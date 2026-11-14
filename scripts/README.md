@@ -299,10 +299,10 @@ for (k, steps) in enumerate(replay_chunks(trading_day_steps(Date(2026, 1, 1))))
         db, NEMDEConfiguration(); date_range = horizon, time_series_in_memory = false,
         time_series_directory = joinpath(chunk_folder, "time_series"),
     )
-    skipped = prepare_replay!(sys, template, steps)
     model = PSI.DecisionModel(
         NEMDispatchProblem, template, sys; optimizer, initial_time = first(steps), name = "dispatch",
     )
+    skipped = replay_skipped_constraints(sys, template)
     models = PSI.SimulationModels(; decision_models = [model])
     sequence = PSI.SimulationSequence(; models, ini_cond_chronology = PSI.InterProblemChronology())
     simulation = PSI.Simulation(;

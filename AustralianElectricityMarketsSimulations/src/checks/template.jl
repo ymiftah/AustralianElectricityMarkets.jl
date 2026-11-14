@@ -2,8 +2,7 @@
     check_template_against_sys(template, sys) -> Nothing
 
 Verifies that `sys` carries the inputs that `template` depends on and that `template` models every
-dispatch participant of `sys` and every available `GenericConstraint` it can build. Run after
-[`exclude_unmodeled_services!`](@ref) and before the model is built.
+dispatch participant of `sys`. Run by `PSI.validate_template` before the model is built.
 
 # Arguments
 - `template`: the `PSI.ProblemTemplate` the replay builds, e.g. [`template_nemde`](@ref)().
@@ -12,8 +11,7 @@ dispatch participant of `sys` and every available `GenericConstraint` it can bui
 # Returns
 `nothing`. Throws `ArgumentError` naming the first failed check: an incomplete input of `sys`, a device
 carrying NEM unit data modelled with a formulation that is not an [`AbstractNEMDispatch`](@ref), a dispatch
-participant type with no device model in `template`, or an available `GenericConstraint` the template
-cannot build.
+participant type with no device model in `template`.
 """
 function check_template_against_sys(template::PSI.ProblemTemplate, sys::PSY.System)
     for model in values(PSI.get_device_models(template))
@@ -36,8 +34,44 @@ function check_template_against_sys(template::PSI.ProblemTemplate, sys::PSY.Syst
                 "$(join(string.(missing_types), ", ")).",
         ),
     )
-    if _has_service_model(template, GenericConstraint)
-        _filter_buildable_generic_constraints(sys, template, collect(PSY.get_components(PSY.get_available, GenericConstraint, sys)))
-    end
+    return
+end
+
+
+"""
+    _check_excluded_constraints(sys, template) -> Nothing
+
+Verifies that every constraint `template` excludes by name is a `GenericConstraint` of `sys`.
+
+# Arguments
+- `sys`: the replay system.
+- `template`: the `PSI.ProblemTemplate` the replay builds.
+
+# Returns
+`nothing`. Throws `ArgumentError` naming the unknown constraints.
+"""
+function _check_excluded_constraints(sys::PSY.System, template::PSI.ProblemTemplate)
+    unknown = sort!([n for n in keys(_excluded_constraints(template)) if isnothing(PSY.get_component(GenericConstraint, sys, n))])
+    isempty(unknown) || throw(
+        ArgumentError(
+            "validate_template: exclude_constraints names $(join(unknown, ", ")), which are not GenericConstraints of sys.",
+        ),
+    )
+    return
+end
+
+
+"""
+    _check_blocked_constraints(blocked) -> Nothing
+
+Throws `ArgumentError` naming each constraint of `blocked`, the result of [`_blocked_constraints`](@ref).
+"""
+function _check_blocked_constraints(blocked)
+    isempty(blocked) || throw(
+        ArgumentError(
+            "validate_template: generic constraints the template cannot model: " *
+                "$(join(("$(r.constraint) ($(r.reason))" for r in blocked), ", ")).",
+        ),
+    )
     return
 end

@@ -42,7 +42,8 @@ availability and offers nothing. A missing input inside a registration is an err
 
 # Arguments
 - `db`: the market cache connection.
-- `date_range`: five-minute interval-ending timestamps, including the exclusive stop; at least two stamps.
+- `date_range`: five-minute interval-ending timestamps, including the exclusive stop; at least three stamps. The
+  replay intervals, all but the last two stamps, must fall in one trading day and one financial year.
 - `intervention`: `0` for pricing or `1` for physical dispatch inputs.
 - `interval_flow_limits`: attach published interval flow limits for diagnostic runs; default `false`.
   These limits are computed after dispatch and must not be used to validate simulated flows.
@@ -58,9 +59,7 @@ function AustralianElectricityMarkets.nem_system(
         time_series_directory::Union{Nothing, AbstractString} = nothing,
     )
     # 1. Validate the inputs
-    (step(date_range) == Minute(5) && length(date_range) >= 2) || throw(
-        ArgumentError("NEMDEConfiguration: the date range must step by 5 minutes over at least two stamps, got $date_range."),
-    )
+    _check_replay_range(date_range)
     resolution = Minute(5)
 
     # 2. Check the required tables are cached
@@ -83,9 +82,32 @@ function AustralianElectricityMarkets.nem_system(
     set_mnsp_offers!(sys, db, date_range; intervention)
     interval_flow_limits && set_interconnector_flow_limits!(sys, db, date_range; intervention)
 
-    # 6. Validate the built inputs
+    # 6. Derive the replay inputs, then validate the built inputs
+    AustralianElectricityMarkets._set_replay_inputs!(sys)
     AustralianElectricityMarkets._check_nemde_replay_inputs(sys)
     return sys
+end
+
+
+# Checks that `date_range` steps by five minutes over at least three stamps, and that its replay intervals (all
+# but the last two stamps) fall in one trading day, ending 04:00, and one financial year.
+function _check_replay_range(date_range::StepRange{DateTime})
+    step(date_range) == Minute(5) || throw(
+        ArgumentError("NEMDEConfiguration: the date range must step by 5 minutes, got $date_range."),
+    )
+    length(date_range) >= 3 || throw(
+        ArgumentError("NEMDEConfiguration: the date range needs at least three stamps, got $date_range."),
+    )
+    intervals = date_range[1:(end - 2)]
+    trading_day(stamp) = Date(stamp - Hour(4) - Minute(5))
+    trading_day(first(intervals)) == trading_day(last(intervals)) || throw(
+        ArgumentError("NEMDEConfiguration: the replay intervals of $date_range span more than one trading day."),
+    )
+    AustralianElectricityMarkets._financial_year_start(first(intervals)) ==
+        AustralianElectricityMarkets._financial_year_start(last(intervals)) || throw(
+        ArgumentError("NEMDEConfiguration: the replay intervals of $date_range span more than one financial year."),
+    )
+    return
 end
 
 

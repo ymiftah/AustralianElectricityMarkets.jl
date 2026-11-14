@@ -225,8 +225,6 @@ function nem_toy_system(
             gen, "max_active_power", unit.availability ./ unit.capacity;
             multiplier = PSY.get_max_active_power,
         )
-        add_series!(gen, "ramp_up_rate", unit.ramp_up ./ base_power)
-        add_series!(gen, "ramp_down_rate", unit.ramp_down ./ base_power)
         set_toy_unit_field!(sys, gen, stamps, :initial_mw, _toy_values(unit.initial, length(stamps)))
         set_toy_unit_field!(sys, gen, stamps, :ramp_up_limit, _toy_values(unit.ramp_up, length(stamps)) .* 60)
         set_toy_unit_field!(sys, gen, stamps, :ramp_down_limit, _toy_values(unit.ramp_down, length(stamps)) .* 60)
@@ -269,8 +267,6 @@ function nem_toy_system(
             roc_up = bat.roc_up, roc_down = bat.roc_down,
         )
 
-        add_series!(battery, "ramp_up_rate", bat.ramp_up ./ base_power)
-        add_series!(battery, "ramp_down_rate", bat.ramp_down ./ base_power)
         set_toy_unit_field!(sys, battery, stamps, :initial_mw, _toy_values(bat.initial, length(stamps)))
         set_toy_unit_field!(sys, battery, stamps, :ramp_up_limit, _toy_values(bat.ramp_up, length(stamps)) .* 60)
         set_toy_unit_field!(sys, battery, stamps, :ramp_down_limit, _toy_values(bat.ramp_down, length(stamps)) .* 60)
@@ -296,8 +292,6 @@ function nem_toy_system(
             scheduled, "max_active_power", ld.availability / ld.capacity;
             multiplier = PSY.get_max_active_power,
         )
-        add_series!(scheduled, "ramp_up_rate", ld.ramp_up / base_power)
-        add_series!(scheduled, "ramp_down_rate", ld.ramp_down / base_power)
         set_toy_unit_field!(sys, scheduled, stamps, :initial_mw, _toy_values(ld.initial, length(stamps)))
         set_toy_unit_field!(sys, scheduled, stamps, :ramp_up_limit, _toy_values(ld.ramp_up, length(stamps)) .* 60)
         set_toy_unit_field!(sys, scheduled, stamps, :ramp_down_limit, _toy_values(ld.ramp_down, length(stamps)) .* 60)
@@ -309,19 +303,48 @@ function nem_toy_system(
     for T in (ThermalStandard, HydroDispatch, RenewableDispatch, EnergyReservoirStorage, InterruptiblePowerLoad)
         foreach(device -> _key_toy_telemetry_limits!(sys, stamps, device), filter(AustralianElectricityMarkets.has_nem_unit_data, collect(PSY.get_components(T, sys))))
     end
-    if tie_break_scales
-        set_effective_offers!(sys)
-    else
-        AEMS._set_static_offers!(sys)
-        AEMS._set_mnsp_fixed_loads!(sys)
-        AEMS._set_state_seeds!(sys)
-        AEMS._set_fcas_effective_offers!(sys)
-        isnothing(interchange) || set_loss_demand_coefficients!(sys)
-        AEMS._attach_dispatch_inputs!(sys)
-    end
+    _extend_toy_series!(sys)
+    # The replay inputs first: the dispatch parameters and FCAS offers read the series they write.
+    AustralianElectricityMarkets._set_replay_inputs!(sys)
+    tie_break_scales || _strip_toy_tie_breaks!(sys)
 
     # One window per `horizon`.
     PSY.transform_single_time_series!(sys, horizon, TOY_RESOLUTION)
+    return sys
+end
+
+# Repeats the last point of every raw series one step on: `nem_system` series carry one point beyond the
+# last simulated step, so the replay intervals of the toy equal its steps.
+function _extend_toy_series!(sys::PSY.System)
+    for component in PSY.get_components(PSY.Component, sys), key in collect(PSY.get_time_series_keys(component))
+        key isa PSY.IS.StaticTimeSeriesKey || continue
+        name = PSY.IS.get_name(key)
+        ts = PSY.get_time_series(PSY.SingleTimeSeries, component, name)
+        data = PSY.get_data(ts)
+        stamps = collect(PSY.TimeSeries.timestamp(data))
+        values = collect(PSY.TimeSeries.values(data))
+        extended = PSY.SingleTimeSeries(;
+            name, resolution = PSY.get_resolution(ts),
+            data = PSY.TimeSeries.TimeArray([stamps; stamps[end] + TOY_RESOLUTION], [values; values[end:end]]),
+            scaling_factor_multiplier = PSY.IS.get_scaling_factor_multiplier(ts),
+        )
+        AustralianElectricityMarkets.replace_single_series!(sys, component, extended)
+    end
+    return sys
+end
+
+# Removes the tie-break scales and the EnergyTieBreak service that the replay input stage wrote, for a fixture
+# built without tie-break scales.
+function _strip_toy_tie_breaks!(sys::PSY.System)
+    for device in PSY.get_components(PSY.StaticInjection, sys), key in collect(PSY.get_time_series_keys(device))
+        name = PSY.IS.get_name(key)
+        startswith(name, "tie_break_scale_") || continue
+        PSY.has_time_series(device, PSY.DeterministicSingleTimeSeries, name) &&
+            PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, device, name)
+        AustralianElectricityMarkets.remove_single_series!(sys, device, name)
+    end
+    service = PSY.get_component(EnergyTieBreak, sys, TIE_BREAK_SERVICE_NAME)
+    isnothing(service) || PSY.remove_component!(sys, service)
     return sys
 end
 
@@ -395,6 +418,7 @@ function add_toy_interchange!(sys, stamps, ic)
             AustralianElectricityMarkets.NEMMNSPBid(;
                 direction,
                 offer_curves = _toy_series_key(sys, interchange, getproperty(AustralianElectricityMarkets.NEM_MNSP_SERIES, Symbol(dir, "_offer")), curves),
+                band_prices = AustralianElectricityMarkets._day_band_prices(curves, fill(true, length(curves)), "TOY $dir"),
                 max_avail = _toy_series_key(sys, interchange, getproperty(AustralianElectricityMarkets.NEM_MNSP_SERIES, Symbol(dir, "_max_avail")), avail),
                 ramp_up = _toy_series_key(sys, interchange, getproperty(AustralianElectricityMarkets.NEM_MNSP_SERIES, Symbol(dir, "_ramp_rate")), fill(1000.0, length(stamps))),
                 fixed_load = _toy_series_key(sys, interchange, getproperty(AustralianElectricityMarkets.NEM_MNSP_SERIES, Symbol(dir, "_fixed_load")), fill(NaN, length(stamps))),
@@ -558,7 +582,8 @@ function add_toy_fcas_offer!(
         service = bid_type, direction, offer_curves = AEM._series_key(device, field(:offer_curves)),
         max_avail = AEM._series_key(device, field(:max_avail)), trapezium = AEM._series_key(device, field(:trapezium)),
     )
-    AEM._set_fcas_bid!(AEM._nem_offer_cost(device), bid)
+    prices = AEM._day_band_prices(curves, fill(true, length(curves)), PSY.get_name(device))
+    AEM._set_fcas_bid!(AEM._nem_offer_cost(device), AEM._with_band_prices(bid, prices))
     return
 end
 
@@ -594,6 +619,20 @@ function _toy_energy_bid!(
     AEM._set_energy_bid!(AEM._nem_offer_cost(device), bid)
     current = AEM.has_registration(device) ? AEM.get_registration(device).schedule_type : ScheduleType.SCHEDULED
     set_registration!(device, _toy_registration(; schedule_type = current))
+    return
+end
+
+# Sets `band_prices` of each energy bid of `device` from its `energy_offer` series over every stamp, as the
+# replay input stage does for a built system.
+function _toy_set_band_prices!(device)
+    AEM = AustralianElectricityMarkets
+    cost = AEM._nem_offer_cost(device)
+    for bid in copy(AEM.get_energy_bids(cost))
+        view = AEM._energy_offer_view(device, AEM._energy_offer_side(bid.direction))
+        isnothing(view) && continue
+        prices = AEM._day_band_prices(view.curves, fill(true, length(view.curves)), PSY.get_name(device))
+        AEM._set_energy_bid!(cost, AEM._with_band_prices(bid, prices))
+    end
     return
 end
 

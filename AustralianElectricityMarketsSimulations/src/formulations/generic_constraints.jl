@@ -3,7 +3,7 @@
 PSI.get_default_time_series_names(::Type{GenericConstraint}, ::Type{LinearFactorLimit}) =
     Dict{Type{<:PSI.TimeSeriesParameter}, String}(
     NEMConstraintRHSParameter => NEM_CONSTRAINT_SERIES.rhs,
-    GenericConstraintSlackCostParameter => NEM_CONSTRAINT_SERIES.invoked,
+    GenericConstraintInvocationParameter => NEM_CONSTRAINT_SERIES.invoked,
 )
 
 
@@ -26,7 +26,7 @@ PSI.get_multiplier_value(::NEMConstraintRHSParameter, ::GenericConstraint, ::Lin
     1.0
 
 
-PSI.get_multiplier_value(::GenericConstraintSlackCostParameter, ::GenericConstraint, ::LinearFactorLimit) =
+PSI.get_multiplier_value(::GenericConstraintInvocationParameter, ::GenericConstraint, ::LinearFactorLimit) =
     1.0
 
 
@@ -331,7 +331,8 @@ Builds [`GenericConstraintSlackUp`](@ref)/[`GenericConstraintSlackDown`](@ref) f
 `PSI.get_use_slacks(model)`, one side per `get_sense(gc)` (`LE` → up only, `GE` → down only,
 `EQ` → both), and merges each into [`NEMConstraintLHS`](@ref): `-slack_up` on the `LE` side,
 `+slack_down` on the `GE` side, so `add_constraints!`'s stored bound becomes satisfiable by
-relaxing it rather than infeasible. A no-op when `use_slacks` is `false`.
+relaxing it rather than infeasible.
+A no-op when `use_slacks` is `false`.
 """
 function _add_gc_slack_variables!(
         container::PSI.OptimizationContainer, gc::GenericConstraint,
@@ -358,30 +359,6 @@ end
 
 # --- add_constraints!: sense dispatch, honouring the invoked series ---
 
-"""
-    _invoked_mask(container, gc) -> Vector{Float64}
-
-The `GenericConstraint`'s invoked series (`1.0`/`0.0`), read through its `invoked` key, over `container`'s
-time steps from its initial time.
-
-# Arguments
-- `container`: the optimization container being built.
-- `gc`: the generic constraint owning the invocation series.
-
-# Returns
-A `Vector{Float64}`.
-"""
-function _invoked_mask(container::PSI.OptimizationContainer, gc::GenericConstraint)
-    start_time = PSI.get_initial_time(container)
-    key = _constraint_key(gc, :invoked, NEM_CONSTRAINT_SERIES.invoked)
-    mask::Vector{Float64} = IS.get_time_series_values(
-        gc, key; start_time = start_time, len = length(PSI.get_time_steps(container)),
-        ignore_scaling_factors = true,
-    )
-    return mask
-end
-
-
 function PSI.add_constraints!(
         container::PSI.OptimizationContainer,
         ::Type{NEMConstraintLimit},
@@ -402,28 +379,20 @@ function PSI.add_constraints!(
     base_power = PSI.get_base_power(container)
     jm = PSI.get_jump_model(container)
     sense = get_sense(gc)
-    slacks = PSI.get_use_slacks(model)
-    slacks || !PSI.built_for_recurrent_solves(container) || throw(
-        ArgumentError(
-            "GenericConstraint \"$name\": a recurrent build masks non-invoked intervals with zero-cost " *
-                "slacks, so its LinearFactorLimit model needs use_slacks = true.",
-        ),
-    )
-    invoked = slacks ? nothing : _invoked_mask(container, gc)
+    # Every row is an Interval row; the invocation parameter frees the row of a non-invoked interval.
+    bounds = if sense == ConstraintSense.LE
+        JuMP.MOI.Interval(-Inf, 0.0)
+    elseif sense == ConstraintSense.GE
+        JuMP.MOI.Interval(0.0, Inf)
+    else
+        JuMP.MOI.Interval(0.0, 0.0)
+    end
+    invoked_key = PSI.ParameterKey(GenericConstraintInvocationParameter, GenericConstraint, name)
     for t in time_steps
-        if !slacks && invoked[t] == 0.0
-            # PSI's dual read-back broadcasts over every cell, so a non-invoked interval keeps a
-            # vacuous, disconnected row whose dual is exactly 0.0.
-            con[name, t] = JuMP.@constraint(jm, 0.0 <= 1.0)
-            continue
-        end
-        con[name, t] = if sense == ConstraintSense.LE
-            JuMP.@constraint(jm, expr[name, t] <= rhs_refs[t] * rhs_mult[name, t] / base_power)
-        elseif sense == ConstraintSense.GE
-            JuMP.@constraint(jm, expr[name, t] >= rhs_refs[t] * rhs_mult[name, t] / base_power)
-        else
-            JuMP.@constraint(jm, expr[name, t] == rhs_refs[t] * rhs_mult[name, t] / base_power)
-        end
+        rhs = rhs_refs[t] * rhs_mult[name, t] / base_power
+        con[name, t] = JuMP.@constraint(jm, expr[name, t] - rhs in bounds)
+        active = JuMP.MOI.get(jm, JuMP.MOI.ConstraintSet(), con[name, t])
+        PSI.add_bound_target!(container, invoked_key, name, t, con[name, t], (active.lower, active.upper))
     end
     return
 end
@@ -447,6 +416,7 @@ function PSI.construct_service!(
         meta = name,
     )
     PSI.add_parameters!(container, NEMConstraintRHSParameter, gc, model)
+    PSI.add_parameters!(container, GenericConstraintInvocationParameter, gc, model)
     return
 end
 
@@ -495,10 +465,9 @@ end
     PSI.objective_function!(container, gc, model::PSI.ServiceModel{GenericConstraint, LinearFactorLimit})
 
 Prices `gc`'s elastic slacks (built by [`_add_gc_slack_variables!`](@ref), a no-op unless
-`PSI.get_use_slacks(model)`) through a [`GenericConstraintSlackCostParameter`](@ref): each
-interval's cost target is its invoked value times the system base power, times
-[`constraint_cvp_factor`](@ref) per interval, times the Market Price Cap of the service model at the
-build's initial time. A non-invoked interval's slack is free and its row is vacuous.
+`PSI.get_use_slacks(model)`) at the system base power times [`constraint_cvp_factor`](@ref) per interval
+times the Market Price Cap of the service model at the build's initial time, as constants of the
+invariant objective.
 `GenericConstraint`s built without slacks carry no cost of their own.
 
 # Returns
@@ -515,15 +484,12 @@ function PSI.objective_function!(
     base_power = PSI.get_base_power(container)
     weight = constraint_cvp_factor(gc)
     mpc = _container_market_price_cap(container, PSI.get_initial_time(container))
-    PSI.add_parameters!(container, GenericConstraintSlackCostParameter, gc, model)
     scale = base_power * interval_cost_coefficient(weight, resolution) * mpc
     for var_type in (GenericConstraintSlackUp, GenericConstraintSlackDown)
         PSI.has_container_key(container, var_type, GenericConstraint, name) || continue
         slack = PSI.get_variable(container, var_type(), GenericConstraint, name)
         for t in time_steps
-            PSI.add_cost_target!(
-                container, GenericConstraintSlackCostParameter(), GenericConstraint, name, (), t, slack[name, t], scale,
-            )
+            PSI.add_to_objective_invariant_expression!(container, scale * slack[name, t])
         end
     end
     return

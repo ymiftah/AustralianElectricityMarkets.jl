@@ -179,13 +179,11 @@ end
 """
     _mnsp_offer_curve(row) -> PSY.PiecewiseStepData
 
-The offer curve of one `read_mnsp_offers` row: one step per band with a positive `BANDAVAIL`, in
-band order. A row with no available band yields a single zero-width step.
+The offer curve of one `read_mnsp_offers` row: one step per band `1` to `10`, zero-width where `BANDAVAIL` is
+zero, so step `k` is always `PRICEBAND<k>`.
 """
 function _mnsp_offer_curve(row)
     avail = [Float64(row[Symbol("BANDAVAIL$i")]) for i in 1:10]
     prices = [Float64(row[Symbol("PRICEBAND$i")]) for i in 1:10]
-    keep = avail .> 0
-    any(keep) || return PiecewiseStepData([0.0, 0.0], [0.0])
-    return PiecewiseStepData([0.0; cumsum(Float64.(avail[keep]))], Float64.(prices[keep]))
+    return PiecewiseStepData([0.0; cumsum(avail)], prices)
 end

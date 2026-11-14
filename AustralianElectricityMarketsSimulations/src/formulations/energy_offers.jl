@@ -122,16 +122,25 @@ function _energy_band_count(devices)
     return n
 end
 
-function PSI.get_multiplier_value(::Union{EnergyBandWidthParameter, EnergyBandPriceParameter}, ::PSY.StaticInjection, ::AbstractNEMDispatch)
+function PSI.get_multiplier_value(::EnergyBandWidthParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch)
     return 1.0
 end
 
 # The band axis of the energy offer parameters.
 function PSI.calc_additional_axes(
-        ::PSI.OptimizationContainer, ::Union{EnergyBandWidthParameter, EnergyBandPriceParameter},
+        ::PSI.OptimizationContainer, ::EnergyBandWidthParameter,
         devices::Union{Vector{D}, IS.FlattenIteratorWrapper{D}}, ::PSI.DeviceModel{D, <:AbstractNEMDispatch},
     ) where {D <: PSY.StaticInjection}
     return (string.(1:_energy_band_count(devices)),)
+end
+
+# The day band prices of `device`'s energy bid on `side`; throws when the replay inputs have not set them.
+function _energy_band_prices(device::PSY.Component, side::OfferSide)
+    bid = _energy_bid(_nem_offer_cost(device), side)
+    isnothing(bid) && throw(ArgumentError("$(PSY.get_name(device)) has an energy offer series but no NEMEnergyBid on the $(side) side."))
+    prices = bid.band_prices
+    isnothing(prices) && throw(ArgumentError("$(PSY.get_name(device)) has no energy band prices; run the replay input stage."))
+    return prices
 end
 
 """
@@ -140,9 +149,9 @@ end
 Prices the energy offer of the `devices` of `model` that carry the `energy_offer` series of `side`:
 one [`EnergyOfferBandVariable`](@ref) per band (labelled `"1"` to `"n"`), bounded by its [`EnergyBandWidthParameter`](@ref)
 width, summing with the offer's surplus and deficit slacks to the dispatch variable the side prices
-([`NEMUnitConstraint`](@ref) rows under meta `"offer_band|<side>"`), and costed through [`EnergyBandPriceParameter`](@ref) at the
+([`NEMUnitConstraint`](@ref) rows under meta `"offer_band|<side>"`), and costed in the invariant objective at the
 band price times the system base power and the interval hours, negative on the `LOAD` side. Band
-prices are the loss-factor referred prices of the series. Devices without the series add nothing.
+prices are the `band_prices` of each device's energy bid, the loss-factor referred day prices. Devices without the series add nothing.
 
 # Arguments
 - `container`: the optimization container of the model being built.
@@ -170,7 +179,6 @@ function _add_energy_offer_bands!(
     series = energy_offer_series_name(side)
     Base.ScopedValues.@with _ENERGY_BAND_COUNT => count begin
         PSI.add_parameters!(container, EnergyBandWidthParameter, selected, model; meta, time_series_name = series)
-        PSI.add_parameters!(container, EnergyBandPriceParameter, selected, model; meta, time_series_name = series)
     end
 
     power = PSI.get_variable(container, _energy_offer_power_variable(T, side)(), T)
@@ -180,11 +188,11 @@ function _add_energy_offer_bands!(
     widths = PSI.get_parameter(container, EnergyBandWidthParameter(), T, meta)
     width_multiplier = PSI.get_multiplier_array(widths)
     rows = PSI.add_constraints_container!(container, NEMUnitConstraint(), T, names, time_steps; meta = "offer_band|" * meta)
-    key = PSI.ParameterKey(EnergyBandPriceParameter, T, meta)
     base_power = PSI.get_base_power(container)
     direction = side == OfferSide.GEN ? 1.0 : -1.0
     scale = direction * base_power * interval_hours(PSI.get_resolution(container))
-    for name in names
+    for (name, device) in zip(names, selected)
+        prices = _energy_band_prices(device, side)
         width_refs = PSI.get_parameter_column_refs(widths, name)
         for t in time_steps
             for label in labels
@@ -199,7 +207,7 @@ function _add_energy_offer_bands!(
                 JuMP.@constraint(jm, bands[name, label, t] <= width_multiplier[name, label, t] * width_refs[label, t] / base_power)
             end
             for (b, label) in enumerate(labels)
-                PSI.add_cost_target!(container, key, name, (b,), t, bands[name, label, t], scale)
+                PSI.add_to_objective_invariant_expression!(container, (scale * prices[b]) * bands[name, label, t])
             end
         end
     end

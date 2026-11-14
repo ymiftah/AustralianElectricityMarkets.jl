@@ -33,6 +33,12 @@ _nw_interchange(name::String, from::Area, to::Area) = AreaInterchange(;
     @test bid.max_avail === 80.0
     @test bid.ramp_up === 1.5
     @test isnothing(bid.fixed_load)
+    @test isnothing(bid.band_prices)
+    priced = AEM.NEMMNSPBid(;
+        direction = AEM.MNSPDirection.FORWARD, offer_curves = PowerSystems.PiecewiseStepData([0.0, 10.0], [5.0]),
+        max_avail = 80, ramp_up = 1.5, band_prices = 1:10,
+    )
+    @test priced.band_prices === ntuple(Float64, 10)
 
     link = AEM.NEMMNSPLink(;
         direction = AEM.MNSPDirection.FORWARD, link_id = "BLNK", from_region_tlf = 1, to_region_tlf = 0.99,
@@ -71,6 +77,7 @@ end
             direction = AEM.MNSPDirection.FORWARD,
             offer_curves = PowerSystems.PiecewiseStepData([0.0, 10.0, 20.0], [5.0, 50.0]),
             max_avail = _nw_key(mnsp, "max_fwd"), ramp_up = 1.0, fixed_load = nothing,
+            band_prices = (5.0, 50.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
         ),
     )
     add_supplemental_attribute!(
@@ -104,6 +111,7 @@ end
         @test back_bid.direction == AEM.MNSPDirection.FORWARD
         @test back_bid.ramp_up === 1.0
         @test isnothing(back_bid.fixed_load)
+        @test back_bid.band_prices == (5.0, 50.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         @test back_bid.offer_curves == PowerSystems.PiecewiseStepData([0.0, 10.0, 20.0], [5.0, 50.0])
         @test back_bid.max_avail isa _NW_IS.TimeSeriesKey
         @test _NW_IS.get_time_series_values(

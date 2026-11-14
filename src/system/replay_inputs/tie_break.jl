@@ -1,51 +1,4 @@
-"""
-    tie_break_series_name(band, decremental) -> String
-
-Name of the series holding segment `band`'s tie-break scale, `"tie_break_scale_<band>"` with the side suffix.
-
-# Arguments
-- `band`: the offer segment index.
-- `decremental`: whether the offer is decremental.
-
-# Returns
-A `String`.
-"""
-function tie_break_series_name(band::Int, decremental::Bool)
-    return "tie_break_scale_$(band)" * side_suffix(offer_side(decremental))
-end
-
-
-"""
-    tie_groups(bands) -> Vector{Vector{Int}}
-
-Price-tied groups of `bands` (each with `price`, `name` and `band`): runs of the bands sorted by
-price whose consecutive prices differ by at most [`TIE_BREAK_CVP_FACTOR`](@ref), kept when they
-hold bands of two or more units. Each group lists indices into `bands` in sorted order. Throws an
-`ArgumentError` for a run spanning more than [`TIE_BREAK_CVP_FACTOR`](@ref), which only
-transitive ties produce.
-
-# Returns
-`Vector{Vector{Int}}`.
-"""
-function tie_groups(bands)
-    order = sort!(collect(eachindex(bands)); by = i -> (bands[i].price, bands[i].name, bands[i].band))
-    groups = Vector{Int}[]
-    start = 1
-    for k in eachindex(order)
-        (k == length(order) || bands[order[k + 1]].price - bands[order[k]].price > TIE_BREAK_CVP_FACTOR) || continue
-        group = order[start:k]
-        start = k + 1
-        lo, hi = bands[first(group)], bands[last(group)]
-        hi.price - lo.price > TIE_BREAK_CVP_FACTOR && throw(
-            ArgumentError(
-                "tie-break: the prices of $(lo.name) band $(lo.band) ($(lo.price)) and $(hi.name) band $(hi.band) " *
-                    "($(hi.price)) are tied only through bands between them; transitive ties are not supported.",
-            ),
-        )
-        length(unique(bands[i].name for i in group)) > 1 && push!(groups, group)
-    end
-    return groups
-end
+# The tie-break scales of the price-tied energy bands and the EnergyTieBreak service over their units.
 
 
 # The energy offers of one (direction, region): offer timestamps and resolution, and each unit's curves on them.
@@ -58,6 +11,35 @@ const _TieOffers = @NamedTuple{
 function _has_energy_offer(device::PSY.Component)
     cost = _nem_offer_cost(device)
     return !isnothing(cost) && !isempty(get_energy_bids(cost))
+end
+
+
+"""
+    _energy_offer_view(device, side::OfferSide) -> Union{Nothing, NamedTuple}
+
+The energy offer of `device` on `side`, read from the `"energy_offer"` series of that side: its `side`, the
+`timestamps` and `resolution` of the series and its `curves` (`PiecewiseStepData`, natural units). Returns
+`nothing` when `device` has no NEM offer, no energy bid on `side`, or no offer series on `side`.
+
+# Arguments
+- `device`: the bidding device.
+- `side`: the `OfferSide` to read.
+
+# Returns
+A `NamedTuple` with fields `side`, `timestamps`, `resolution` and `curves`, or `nothing`.
+"""
+function _energy_offer_view(device::PSY.Component, side::OfferSide)
+    cost = _nem_offer_cost(device)
+    isnothing(cost) && return nothing
+    isnothing(_energy_bid(cost, side)) && return nothing
+    name = energy_offer_series_name(side)
+    PSY.has_time_series(device, PSY.SingleTimeSeries, name) || return nothing
+    ts = PSY.get_time_series(PSY.SingleTimeSeries, device, name)
+    series = PSY.get_time_series_array(PSY.SingleTimeSeries, device, name)
+    return (;
+        side, timestamps = PSY.TimeSeries.timestamp(series), resolution = IS.get_resolution(ts),
+        curves = collect(values(series)),
+    )
 end
 
 
@@ -77,7 +59,7 @@ function _tie_break_offers(sys::PSY.System)
     for device in PSY.get_available_components(PSY.StaticInjection, sys)
         region = PSY.get_name(PSY.get_area(PSY.get_bus(device)))
         for side in (OfferSide.GEN, OfferSide.LOAD)
-            offer = get_energy_offer(device, side)
+            offer = _energy_offer_view(device, side)
             isnothing(offer) && continue
             decremental = side == OfferSide.LOAD
             entry = get!(() -> _TieOffers((offer.timestamps, offer.resolution, [])), offers, (decremental, region))
@@ -129,16 +111,14 @@ end
 
 
 """
-    _set_tie_break_scales!(sys)
+    _set_tie_break!(sys::PSY.System) -> Nothing
 
-Attaches each price-tied energy band's tie-break scale `w / w_ref` (its width over the widest band of its
+Adds each price-tied energy band's tie-break scale `w / w_ref` (its width over the widest band of its
 tie group at that interval, 0 when the band is untied or the group has no width) as the `SingleTimeSeries`
-`"tie_break_scale_<k>[_decremental]"` of its unit, where `k` is the band's segment index. Series left by an earlier call
-on any `StaticInjection` are removed first. Replaces any [`EnergyTieBreak`](@ref) named [`TIE_BREAK_SERVICE_NAME`](@ref)
-with one whose contributing devices are every available unit with an energy offer, or leaves none
-when there is no such unit. Call it after [`set_market_bids!`](@ref) and before
-`transform_single_time_series!`. Every contributor carrying a scale must be modelled in the build, or the
-build fails.
+[`tie_break_series_name`](@ref) of its unit, where the segment index is the band's offer segment. Adds the
+[`EnergyTieBreak`](@ref) named [`TIE_BREAK_SERVICE_NAME`](@ref), with the available units that carry an energy
+bid as its contributing devices, once. Throws `ArgumentError` when a tied group is not valid. Requires
+the energy offer series written before it in the replay input stage.
 
 # Arguments
 - `sys`: the `System` to add to.
@@ -146,12 +126,8 @@ build fails.
 # Returns
 `nothing`.
 """
-function _set_tie_break_scales!(sys::PSY.System)
+function _set_tie_break!(sys::PSY.System)
     all_offers = _tie_break_offers(sys)
-    for device in PSY.get_components(PSY.StaticInjection, sys), key in collect(PSY.get_time_series_keys(device))
-        name = IS.get_name(key)
-        startswith(name, "tie_break_scale_") && remove_single_series!(sys, device, name)
-    end
     active = _tie_break_active_bands(all_offers)
     for ((decremental, _), (; stamps, resolution, offers)) in all_offers
         scales = Dict{Tuple{PSY.Component, Int}, Vector{Float64}}()
@@ -171,9 +147,7 @@ function _set_tie_break_scales!(sys::PSY.System)
             PSY.add_time_series!(sys, device, single_series(name, first(stamps), values, resolution))
         end
     end
-    existing = PSY.get_component(EnergyTieBreak, sys, TIE_BREAK_SERVICE_NAME)
-    isnothing(existing) || PSY.remove_component!(sys, existing)
     devices = [d for d in PSY.get_available_components(PSY.StaticInjection, sys) if _has_energy_offer(d)]
-    isempty(devices) || AustralianElectricityMarkets._add_nem_service!(sys, EnergyTieBreak(; name = TIE_BREAK_SERVICE_NAME), devices)
+    isempty(devices) || _add_nem_service!(sys, EnergyTieBreak(; name = TIE_BREAK_SERVICE_NAME), devices)
     return
 end

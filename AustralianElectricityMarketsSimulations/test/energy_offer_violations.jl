@@ -154,3 +154,30 @@ end
         @test AEMS._violation_kind(kinds, AEMS.InterconnectorFlowSlack, meta) == family
     end
 end
+
+@testset "energy band prices are build-time objective coefficients, not parameters" begin
+    sys = nem_toy_system(
+        Dict(TOY_CHEAP => toy_unit(50.0, [(20.0, 10.0), (30.0, 25.0)]; initial = 0.0, ramp_up = 100.0)), 10.0;
+        horizon = TOY_RESOLUTION,
+        batteries = ["BAT" => toy_battery(20.0, 75.0, 20.0, 25.0; initial = 0.0, ramp_up = 100.0)],
+        loads = ["LOAD" => toy_load(20.0, 40.0; initial = 0.0, ramp_up = 100.0)],
+    )
+    model = toy_model(sys; template = replay_template(sys))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    @test !isdefined(AEMS, :EnergyBandPriceParameter)
+    @test all(k -> nameof(PSI.IS.Optimization.get_entry_type(k)) != :EnergyBandPriceParameter, Base.keys(PSI.get_parameters(model)))
+    invariant = PSI.get_invariant_terms(PSI.get_objective_expression(container))
+    scale = 100.0 * interval_hours(PSI.get_resolution(container))
+    gen = PSI.get_variable(container, EnergyOfferBandVariable(), ThermalStandard, "gen")
+    @test PSI.JuMP.coefficient(invariant, gen[TOY_CHEAP, "1", 1]) == scale * 10.0
+    @test PSI.JuMP.coefficient(invariant, gen[TOY_CHEAP, "2", 1]) == scale * 25.0
+    for (T, name, meta, price) in (
+            (EnergyReservoirStorage, "BAT", "gen", 75.0),
+            (EnergyReservoirStorage, "BAT", "load", -25.0),
+            (InterruptiblePowerLoad, "LOAD", "load", -40.0),
+        )
+        band = PSI.get_variable(container, EnergyOfferBandVariable(), T, meta)[name, "1", 1]
+        @test PSI.JuMP.coefficient(invariant, band) ≈ price * scale
+    end
+end

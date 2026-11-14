@@ -18,169 +18,6 @@ function _st_thermal(name, bus)
     )
 end
 
-@testset "unit_state reads a key-backed observed state at each stamp" begin
-    sys = System(100.0)
-    bus = _st_bus()
-    add_component!(sys, bus)
-    gen = _st_thermal("keyed", bus)
-    add_component!(sys, gen)
-    AustralianElectricityMarkets.attach_nem_unit_data!(sys, gen)
-    mw = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0]
-    modes = [0.0, 1.0, 2.0, 3.0, 4.0, 0.0, 1.0]
-    add_time_series!(sys, gen, _st_series("initial_mw", mw))
-    add_time_series!(sys, gen, _st_series("dispatch_mode", modes))
-    AustralianElectricityMarkets.set_observed_state!(
-        gen,
-        AustralianElectricityMarkets.NEMObservedState(;
-            initial_mw = _st_key(gen, "initial_mw"), dispatch_mode = _st_key(gen, "dispatch_mode"),
-        ),
-    )
-
-    first_state = AustralianElectricityMarketsSimulations.unit_state(
-        AustralianElectricityMarketsSimulations.ObservedState(), gen, _ST_STAMPS[1],
-    )
-    @test first_state isa AustralianElectricityMarketsSimulations.NEMUnitState
-    @test first_state.initial_mw === 10.0
-    @test first_state.dispatch_mode === 0
-
-    third_state = AustralianElectricityMarketsSimulations.unit_state(
-        AustralianElectricityMarketsSimulations.ObservedState(), gen, _ST_STAMPS[3],
-    )
-    @test third_state.initial_mw === 30.0
-    @test third_state.dispatch_mode === 2
-end
-
-@testset "unit_state reads a static observed state" begin
-    sys = System(100.0)
-    bus = _st_bus()
-    add_component!(sys, bus)
-    gen = _st_thermal("static", bus)
-    add_component!(sys, gen)
-    AustralianElectricityMarkets.attach_nem_unit_data!(sys, gen)
-    AustralianElectricityMarkets.set_observed_state!(
-        gen, AustralianElectricityMarkets.NEMObservedState(; initial_mw = 55, dispatch_mode = 1),
-    )
-    state = AustralianElectricityMarketsSimulations.unit_state(
-        AustralianElectricityMarketsSimulations.ObservedState(), gen, _ST_STAMPS[2],
-    )
-    @test state == AustralianElectricityMarketsSimulations.NEMUnitState(55.0, 1)
-end
-
-@testset "unit_state rejects devices without NEM observed state and the unimplemented source" begin
-    sys = System(100.0)
-    bus = _st_bus()
-    add_component!(sys, bus)
-    stock = ThermalStandard(;
-        name = "stock_unit", available = true, status = true, bus = bus, active_power = 50.0,
-        reactive_power = 0.0, rating = 120.0, active_power_limits = (min = 10.0, max = 100.0),
-        reactive_power_limits = nothing, ramp_limits = nothing, operation_cost = ThermalGenerationCost(nothing),
-        base_power = 100.0,
-    )
-    add_component!(sys, stock)
-    observed = AustralianElectricityMarketsSimulations.ObservedState()
-    @test_throws ArgumentError AustralianElectricityMarketsSimulations.unit_state(observed, stock, _ST_STAMPS[1])
-
-    bare = _st_thermal("bare", bus)
-    add_component!(sys, bare)
-    AustralianElectricityMarkets.attach_nem_unit_data!(sys, bare)
-    @test_throws ArgumentError AustralianElectricityMarketsSimulations.unit_state(observed, bare, _ST_STAMPS[1])
-
-    @test_throws ArgumentError AustralianElectricityMarketsSimulations.unit_state(
-        AustralianElectricityMarketsSimulations.SimulatedState(), bare, _ST_STAMPS[1],
-    )
-end
-
-@testset "NEMDispatchInputs and NEMFCASInputs survive a System JSON round-trip" begin
-    AEMS = AustralianElectricityMarketsSimulations
-    sys = System(100.0)
-    bus = _st_bus()
-    add_component!(sys, bus)
-    gen = _st_thermal("unit", bus)
-    add_component!(sys, gen)
-    AustralianElectricityMarkets.attach_nem_unit_data!(sys, gen)
-    # Distinct values per series, so a key that resolves to the wrong series fails the value check.
-    expected = Dict{String, Vector{Float64}}()
-    for (i, name) in enumerate(("energy", "energy_dec", "avail", "uigf", "up", "down", "fcas_offer", "fcas_trap", "fcas_max", "agc"))
-        values = collect(1.0:length(_ST_STAMPS)) .+ 100.0 * i
-        expected[name] = values
-        add_time_series!(sys, gen, _st_series(name, values))
-    end
-    inputs = AEMS.NEMDispatchInputs(;
-        energy_offer = _st_key(gen, "energy"), energy_offer_decremental = _st_key(gen, "energy_dec"),
-        energy_availability = _st_key(gen, "avail"), energy_availability_decremental = nothing,
-        uigf = _st_key(gen, "uigf"), ramp_up = _st_key(gen, "up"), ramp_down = _st_key(gen, "down"),
-        fcas = [
-            AEMS.NEMFCASInputs(;
-                service = AustralianElectricityMarkets.BidType.RAISE6SEC,
-                side = AustralianElectricityMarkets.OfferSide.GEN,
-                offer = _st_key(gen, "fcas_offer"), trapezium = _st_key(gen, "fcas_trap"),
-                max_avail = _st_key(gen, "fcas_max"), agc_ramp = _st_key(gen, "agc"),
-            ),
-        ],
-    )
-    add_supplemental_attribute!(sys, gen, inputs)
-
-    mktempdir() do dir
-        path = joinpath(dir, "sys.json")
-        to_json(sys, path; force = true)
-        restored = System(path)
-        back_gen = get_component(ThermalStandard, restored, "unit")
-        back = only(get_supplemental_attributes(AEMS.NEMDispatchInputs, back_gen))
-
-        @test back.energy_offer isa _ST_IS.TimeSeriesKey
-        @test isnothing(back.energy_availability_decremental)
-        @test AustralianElectricityMarkets._keys_equal(back.energy_offer, inputs.energy_offer)
-        @test AustralianElectricityMarkets._keys_equal(back.uigf, inputs.uigf)
-        @test length(back.fcas) == 1
-        fcas = only(back.fcas)
-        @test fcas isa AEMS.NEMFCASInputs
-        @test fcas.service == AustralianElectricityMarkets.BidType.RAISE6SEC
-        @test fcas.side == AustralianElectricityMarkets.OfferSide.GEN
-        @test AustralianElectricityMarkets._keys_equal(fcas.max_avail, inputs.fcas[1].max_avail)
-        @test AustralianElectricityMarkets._keys_equal(fcas.agc_ramp, inputs.fcas[1].agc_ramp)
-
-        # Every present key reads back the values of the series it was built from.
-        read_back(key) = _ST_IS.get_time_series_values(
-            back_gen, key; start_time = first(_ST_STAMPS), len = length(_ST_STAMPS),
-        )
-        resolved = Set{String}()
-        check(key, built) = if isnothing(key)
-            @test isnothing(built)
-        else
-            @test key isa _ST_IS.TimeSeriesKey
-            @test key.name == built.name
-            @test read_back(key) == expected[built.name]
-            push!(resolved, built.name)
-        end
-        for field in (
-                :energy_offer, :energy_offer_decremental, :energy_availability,
-                :energy_availability_decremental, :uigf, :ramp_up, :ramp_down,
-            )
-            check(getfield(back, field), getfield(inputs, field))
-        end
-        for (built_fcas, back_fcas) in zip(inputs.fcas, back.fcas)
-            for field in (:offer, :trapezium, :max_avail, :agc_ramp)
-                check(getfield(back_fcas, field), getfield(built_fcas, field))
-            end
-        end
-        @test resolved == Set(keys(expected))
-    end
-
-    @testset "NEMFCASInputs holds the MAXAVAIL key apart from the trapezium key" begin
-        AEMS = AustralianElectricityMarketsSimulations
-        inputs = AEMS.NEMFCASInputs(; service = AustralianElectricityMarkets.BidType.RAISE6SEC, side = AustralianElectricityMarkets.OfferSide.GEN)
-        @test isnothing(inputs.max_avail)
-        @test fieldnames(AEMS.NEMFCASInputs) == (:service, :side, :offer, :trapezium, :max_avail, :agc_ramp)
-    end
-
-    @testset "NEMFCASInputs rejects a service that is not an FCAS bid type" begin
-        AEMS = AustralianElectricityMarketsSimulations
-        @test_throws ArgumentError AEMS.NEMFCASInputs(;
-            service = AustralianElectricityMarkets.BidType.ENERGY,
-            side = AustralianElectricityMarkets.OfferSide.GEN,
-        )
-    end
-end
 
 # Two 5-minute steps, the shortest range a replay can run one interval per step.
 const _ST_STEP_RANGE = TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION)
@@ -323,73 +160,13 @@ function PSI.update_container_parameter_values!(
         device = PSY.get_component(T, system, name)
         series = AustralianElectricityMarkets._series_key(device, "toy_state_price")
         for t in PSI.get_time_steps(container)
-            price = only(PSI.IS.get_time_series_values(device, series; start_time = AEMS._step_stamp(model, t), len = 1))
+            price = only(PSI.IS.get_time_series_values(device, series; start_time = PSI.get_current_timestamp(model) + (t - 1) * PSI.get_resolution(model), len = 1))
             parameter_array[name, t] = price
             PSI.add_to_objective_variant_expression!(container, price * scale, power[name, t])
         end
     end
     return
 end
-
-# Runs `f` with the custom per-step updates forced on, restoring the switch afterwards.
-function _with_custom_state_updates(f)
-    previous = AEMS._FORCE_CUSTOM_STATE_UPDATES[]
-    AEMS._FORCE_CUSTOM_STATE_UPDATES[] = true
-    try
-        return f()
-    finally
-        AEMS._FORCE_CUSTOM_STATE_UPDATES[] = previous
-    end
-end
-
-
-@testset "the first solve reads the build's seed, later solves the state source (custom update path)" begin
-    _with_custom_state_updates() do
-        # The seed is built from the state source before the forecasts, so a change to the keyed state
-        # after the build reaches the second solve only through the per-step update.
-        later_key = Ref{Any}(nothing)
-        sys = nem_toy_system(
-            [
-                TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0),
-                TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = 50.0, ramp_up = 100.0),
-            ],
-            100.0; horizon = TOY_RESOLUTION,
-            mutate! = function (sys, stamps)
-                alta = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
-                replace_single_series_with!(sys, alta, "later_initial_mw", [50.0, 10.0], stamps)
-                later_key[] = AustralianElectricityMarkets._series_key(alta, "later_initial_mw")
-                return
-            end,
-        )
-        model = PSI.DecisionModel(
-            replay_template(sys), sys; optimizer = _ST_OPTIMIZER, horizon = TOY_RESOLUTION,
-            resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
-        )
-        @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-        container = PSI.get_optimization_container(model)
-        initial = PSI.get_parameter(container, PSI.ParameterKey(AEMS.InitialPowerTimeSeriesParameter, ThermalStandard))
-
-        PSI.set_execution_count!(model, 0)
-        PSI.solve_impl!(model)
-        @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-        @test only(PSI.get_parameter_column_values(initial, TOY_CHEAP)) === 50.0
-
-        alta = PSY.get_component(ThermalStandard, PSI.get_system(model), TOY_CHEAP)
-        AustralianElectricityMarkets.set_observed_state!(
-            alta,
-            AustralianElectricityMarkets.NEMObservedState(;
-                initial_mw = later_key[],
-                dispatch_mode = AustralianElectricityMarkets.get_observed_state(alta).dispatch_mode,
-            ),
-        )
-        PSI.set_execution_count!(model, 1)
-        _update_step_parameters!(model)
-        PSI.solve_impl!(model)
-        @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-        @test only(PSI.get_parameter_column_values(initial, TOY_CHEAP)) === 10.0
-    end
-end
-
 
 @testset "a per-step state price survives the objective unsynchronisation" begin
     stamps = [TOY_START, TOY_START + TOY_RESOLUTION]
@@ -428,72 +205,6 @@ end
     @test PSI.get_parameter_array(price)[TOY_CHEAP, 1] === 60.0
     power = PSI.get_variable(container, PSI.ActivePowerVariable(), ThermalStandard)[TOY_CHEAP, 1]
     @test PSI.JuMP.coefficient(PSI.get_variant_terms(PSI.get_objective_expression(container)), power) ≈ 60.0 * 100.0 / 12
-end
-
-
-@testset "each step's fixed loading is recomputed from the state source (custom update path)" begin
-    _with_custom_state_updates() do
-        # Alta carries a 40 MW fixed loading and is offline (dispatch mode 0) at build, so the first
-        # solve starts from the build's 40 MW seed. Before step 2 the state source moves it into its
-        # start-up profile (mode 2), where AEMO does not apply the loading: the parameter must follow
-        # the state, not the build's series. The dispatch effect of the same drop runs through a
-        # simulation in "each step's fixed loading is recomputed from the bid and the dispatch mode".
-        later_key = Ref{Any}(nothing)
-        sys = nem_toy_system(
-            [
-                TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 20.0, ramp_up = 100.0),
-                TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = 40.0, ramp_up = 100.0),
-            ],
-            60.0; horizon = TOY_RESOLUTION,
-            mutate! = function (sys, stamps)
-                alta = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
-                _toy_energy_bid!(
-                    sys, alta, AustralianElectricityMarkets.BidDirection.GEN, stamps,
-                    fill(_toy_offer([(100.0, 20.0)]), length(stamps)), fill(100.0, length(stamps));
-                    fixed_load = fill(40.0, length(stamps)),
-                )
-                set_toy_unit_field!(sys, alta, stamps, :dispatch_mode, zeros(length(stamps)))
-                # The shape an old build wrote: Alta held at 40 MW in both steps. It is not read; the
-                # parameter comes from the bid and the step's state.
-                replace_single_series_with!(sys, alta, "fixed_load", [0.4, 0.4], stamps)
-                replace_single_series_with!(sys, alta, "fixed_load_invoked", [1.0, 1.0], stamps)
-                replace_single_series_with!(sys, alta, "later_dispatch_mode", [0.0, 2.0], stamps)
-                later_key[] = AustralianElectricityMarkets._series_key(alta, "later_dispatch_mode")
-                return
-            end,
-        )
-        model = PSI.DecisionModel(
-            replay_template(sys), sys; optimizer = _ST_OPTIMIZER, horizon = TOY_RESOLUTION,
-            resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
-        )
-        @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-        container = PSI.get_optimization_container(model)
-        target = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FixedLoadTimeSeriesParameter, ThermalStandard))
-        invoked = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FixedLoadInvokedTimeSeriesParameter, ThermalStandard))
-
-        PSI.set_execution_count!(model, 0)
-        PSI.solve_impl!(model)
-        @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-        @test only(PSI.get_parameter_column_values(target, TOY_CHEAP)) ≈ 40.0 / 100.0
-        @test only(PSI.get_parameter_column_values(invoked, TOY_CHEAP)) === 1.0
-        # Alta is held at 40 MW at $20 and Park City supplies the other 20 MW at $80.
-        @test PSI.JuMP.objective_value(PSI.get_jump_model(container)) ≈ 2400.0 / 12 atol = 1.0e-4
-
-        alta = PSY.get_component(ThermalStandard, PSI.get_system(model), TOY_CHEAP)
-        AustralianElectricityMarkets.set_observed_state!(
-            alta,
-            AustralianElectricityMarkets.NEMObservedState(;
-                initial_mw = AustralianElectricityMarkets.get_observed_state(alta).initial_mw,
-                dispatch_mode = later_key[],
-            ),
-        )
-        PSI.set_execution_count!(model, 1)
-        _update_step_parameters!(model)
-        PSI.solve_impl!(model)
-        @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-        @test only(PSI.get_parameter_column_values(target, TOY_CHEAP)) === 0.0
-        @test only(PSI.get_parameter_column_values(invoked, TOY_CHEAP)) === 0.0
-    end
 end
 
 
@@ -536,7 +247,7 @@ end
             for device in (alta, battery)
                 series = PSY.get_time_series(PSY.SingleTimeSeries, device, "fixed_load")
                 derived = collect(values(PSY.get_time_series_array(device, series)))
-                per_step = [AEMS._fixed_load_step(device, t).target / base_power for t in stamps]
+                per_step = [step.target / base_power for step in AustralianElectricityMarkets._fixed_load_step_series(device, stamps)]
                 @test derived ≈ per_step
                 @test !all(iszero, derived)
             end
@@ -595,66 +306,4 @@ end
     PSI.solve_impl!(model)
     @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     @test vec(Array(PSI.get_parameter_column_values(park_limit, TOY_EXPENSIVE))) ≈ [0.25, 0.05, 0.95]
-end
-
-@testset "a unit's first registered stamp starts in dispatch mode 0 when its previous interval is unregistered" begin
-    sys = System(100.0)
-    bus = _st_bus()
-    add_component!(sys, bus)
-    gen = _st_thermal("first_stamp", bus)
-    add_component!(sys, gen)
-    AustralianElectricityMarkets.attach_nem_unit_data!(sys, gen)
-    add_time_series!(sys, gen, _st_series("initial_mw", [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0]))
-    add_time_series!(sys, gen, _st_series("dispatch_mode", [0.0, NaN, 2.0, 3.0, 4.0, 0.0, 1.0]))
-    AustralianElectricityMarkets.set_observed_state!(
-        gen,
-        AustralianElectricityMarkets.NEMObservedState(;
-            initial_mw = _st_key(gen, "initial_mw"), dispatch_mode = _st_key(gen, "dispatch_mode"),
-        ),
-    )
-    source = AustralianElectricityMarketsSimulations.ObservedState()
-    registration(from) = AustralianElectricityMarkets.NEMRegistration(;
-        schedule_type = AustralianElectricityMarkets.ScheduleType.SCHEDULED, gen_loss_factor = 1.0,
-        load_loss_factor = 1.0, registered_from = from, registered_until = DateTime(2999, 12, 31),
-    )
-
-    # Registered from the first stamp: the stamp after it is the first registered one, and its mode is NaN.
-    AustralianElectricityMarkets.set_registration!(gen, registration(_ST_STAMPS[1]))
-    @test AustralianElectricityMarketsSimulations.unit_state(source, gen, _ST_STAMPS[2]) ==
-        AustralianElectricityMarketsSimulations.NEMUnitState(20.0, 0)
-
-    # Registered earlier: the previous interval is registered, so a NaN mode is still an error.
-    AustralianElectricityMarkets.set_registration!(gen, registration(_ST_STAMPS[1] - Minute(5)))
-    @test_throws ArgumentError AustralianElectricityMarketsSimulations.unit_state(source, gen, _ST_STAMPS[2])
-end
-
-@testset "the vectorised seed equals the stamp-by-stamp seed, including the registration edge" begin
-    sys = System(100.0)
-    bus = _st_bus()
-    add_component!(sys, bus)
-    gen = _st_thermal("vectorised", bus)
-    add_component!(sys, gen)
-    AustralianElectricityMarkets.attach_nem_unit_data!(sys, gen)
-    add_time_series!(sys, gen, _st_series("initial_mw", [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0]))
-    add_time_series!(sys, gen, _st_series("dispatch_mode", [0.0, 1.0, 2.0, 3.0, 4.0, 0.0, 1.0]))
-    AustralianElectricityMarkets.set_observed_state!(
-        gen,
-        AustralianElectricityMarkets.NEMObservedState(;
-            initial_mw = _st_key(gen, "initial_mw"), dispatch_mode = _st_key(gen, "dispatch_mode"),
-        ),
-    )
-    source = AustralianElectricityMarketsSimulations.ObservedState()
-    # Registered from the second stamp, so the first is unregistered and the second is the first registered one.
-    AustralianElectricityMarkets.set_registration!(
-        gen,
-        AustralianElectricityMarkets.NEMRegistration(;
-            schedule_type = AustralianElectricityMarkets.ScheduleType.SCHEDULED, gen_loss_factor = 1.0,
-            load_loss_factor = 1.0, registered_from = _ST_STAMPS[2] - Minute(5), registered_until = DateTime(2999, 12, 31),
-        ),
-    )
-    per_stamp = [AustralianElectricityMarketsSimulations._state_initial_mw(source, gen, t) for t in _ST_STAMPS]
-    vectorised = AustralianElectricityMarketsSimulations._state_initial_mw_series(source, gen, _ST_STAMPS)
-    @test vectorised == per_stamp
-    @test vectorised[1] == 0.0
-    @test vectorised[2] == 20.0
 end

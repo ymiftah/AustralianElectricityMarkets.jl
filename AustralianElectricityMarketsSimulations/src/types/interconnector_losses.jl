@@ -9,7 +9,7 @@ Device formulation for `PSY.AreaInterchange` that apportions the attached
 `PSI.AreaBalancePowerModel` only, matching NEMDE's regional balance; other network models,
 missing or ambiguous loss models and concave curves throw `ArgumentError`. The demand term of each
 interval's loss factor is read from the interchange's `"loss_demand_coefficient"` series
-(`set_loss_demand_coefficients!`) as a [`LossDemandCoefficientParameter`](@ref), so the formulation
+(written by [`nem_system`](@ref)) as a [`LossDemandCoefficientParameter`](@ref), so the formulation
 also runs in recurrent simulations.
 
 # Notes
@@ -65,6 +65,6 @@ struct InterconnectorLossSegmentFullVariable <: PSI.VariableType end
 
 Coefficient of an interconnector's flow in its `"loss_definition"` [`InterconnectorLossConstraint`](@ref) at
 each interval: the demand term `Σ_r demand_coefficients[r] × demand[r]` of its loss factor, read
-from the `"loss_demand_coefficient"` series that `set_loss_demand_coefficients!` attaches.
+from the `"loss_demand_coefficient"` series that [`nem_system`](@ref) writes.
 """
 struct LossDemandCoefficientParameter <: PSI.ConstraintCoefficientParameter end

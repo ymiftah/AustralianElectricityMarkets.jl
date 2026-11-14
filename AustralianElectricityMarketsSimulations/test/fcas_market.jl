@@ -85,7 +85,7 @@ function add_toy_storage_initial_mw!(sys, device, initial_timestamp, n::Integer,
 end
 
 """
-    _add_toy_battery_nem_dispatch_inputs!(sys, bat, stamps)
+    _write_toy_battery_replay_inputs!(sys, bat, stamps)
 
 Attaches `bat`'s `NEMReplayDispatch` requirements over `stamps`: a cheap generation-side and
 worthless load-side `energy_offer` series (so charging is never attractive), generous ramp rates, and
@@ -93,7 +93,7 @@ a zero net `"observed_initial_mw"` - none of these ever bind in these tests, whi
 variables directly. Callers that need a specific `"observed_initial_mw"` overwrite it afterwards, e.g.
 via [`add_toy_storage_initial_mw!`](@ref).
 """
-function _add_toy_battery_nem_dispatch_inputs!(sys, bat, stamps)
+function _write_toy_battery_replay_inputs!(sys, bat, stamps)
     base_power = PSY.get_base_power(sys)
     rating = PSY.get_output_active_power_limits(bat).max
     for (direction, price, mw) in (
@@ -108,6 +108,7 @@ function _add_toy_battery_nem_dispatch_inputs!(sys, bat, stamps)
             sys, bat, AustralianElectricityMarkets.single_series(name, stamps[1], curves, TOY_RESOLUTION),
         )
     end
+    _toy_set_band_prices!(bat)
     for name in ("ramp_up_rate", "ramp_down_rate")
         PSY.add_time_series!(
             sys, bat, PSY.SingleTimeSeries(; name = name, data = PSY.TimeSeries.TimeArray(stamps, fill(1.0e4 / base_power, length(stamps)))),
@@ -394,7 +395,7 @@ end
 @testset "a malformed offered trapezium is rejected before the build" begin
     duid = TOY_CHEAP
     service_name = "TAS1_RAISE6SEC"
-    # set_effective_offers!, which the toy system runs, reads every trapezium.
+    # The replay input stage reads every trapezium.
     err = _caught() do
         fcas_energy_toy_system(
             2.0;
@@ -459,13 +460,17 @@ end
 
     # Each band is priced at its offer price times the base power and the interval in hours.
     container = build_fcas(sys, [service_name])
-    price = PSI.get_parameter(container, FCASBandPriceParameter(), ThermalStandard, "$(service_name)_gen")
-    column = PSI.get_parameter_column_refs(price, duid)
-    @test [column[label, 1] for label in ("1", "2")] == [10.0, 30.0]
-    @test all(==(1.0), PSI.get_multiplier_array(price).data)
+    bid = AustralianElectricityMarkets._fcas_side_bid(
+        PSY.get_component(ThermalStandard, sys, duid), get_bid_type(PSY.get_component(FCASService, sys, service_name)), OfferSide.GEN,
+    )
+    @test bid.band_prices[1:2] == (10.0, 30.0)
+    @test !isdefined(AustralianElectricityMarketsSimulations, :FCASBandPriceParameter)
+    @test all(k -> nameof(PSI.IS.Optimization.get_entry_type(k)) != :FCASBandPriceParameter, keys(PSI.get_parameters(container)))
     bands = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, service_name)
-    variant = PSI.get_variant_terms(PSI.get_objective_expression(container))
-    @test PSI.JuMP.coefficient(variant, bands[duid, "2", 1]) ≈ base_power * 30.0 / 12
+    invariant = PSI.get_invariant_terms(PSI.get_objective_expression(container))
+    scale = base_power * interval_hours(PSI.get_resolution(container))
+    @test PSI.JuMP.coefficient(invariant, bands[duid, "1", 1]) == scale * bid.band_prices[1]
+    @test PSI.JuMP.coefficient(invariant, bands[duid, "2", 1]) == scale * bid.band_prices[2]
 end
 
 "Attaches a flat `max_active_power` of 1 p.u. over `stamps` to every load and `RenewableDispatch` in `sys`."
@@ -507,8 +512,10 @@ function storage_fcas_toy_model(
     PSY.clear_time_series!(sys)
     stamps = [TOY_START, TOY_START + TOY_RESOLUTION]
     _add_flat_max_active_power!(sys, stamps)
-    _add_toy_battery_nem_dispatch_inputs!(sys, bat, stamps)
+    _write_toy_battery_replay_inputs!(sys, bat, stamps)
     add_toy_storage_initial_mw!(sys, bat, stamps[1], length(stamps), initial_mw)
+    # The clear above drops the observed-state series the replay stage wrote, which the model reads.
+    AustralianElectricityMarkets._set_observed_state_inputs!(sys)
 
     add_toy_fcas!(sys, bat, stamps[1], length(stamps), bid_type, trapezium_mw, [(10.0, 50.0)]; decremental = decremental)
     isnothing(scaling) || add_toy_fcas_scaling!(sys, bat, stamps[1], length(stamps), bid_type; scaling...)
@@ -520,7 +527,7 @@ function storage_fcas_toy_model(
         )
     end
     add_service!(sys, FCASService(; name = service_name, region = "TAS1", bid_type = bid_type), [bat])
-    set_effective_offers!(sys)
+    AustralianElectricityMarkets._set_fcas_effective_offers!(sys)
     PSY.transform_single_time_series!(sys, 2 * TOY_RESOLUTION, TOY_RESOLUTION)
 
     template = _area_balance_template(sys; mpc = 17_500.0)
@@ -593,7 +600,9 @@ end
         enablement_min = emin, low_breakpoint = emin + 1.0, high_breakpoint = emax - 1.0,
         enablement_max = emax, max_avail = 1.0,
     )
-    ok(is_regulation, decremental, t, avail) = AEMS._fcas_energy_max_avail_ok(bat, is_regulation, decremental, t, avail)
+    ok(is_regulation, decremental, t, avail) = AustralianElectricityMarkets.fcas_preconditions_ok(
+        t, 1.0, avail.gen, avail.load, -1, is_regulation, decremental, true,
+    )
 
     # Generation side: Energy Max Availability_GEN >= EnablementMin.
     @test !ok(true, false, trap(2.0, 10.0), (gen = 1.0, load = 50.0))
@@ -602,14 +611,14 @@ end
     @test !ok(true, true, trap(-10.0, -2.0), (gen = 0.0, load = 1.0))
     @test ok(true, true, trap(-10.0, -2.0), (gen = 0.0, load = 5.0))
     # Each regulation side checks only its own direction; contingency checks both.
-    @test ok(true, false, trap(-5.0, -1.0), (gen = 0.0, load = 0.0))
+    @test ok(true, false, trap(-5.0, 1.0), (gen = 0.0, load = 0.0))
     @test !ok(false, false, trap(-5.0, -1.0), (gen = 0.0, load = 0.0))
     @test !ok(false, false, trap(2.0, 10.0), (gen = 1.0, load = 50.0))
     @test ok(false, false, trap(2.0, 10.0), (gen = 5.0, load = 50.0))
     # Without the energy bid series, the static ratings stand in.
     rating = PSY.get_output_active_power_limits(bat).max
-    @test ok(false, false, trap(rating - 1.0, rating + 10.0), nothing)
-    @test !ok(false, false, trap(rating + 1.0, rating + 10.0), nothing)
+    @test ok(false, false, trap(rating - 1.0, rating + 10.0), (gen = rating, load = rating))
+    @test !ok(false, false, trap(rating + 1.0, rating + 10.0), (gen = rating, load = rating))
 end
 
 @testset "FCASMarket disables a Storage FCAS bid its energy bid availability can't reach" begin
@@ -670,7 +679,7 @@ function _build_bdu_regulation(
     if !isnothing(agc_status)
         add_toy_fcas_agc_status!(sys, bat, stamps[1], length(stamps), agc_status)
     end
-    _add_toy_battery_nem_dispatch_inputs!(sys, bat, stamps)
+    _write_toy_battery_replay_inputs!(sys, bat, stamps)
     if !isnothing(storage_initial_mw)
         add_toy_storage_initial_mw!(sys, bat, stamps[1], length(stamps), storage_initial_mw)
     end
@@ -681,6 +690,7 @@ function _build_bdu_regulation(
             agc_enablement_max = agc_enablement_max,
         )
     end
+    AustralianElectricityMarkets._set_observed_state_inputs!(sys)
     add_service!(sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISEREG), [bat])
     if !isnothing(requirement_mw)
         rhs_pu = requirement_mw
@@ -692,7 +702,7 @@ function _build_bdu_regulation(
         add_service!(sys, gc, [bat])
         add_toy_constraint_series!(sys, gc, stamps, fill(rhs_pu, length(stamps)), fill(1.0, length(stamps)))
     end
-    set_effective_offers!(sys)
+    AustralianElectricityMarkets._set_fcas_effective_offers!(sys)
     PSY.transform_single_time_series!(sys, 2 * TOY_RESOLUTION, TOY_RESOLUTION)
 
     template = _area_balance_template(sys; mpc = 17_500.0)
@@ -1048,9 +1058,23 @@ end
     )
     container = PSI.get_optimization_container(model)
     bat = get_component(EnergyReservoirStorage, sys, "BAT1")
-    window = AEMS._FCASWindow(TOY_START, 1, TOY_RESOLUTION)
-    trap = only(AEMS._fcas_offer(window, bat, BidType.LOWERREG, OfferSide.LOAD).trapeziums)
-    @test collect(Tuple(trap)[1:5]) .* PSI.get_base_power(container) ≈ [-10.0, -8.0, -2.0, 0.0, 4.0]
+    window = AustralianElectricityMarkets._fcas_window(bat, [TOY_START], TOY_RESOLUTION, get_base_power(sys))
+    trap = only(AustralianElectricityMarkets._fcas_side(window, bat, BidType.LOWERREG, true).trapeziums)
+    @test collect(Tuple(trap)[1:5]) .* get_base_power(sys) ≈ [-10.0, -8.0, -2.0, 0.0, 4.0]
+end
+
+@testset "a Storage device's LOAD-side band cost is the load bid's price in the invariant expression" begin
+    service_name = "TAS1_LOWERREG_STOR_COST"
+    model, sys = storage_fcas_toy_model(service_name, BidType.LOWERREG, (-20.0, -15.0, -5.0, 0.0, 10.0); decremental = true)
+    container = PSI.get_optimization_container(model)
+    bat = get_component(EnergyReservoirStorage, sys, "BAT1")
+    bid = AustralianElectricityMarkets._fcas_side_bid(bat, BidType.LOWERREG, OfferSide.LOAD)
+    @test bid.band_prices[1] == 50.0
+    key = only(k for k in keys(PSI.get_variables(container)) if PSI.IS.Optimization.get_entry_type(k) == FCASOfferBandVariable)
+    bands = PSI.get_variable(container, key)
+    invariant = PSI.get_invariant_terms(PSI.get_objective_expression(container))
+    scale = PSI.get_base_power(container) * interval_hours(PSI.get_resolution(container))
+    @test PSI.JuMP.coefficient(invariant, bands["BAT1", "1", 1]) == scale * 50.0
 end
 
 @testset "a Storage device's GEN-side regulation with a vertical lower slope" begin
@@ -1192,7 +1216,7 @@ end
     PSI.set_output_dir!(model, mktempdir())
     err = _caught(() -> PSI.build_impl!(model))
     @test err isa ArgumentError
-    @test occursin("set_effective_offers!", err.msg)
+    @test occursin("nem_system", err.msg)
 end
 
 @testset "FCASMarket builds for a recurrent simulation" begin
@@ -1215,7 +1239,7 @@ end
     @test isnothing(_caught(() -> PSI.build_impl!(model)))
 end
 
-@testset "FCAS band price parameters are native time-series cost parameters, one per device type and side" begin
+@testset "FCAS band prices are build-time objective coefficients, not parameters" begin
     sys = fcas_toy_system()
     model = PSI.DecisionModel(
         fcas_toy_template(sys, ["1_RAISEREG"]), sys;
@@ -1225,33 +1249,15 @@ end
     )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
-    keys = [k for k in Base.keys(PSI.get_parameters(model)) if PSI.IS.Optimization.get_entry_type(k) === FCASBandPriceParameter]
-    @test !isempty(keys)
-    @test all(k -> startswith(k.meta, "1_RAISEREG"), keys)
-    @test all(k -> PSI.IS.Optimization.get_entry_type(k) <: PSI.TimeSeriesCostParameter, keys)
-    for key in keys
-        meta = String(chopsuffix(chopsuffix(key.meta, "_gen"), "_load"))
-        param = PSI.get_parameter(container, key)
-        prices = PSI.get_parameter_array(param)
-        multiplier = PSI.get_multiplier_array(param)
-        expected = copy(prices.data)
-        prices.data .= -1.0
-        # The second window, as the model's current time after one execution.
-        PSI.set_execution_count!(model, 1)
-        PSI.cost_function_unsynch(container)
-        PSI.reset_variant_terms(PSI.get_objective_expression(container))
-        PSI.update_container_parameter_values!(container, model, key, PSI.DatasetContainer{PSI.InMemoryDataset}())
-        PSI.set_execution_count!(model, 0)
-        @test prices.data == expected
-        labels = axes(prices)[2]
-        bands = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, meta)
-        variant = PSI.get_variant_terms(PSI.get_objective_expression(container))
-        device = first(axes(multiplier)[1])
-        column = PSI.get_parameter_column_refs(param, device)
-        priced = findfirst(label -> column[label, 1] > 0.0, labels)
-        @test !isnothing(priced)
-        @test PSI.JuMP.coefficient(variant, bands[device, labels[priced], 1]) ==
-            column[labels[priced], 1] * (PSI.get_base_power(container) * interval_hours(TOY_RESOLUTION)) * multiplier[device, labels[priced], 1]
+    @test all(k -> nameof(PSI.IS.Optimization.get_entry_type(k)) != :FCASBandPriceParameter, Base.keys(PSI.get_parameters(model)))
+    device = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
+    bid = AustralianElectricityMarkets._fcas_side_bid(device, BidType.RAISEREG, OfferSide.GEN)
+    @test bid.band_prices[1:2] == (5.0, 12.0)
+    bands = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, "1_RAISEREG")
+    invariant = PSI.get_invariant_terms(PSI.get_objective_expression(container))
+    scale = PSI.get_base_power(container) * interval_hours(TOY_RESOLUTION)
+    for b in 1:2
+        @test PSI.JuMP.coefficient(invariant, bands[TOY_CHEAP, string(b), 1]) == scale * bid.band_prices[b]
     end
 end
 
@@ -1837,23 +1843,22 @@ end
     PSY.add_service!(sys, FCASService(; name = "1_LOWER6SEC", region = "1", bid_type = BidType.LOWER6SEC), [device])
     template = fcas_toy_template(sys, ["1_LOWER6SEC"])
     PSI.set_service_model!(template, "F_TOY", PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "F_TOY"))
-    err = _caught(() -> _buildable_gcs(sys, template))
+    rows = _diagnosed_gcs(sys, template)
+    @test [(r.constraint, r.reason, r.blocking) for r in rows] == [("F_TOY", :unmodeled_fcas_service, true)]
+    @test AEMS._blocked_constraints(sys, template) == [(constraint = "F_TOY", reason = :unmodeled_fcas_service)]
+    err = _caught(() -> AEMS._check_blocked_constraints(AEMS._blocked_constraints(sys, template)))
     @test err isa ArgumentError
-    @test occursin("F_TOY", sprint(showerror, err))
-    @test occursin("FCASMarket", sprint(showerror, err))
+    @test occursin("F_TOY (unmodeled_fcas_service)", sprint(showerror, err))
 
-    # Modelling the term's own service makes the filter accept it.
+    # Modelling the term's own service makes the check accept it.
     ok_template = fcas_toy_template(sys, ["1_RAISE6SEC"])
     PSI.set_service_model!(ok_template, "F_TOY", PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "F_TOY"))
-    @test PSY.get_name.(_buildable_gcs(sys, ok_template)) == ["F_TOY"]
+    @test isempty(_diagnosed_gcs(sys, ok_template))
 
-    # A service whose devices are all unavailable is skipped by FCASMarket and counts as zero; the
-    # constraint, left with no available contributing device, is left out of the template rather
-    # than reported as a failure.
+    # A service whose devices are all unavailable is skipped by FCASMarket and counts as zero, so its
+    # constraint is not a failure.
     PSY.set_available!(device, false)
-    left_out = []
-    @test isempty(_buildable_gcs(sys, template; skipped = left_out))
-    @test only(left_out).reason == :no_available_device
+    @test isempty(_diagnosed_gcs(sys, template))
 end
 
 """
@@ -2046,7 +2051,8 @@ function make_non_scheduled_fcas_load!(sys, stamps)
     PSY.get_ext(load)["non_scheduled"] = true
     set_registration!(load, _toy_registration())
     zero_availability = AustralianElectricityMarkets.bid_series_name(BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.LOAD)
-    for name in ("max_active_power", zero_availability, "ramp_up_rate", "ramp_down_rate")
+    # The ramp rates are written by the replay input stage from the zero ramp limits set below.
+    for name in ("max_active_power", zero_availability)
         PSY.add_time_series!(
             sys, load,
             PSY.SingleTimeSeries(; name = name, data = PSY.TimeSeries.TimeArray(stamps, zeros(length(stamps)))),
@@ -2150,17 +2156,15 @@ end
         end,
     )
     container = build_fcas(sys, [service_name])
-    price_keys = [k for k in keys(PSI.get_parameters(container)) if PSI.IS.Optimization.get_entry_type(k) === FCASBandPriceParameter]
-    # One parameter per device type's series name: the GEN unit's curve and the BIDIRECTIONAL battery's.
-    @test sort([k.meta for k in price_keys]) == ["$(service_name)_gen_1", "$(service_name)_gen_2"]
-    params = [PSI.get_parameter(container, k) for k in price_keys]
-    alta_param = only(p for p in params if TOY_CHEAP in axes(PSI.get_multiplier_array(p))[1])
-    batt_param = only(p for p in params if TOY_BATTERY in axes(PSI.get_multiplier_array(p))[1])
-    @test [PSI.get_parameter_column_refs(alta_param, TOY_CHEAP)[label, 1] for label in ("1", "2")] == [10.0, 30.0]
-    @test PSI.get_parameter_column_refs(batt_param, TOY_BATTERY)["1", 1] == 15.0
-    base_power = PSI.get_base_power(container)
+    @test all(k -> nameof(PSI.IS.Optimization.get_entry_type(k)) != :FCASBandPriceParameter, keys(PSI.get_parameters(container)))
+    side = AustralianElectricityMarkets.OfferSide.GEN
+    alta_prices = AEM._fcas_side_bid(PSY.get_component(ThermalStandard, sys, TOY_CHEAP), BidType.RAISE6SEC, side).band_prices
+    batt_prices = AEM._fcas_side_bid(PSY.get_component(EnergyReservoirStorage, sys, TOY_BATTERY), BidType.RAISE6SEC, side).band_prices
+    @test alta_prices[1:2] == (10.0, 30.0)
+    @test batt_prices[1] == 15.0
+    scale = PSI.get_base_power(container) * interval_hours(PSI.get_resolution(container))
     bands = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, service_name)
-    variant = PSI.get_variant_terms(PSI.get_objective_expression(container))
-    @test PSI.JuMP.coefficient(variant, bands[TOY_CHEAP, "2", 1]) ≈ base_power * 30.0 / 12
-    @test PSI.JuMP.coefficient(variant, bands[TOY_BATTERY, "1", 1]) ≈ base_power * 15.0 / 12
+    invariant = PSI.get_invariant_terms(PSI.get_objective_expression(container))
+    @test PSI.JuMP.coefficient(invariant, bands[TOY_CHEAP, "2", 1]) == scale * alta_prices[2]
+    @test PSI.JuMP.coefficient(invariant, bands[TOY_BATTERY, "1", 1]) == scale * batt_prices[1]
 end

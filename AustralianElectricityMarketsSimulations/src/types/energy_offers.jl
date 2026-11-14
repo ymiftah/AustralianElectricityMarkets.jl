@@ -15,12 +15,3 @@ Time-series parameter of an energy offer's band widths in MW, read from the devi
 offer at width `0.0`. Meta `"gen"` or `"load"`.
 """
 struct EnergyBandWidthParameter <: PSI.TimeSeriesParameter end
-
-"""
-    EnergyBandPriceParameter
-
-Time-series cost parameter pricing [`EnergyOfferBandVariable`](@ref)s: each band's offer price in
-`\$/MWh` per interval, read from the same series as [`EnergyBandWidthParameter`](@ref) (`0.0` for a
-band not offered). Meta `"gen"` or `"load"`.
-"""
-struct EnergyBandPriceParameter <: PSI.TimeSeriesCostParameter end

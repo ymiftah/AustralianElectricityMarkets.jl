@@ -26,8 +26,7 @@ function _check_replay_system_inputs(sys::PSY.System, template::PSI.ProblemTempl
     isempty(uncovered) || throw(
         ArgumentError(
             "check_template_against_sys: incomplete dispatch inputs for $(join(sort!(uncovered), ", ")); " *
-                "prepare_replay! attaches them once sys is built with nem_system(db, NEMDEConfiguration(); date_range) " *
-                "over the replay range",
+                "build sys with nem_system(db, NEMDEConfiguration(); date_range) over the replay range",
         ),
     )
     foreach(_check_state_series_alignment, devices)

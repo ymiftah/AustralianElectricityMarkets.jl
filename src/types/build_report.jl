@@ -1,8 +1,10 @@
 """
     NEMBuildReport(; skipped_constraints = Dict{String, Any}[], missing_constraint_intervals = DateTime[],
-        defaulted_constraint_weights = String[], dropped_terms = Dict{String, Any}[])
+        defaulted_constraint_weights = String[], dropped_terms = Dict{String, Any}[],
+        unavailable_constraints = Dict{String, Any}[])
 
-What [`nem_system`](@ref) left out of, or defaulted in, the constraints it built into a `System`.
+What [`nem_system`](@ref) left out of, or defaulted in, the constraints it built into a `System`, and which
+built constraints the replay inputs made unavailable.
 
 # Fields
 - `skipped_constraints`: one row per invoked constraint version that was not built, with `constraint`,
@@ -11,12 +13,15 @@ What [`nem_system`](@ref) left out of, or defaulted in, the constraints it built
 - `defaulted_constraint_weights`: the versioned names built with the default `constraint_weight`.
 - `dropped_terms`: one row per unit term dropped from a built constraint, with `constraint`, `kind`,
   `key`, `bid_type` and `factor`.
+- `unavailable_constraints`: one row per built constraint set unavailable by the replay inputs, with
+  `constraint` and `reason` (`"never_invoked"` or `"no_available_device"`).
 """
 struct NEMBuildReport
     skipped_constraints::Vector{Dict{String, Any}}
     missing_constraint_intervals::Vector{DateTime}
     defaulted_constraint_weights::Vector{String}
     dropped_terms::Vector{Dict{String, Any}}
+    unavailable_constraints::Vector{Dict{String, Any}}
 end
 
 function NEMBuildReport(;
@@ -24,12 +29,14 @@ function NEMBuildReport(;
         missing_constraint_intervals = DateTime[],
         defaulted_constraint_weights = String[],
         dropped_terms = Dict{String, Any}[],
+        unavailable_constraints = Dict{String, Any}[],
     )
     return NEMBuildReport(
         Dict{String, Any}[Dict{String, Any}(r) for r in skipped_constraints],
         DateTime[t for t in missing_constraint_intervals],
         String[w for w in defaulted_constraint_weights],
         Dict{String, Any}[Dict{String, Any}(r) for r in dropped_terms],
+        Dict{String, Any}[Dict{String, Any}(r) for r in unavailable_constraints],
     )
 end
 
@@ -61,6 +68,7 @@ function set_build_report!(sys, report::NEMBuildReport)
         "missing_constraint_intervals" => string.(report.missing_constraint_intervals),
         "defaulted_constraint_weights" => copy(report.defaulted_constraint_weights),
         "dropped_terms" => deepcopy(report.dropped_terms),
+        "unavailable_constraints" => deepcopy(report.unavailable_constraints),
     )
     return report
 end
@@ -85,5 +93,6 @@ function get_build_report(sys)
         missing_constraint_intervals = DateTime[DateTime(String(t)) for t in data["missing_constraint_intervals"]],
         defaulted_constraint_weights = collect(String, data["defaulted_constraint_weights"]),
         dropped_terms = data["dropped_terms"],
+        unavailable_constraints = data["unavailable_constraints"],
     )
 end

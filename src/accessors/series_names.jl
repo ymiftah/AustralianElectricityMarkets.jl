@@ -31,7 +31,7 @@ side_suffix(side::OfferSide) = side == OfferSide.LOAD ? "_decremental" : ""
 Names of the per-device `SingleTimeSeries` the setters attach, by field:
 
 - `ramp_up_rate`, `ramp_down_rate`: the dispatch ramp rates the formulation reads, system-base per-unit
-  per minute, derived by AEMSim from the telemetry ramp limits.
+  per minute, derived by the replay input stage from the telemetry ramp limits.
 - `max_active_power`: the device's upper dispatch limit, a multiplier of its `max_active_power`.
 - `fixed_load`: a unit's participant fixed loading, net injection in system-base per-unit.
 - `fixed_load_invoked`: `1` at the intervals a fixed loading applies, `0` elsewhere.
@@ -91,6 +91,23 @@ const NEM_OBSERVED_SERIES = (
 
 
 """
+    NEM_STATE_INPUT_SERIES
+
+Names of the per-device `SingleTimeSeries` that the replay input stage derives from a unit's
+[`NEMObservedState`](@ref) and fixed loading, read by the dispatch formulation at each interval:
+
+- `initial_mw`: the output at the start of each interval, MW, zero at an interval the build does not observe.
+- `fixed_load`: the fixed-loading target in system-base per-unit, net injection.
+- `fixed_load_invoked`: `1` at the intervals a fixed loading applies, `0` elsewhere.
+"""
+const NEM_STATE_INPUT_SERIES = (
+    initial_mw = "initial_mw_seed",
+    fixed_load = "fixed_load_seed",
+    fixed_load_invoked = "fixed_load_invoked_seed",
+)
+
+
+"""
     energy_offer_series_name(side::OfferSide) -> String
 
 Name of the series holding a device's energy offer curves on `side`.
@@ -115,6 +132,40 @@ A `String`.
 fcas_series_name(prefix::AbstractString, service::BidType) = "$(prefix)_$(string(service))"
 fcas_series_name(prefix::AbstractString, service::BidType, side::OfferSide) = fcas_series_name(prefix, service) * side_suffix(side)
 fcas_series_name(prefix::AbstractString, service::BidType, decremental::Bool) = fcas_series_name(prefix, service, offer_side(decremental))
+
+
+"""
+    fcas_effective_series_name(bid_type, decremental) -> String
+
+Name of the effective-offer series of one FCAS offer, `"fcas_effective_<BIDTYPE>"` with
+`"_decremental"` appended for a decremental offer.
+
+# Arguments
+- `bid_type`: the FCAS market.
+- `decremental`: whether the offer is decremental.
+
+# Returns
+A `String`.
+"""
+function fcas_effective_series_name(bid_type::BidType, decremental::Bool)
+    return fcas_series_name("fcas_effective", bid_type, decremental)
+end
+
+
+"""
+    fcas_ramping_series_name(bid_type) -> String
+
+Name of the ramping-limits series of one regulation market, `"fcas_ramping_limits_<BIDTYPE>"`.
+
+# Arguments
+- `bid_type`: the regulation market.
+
+# Returns
+A `String`.
+"""
+function fcas_ramping_series_name(bid_type::BidType)
+    return fcas_series_name("fcas_ramping_limits", bid_type)
+end
 
 
 """
@@ -148,6 +199,21 @@ const NEM_MNSP_SERIES = (
 
 
 """
+    NEM_MNSP_FIXED_LOAD_SERIES
+
+Names of the NaN-free fixed-loading series that [`nem_system`](@ref) writes per MNSP link direction from
+the bid's `fixed_load`: `value` is the loading in MW, `0` where the bid is NULL, and `invoked` is `1` where a
+loading is published and `0` where it is NULL.
+"""
+const NEM_MNSP_FIXED_LOAD_SERIES = (
+    forward_value = "forward_fixed_load_value",
+    reverse_value = "reverse_fixed_load_value",
+    forward_invoked = "forward_fixed_load_invoked_flag",
+    reverse_invoked = "reverse_fixed_load_invoked_flag",
+)
+
+
+"""
     NEM_CONSTRAINT_SERIES
 
 Names of the per-interval series a [`GenericConstraint`](@ref) holds through its `rhs` and `invoked` keys: the
@@ -172,4 +238,21 @@ A `String`.
 """
 function bid_series_name(service::BidType, field::Symbol, direction::BidDirection)
     return lowercase("bid_$(string(service))_$(field)_$(string(direction))")
+end
+
+
+"""
+    tie_break_series_name(band, decremental) -> String
+
+Name of the series holding segment `band`'s tie-break scale, `"tie_break_scale_<band>"` with the side suffix.
+
+# Arguments
+- `band`: the offer segment index.
+- `decremental`: whether the offer is decremental.
+
+# Returns
+A `String`.
+"""
+function tie_break_series_name(band::Int, decremental::Bool)
+    return "tie_break_scale_$(band)" * side_suffix(offer_side(decremental))
 end

@@ -79,10 +79,10 @@ end
         battery = PSY.get_component(EnergyReservoirStorage, sys, TOY_BATTERY)
         PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, battery, key)
         PSY.remove_time_series!(sys, PSY.SingleTimeSeries, battery, key)
-        @test_throws ArgumentError check_dispatch_envelope(replay_template(sys), sys, TOY_START, 1)
+        @test_throws ArgumentError check_dispatch_envelope(replay_template(sys), sys)
     end
     for bad in (NaN, Inf, -1.0)
         sys = storage_availability_system(; gen = bad)
-        @test_throws ArgumentError check_dispatch_envelope(replay_template(sys), sys, TOY_START, 1)
+        @test_throws ArgumentError check_dispatch_envelope(replay_template(sys), sys)
     end
 end

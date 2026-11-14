@@ -47,9 +47,9 @@ const TEST_GROUPS = [
     "pipeline" => ("Replication pipeline", "pipeline.jl"),
     "recurrent_objective_cache" => ("Recurrent objective forecast cache", "recurrent_objective_cache.jl"),
     "stock_simulation" => ("Stock simulation replay", "stock_simulation.jl"),
-    "state_update_equivalence" => ("State-update parameter snapshots", "state_update_equivalence.jl"),
     "replay_workflow" => ("Replay workflow on the mock cache", "replay_workflow.jl"),
     "replay_scripts" => ("Repository replay workflow", "../../test/scripts/replay_workflow.jl"),
+    "baseline_tools" => ("Baseline tools", "baseline_tools.jl"),
 ]
 
 const SELECTED_GROUPS = let known = first.(TEST_GROUPS)

@@ -173,7 +173,7 @@ function _check_loss_demand_coefficients(container::PSI.OptimizationContainer, d
     isempty(uncovered) || throw(
         ArgumentError(
             "NEMInterconnectorLoss: $(length(uncovered)) interconnector(s) carry no \"$name\" forecast: " *
-                "$(join(uncovered, ", ")). Call set_loss_demand_coefficients!(sys) before transform_single_time_series!.",
+                "$(join(uncovered, ", ")). Build the system with nem_system, which writes them, before transform_single_time_series!.",
         ),
     )
     return
