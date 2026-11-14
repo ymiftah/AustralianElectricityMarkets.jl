@@ -75,8 +75,8 @@ The `ArgumentError` naming `name`, an `AreaInterchange` that carries `n` rather 
 function _missing_loss_model_error(name::AbstractString, n::Int)
     return ArgumentError(
         "AreaInterchange \"$name\" carries $n InterconnectorLossModel supplemental attribute(s); " *
-            "NEMInterconnectorLoss requires exactly one. Attach it with " *
-            "`attach_interconnector_losses!(sys, db, as_of)` (root package), or give \"$name\" a " *
+            "NEMInterconnectorLoss requires exactly one. Build the system with `nem_system`, which " *
+            "attaches it (`attach_interconnector_losses!` in the root package), or give \"$name\" a " *
             "lossless formulation such as `PSI.StaticBranch`.",
     )
 end

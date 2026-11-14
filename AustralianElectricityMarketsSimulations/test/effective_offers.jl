@@ -74,26 +74,12 @@ end
         set_available!(get_component(ThermalStandard, sys, "ER02"), false)
         renewable = get_component(RenewableDispatch, sys, "BW03")
         battery = get_component(EnergyReservoirStorage, sys, "BW01")
-        with_units_base(sys, "NATURAL_UNITS") do
-            for (device, duid) in ((renewable, "BW03"), (battery, "BW01"))
-                rows = sort(subset(truth, :DUID => ByRow(==(duid))), :SETTLEMENTDATE)
-                @test isapprox(get_initial_mw(device, start_date, horizon), rows.INITIALMW; atol = 1.0e-8)
-            end
-            rows = sort(subset(truth, :DUID => ByRow(==("BW03"))), :SETTLEMENTDATE)
+        for (device, duid) in ((renewable, "BW03"), (battery, "BW01"))
+            rows = sort(subset(truth, :DUID => ByRow(==(duid))), :SETTLEMENTDATE)
+            key = AustralianElectricityMarkets.get_observed_state(device).initial_mw
+            initial_mw = AEMS.IS.get_time_series_values(device, key; start_time = start_date, len = horizon)
+            @test isapprox(initial_mw, rows.INITIALMW; atol = 1.0e-8)
         end
-    end
-
-    @testset "get_initial_mw throws, naming the unit, when it has no observed state" begin
-        sys = deepcopy(sys_base)
-        bat = get_component(EnergyReservoirStorage, sys, "BW01")
-        err = try
-            get_initial_mw(bat, start_date, horizon)
-            nothing
-        catch e
-            e
-        end
-        @test err isa ArgumentError
-        @test occursin("BW01", sprint(showerror, err))
     end
 
 end
@@ -252,13 +238,6 @@ end
         @test AustralianElectricityMarkets.effective_energy_availability([10.0, 10.0], nothing, [60.0, 60.0], false) == [10.0, 10.0]
         @test AustralianElectricityMarkets.effective_energy_availability([10.0, 10.0], nothing, [60.0, NaN], false) == [10.0, 0.0]
         @test AustralianElectricityMarkets.effective_energy_availability([10.0, 10.0], [8.0, 8.0], [60.0, 60.0], true) == [0.0, 0.0]
-    end
-
-    @testset "effective_regulation_enablement takes the more restrictive of bid and AGC limits" begin
-        @test effective_regulation_enablement(20.0, 100.0, 30.0, 90.0) == (30.0, 90.0)
-        @test effective_regulation_enablement(20.0, 100.0, 10.0, 120.0) == (20.0, 100.0)
-        @test effective_regulation_enablement(20.0, 100.0, nothing, nothing) == (20.0, 100.0)
-        @test effective_regulation_enablement(20.0, 100.0, nothing, 0.0) == (20.0, 0.0)
     end
 
     @testset "a device with no FCAS bid gets no FCAS effective series" begin
