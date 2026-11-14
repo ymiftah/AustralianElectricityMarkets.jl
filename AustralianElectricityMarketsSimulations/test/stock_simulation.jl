@@ -442,11 +442,17 @@ function stock_fcas_standalone(sys, t)
 end
 # Step 2 changes Alta's RAISEREG MaxAvail (15 -> 8 MW), turns its AGC off (RAISEREG disabled),
 # strands Park City below its RAISE6SEC EnablementMin and moves the battery from 5 MW to -15 MW net.
-const FCAS_CHANGES = (alta_reg_avail = [15.0, 8.0], alta_agc = [1, 0], park_initial = [40.0, 2.0], batt_initial = [5.0, -15.0])
+# The step-2 RAISEREG requirement (18 MW) stays below the battery's 20 MW, so its price is unique.
+const FCAS_CHANGES = (
+    alta_reg_avail = [15.0, 8.0], alta_agc = [1, 0], park_initial = [40.0, 2.0], batt_initial = [5.0, -15.0],
+    reg_req = [20.0, 18.0],
+)
 
 @testset "FCAS trapezium, enablement and AGC status change between steps: simulation equals standalone solves" begin
     sim = stock_simulate(fcas_toy_system(; FCAS_CHANGES...))
     @test PSI.has_container_key(PSI.get_optimization_container(sim.model), FCASSideCapacityVariable, FCASService, "1_RAISEREG_gen")
+    # Every cost of the full replay template is an invariant term.
+    @test !PSI.get_objective_expression(PSI.get_optimization_container(sim.model)).has_variant_contributors
     capacities = [stock_fcas_capacities(sim.results, t) for t in STOCK_STEPS]
     prices = [stock_fcas_prices(sim.results, fcas_toy_system(; FCAS_CHANGES...), t) for t in STOCK_STEPS]
     for (k, t) in enumerate(STOCK_STEPS)
@@ -470,7 +476,7 @@ const FCAS_CHANGES = (alta_reg_avail = [15.0, 8.0], alta_agc = [1, 0], park_init
     @test capacities[2]["1_RAISEREG $TOY_CHEAP"] ≈ 0.0 atol = TOY_TOLERANCE
     @test capacities[1]["1_RAISE6SEC $TOY_EXPENSIVE"] > 1.0
     @test capacities[2]["1_RAISE6SEC $TOY_EXPENSIVE"] ≈ 0.0 atol = TOY_TOLERANCE
-    @test capacities[2]["1_RAISEREG_gen $TOY_BATTERY"] + capacities[2]["1_RAISEREG_load $TOY_BATTERY"] ≈ 20.0 atol = TOY_TOLERANCE
+    @test capacities[2]["1_RAISEREG_gen $TOY_BATTERY"] + capacities[2]["1_RAISEREG_load $TOY_BATTERY"] ≈ 18.0 atol = TOY_TOLERANCE
 
 end
 
