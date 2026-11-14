@@ -19,6 +19,7 @@ using AustralianElectricityMarkets
 using AustralianElectricityMarketsSimulations
 import PowerSimulations as PSI
 import PowerSystems as PSY
+using PowerSystems: AreaInterchange, EnergyReservoirStorage, HydroDispatch, RenewableDispatch, ThermalStandard
 
 const AEM = AustralianElectricityMarkets
 const AEMS = AustralianElectricityMarketsSimulations
@@ -143,11 +144,13 @@ end
                     PSY.SingleTimeSeries, device, "initial_mw_seed"; ignore_scaling_factors = true,
                 )
                 stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, "initial_mw_seed")
+                # The seed is zero where the build does not observe the unit (a non-scheduled load, or outside its registration).
+                unobserved = AEM._unobserved_stamp_mask(device, stamps)
                 rows = filter(:DUID => ==(duid), limits)
                 by_time = Dict(zip(rows.SETTLEMENTDATE, eachrow(rows)))
-                for (t, value) in zip(stamps, series)
+                for (t, value, skip) in zip(stamps, series, unobserved)
                     row = get(by_time, t, nothing)
-                    isnothing(row) && continue
+                    (isnothing(row) || skip) && continue
                     checked += 1
                     isapprox(value, row.INITIALMW; atol = 1.0e-6) ||
                         push!(mismatches, "$duid at $t: $value vs $(row.INITIALMW)")
