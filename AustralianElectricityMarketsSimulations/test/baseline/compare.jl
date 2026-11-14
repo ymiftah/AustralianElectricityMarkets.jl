@@ -293,7 +293,7 @@ function _compare_main(args::Vector{String})
         report_only = opts.report_only,
     )
     failures = sort([r for r in rows if r.mismatch]; by = r -> r.max_abs, rev = true)
-    worst = maximum((r.max_abs for r in rows if !r.mismatch); init = 0.0)
+    worst = maximum((r.max_abs for r in rows if !r.mismatch && !r.report); init = 0.0)
     report_rows = sort([r for r in rows if r.report]; by = r -> r.max_abs, rev = true)
     isempty(report_rows) || println("report-only differences: $(length(report_rows)) key(s)")
     for r in first(report_rows, 10)
