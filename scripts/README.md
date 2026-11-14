@@ -11,14 +11,17 @@ julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/replay_
 
 ## Detailed statistics from saved runs
 
-Use Python 3.11 or newer to report saved outputs without starting Julia or
-running another simulation. No additional Python packages are required:
+`scripts/simulation_statistics.jl` reports saved outputs without running another simulation:
 
 ```sh
-python3 scripts/simulation_statistics.py \
+julia --project=AustralianElectricityMarketsSimulations/test scripts/simulation_statistics.jl \
     /run/media/simba/Store/aem_validation/overnight_10h_20261027T120955Z \
-    /run/media/simba/Store/aem_validation/overnight_10h_parallel_20261027T131045Z
+    /run/media/simba/Store/aem_validation/overnight_10h_parallel_20261027T131045Z \
+    --hive "$HOME/.nemdb_cache"
 ```
+
+`--hive` is optional: with it, the dispatch errors are also grouped by each unit's region, dispatch type
+and schedule type, read from the cache's `DUDETAILSUMMARY` as of each trading day.
 
 The default report folder is `<first run>/simulation_statistics/`. Set
 `--output /path/to/report` to choose another folder. Re-running the command
@@ -31,11 +34,12 @@ The report includes:
 
 | File | Contents |
 | --- | --- |
-| `report.md` | Runtime breakdown, timing percentiles, NEMDE errors, regional prices, unit outliers and failures |
+| `report.md` | Runtime breakdown, timing percentiles, NEMDE errors, error distributions by category, regional prices, unit outliers and failures |
 | `statistics.json` | Full report, provenance, status, warnings and coverage |
 | `runtime.csv` | Per-day totals, updates, MIP, pricing, auxiliary work, writes, state and residual time |
 | `timing_percentiles.csv` | Call counts, totals, min/mean, p5/p25/p50/p75/p90/p95/p99/max by phase and update cohort |
 | `errors.csv` | Per-day absolute-error percentiles, signed bias, MAE, RMSE, missing rows and duplicates |
+| `category_errors.csv` | Pooled error distributions by category: FCAS by service, region and direction; energy prices by region and four-hour block; flows and losses by interconnector; dispatch by unit region, dispatch type and schedule type (with `--hive`) |
 | `entity_errors.csv` | The same distributions by DUID, region, FCAS region/service and interconnector, with paired-interval coverage |
 | `worst_errors.csv` | Largest comparison errors and their interval/entity/published/solved values |
 | `over_constrained_intervals.csv` | Price-triggered intervals with a generic-constraint violation, excluded from the pooled errors in `report.md` and `statistics.json` |
@@ -69,10 +73,10 @@ The default `--cache-windows 24` only labels likely refill boundaries. Set it to
 the input-cache window count used by the source run; it does not change a run's
 cache. The labels identify a timing pattern, not a measured attribution to IO.
 
-Run the Python-only regression tests with:
+Its regression tests run in the Simulations suite's `replay_scripts` group:
 
 ```sh
-python3 -m unittest discover -s test/scripts -p 'test_simulation_statistics.py'
+julia --project=AustralianElectricityMarketsSimulations/test test/scripts/simulation_statistics.jl
 ```
 
 ## Overnight: random trading days for ten hours

@@ -58,3 +58,4 @@ end
 end
 
 include("replay_batch.jl")
+include("simulation_statistics.jl")

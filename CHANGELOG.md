@@ -84,6 +84,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The replay batch runner no longer profiles worker memory, so it runs on any platform rather than only on Linux: `--sample-seconds`, `memory.csv` and the statistics report's `memory_statistics.csv` and RSS lines are removed. Run times are unchanged: `phases.csv`, `days.csv`, `interval_timings.csv` and the per-day timing totals are still written, and the supervisor prints each phase change of the worker with its elapsed time.
 
+- The batch statistics report is a Julia script, `scripts/simulation_statistics.jl`, replacing `scripts/simulation_statistics.py` and its Python tests, so it runs in the scripts' Julia environment. Its outputs are those of the Python script, plus `category_errors.csv` and a report section of error distributions by category (FCAS by service, region and direction; energy prices by region and four-hour block; flows and losses by interconnector; and, with the new `--hive` option, dispatch by unit region, dispatch type and schedule type).
+
 ### Documentation
 
 - Restored the regional how-to pages, built with `set_regional_availability!`; fixed their series plots and output directories.

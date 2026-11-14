@@ -21,7 +21,7 @@ Exact parity with an earlier code revision is not required (user decision, 2026-
 | PSI reference map | `docs/psi-anatomy.md` |
 | FCAS dual-tie analysis | `docs/handover/2026-11-14-fcas-dual-tie-analysis.md` |
 | Baseline/gate tooling | `AustralianElectricityMarketsSimulations/test/baseline/{snapshot,capture,compare}.jl`, tests in `…/test/baseline_tools.jl` |
-| Batch replay and statistics | `scripts/replay_batch.jl`, `scripts/simulation_statistics.py`, `scripts/README.md` |
+| Batch replay and statistics | `scripts/replay_batch.jl`, `scripts/simulation_statistics.jl`, `scripts/README.md` |
 
 The plan and design were written assuming a baseline captured on the old machine. Read sections 4
 and 5 here before following any plan step that names `$B` or "the baseline".
@@ -190,7 +190,7 @@ julia --project=$T $T/baseline/capture.jl --hive mock --start 2025-01-01T00:05:0
 julia --project=$T $T/baseline/capture.jl --hive $HOME/.nemdb_cache --start 2026-06-04T04:05:00 --intervals 12 --out $R/real_1h
 julia --project=$T $T/baseline/capture.jl --hive $HOME/.nemdb_cache --start 2026-06-04T04:05:00 --intervals 288 --warm --out $R/real_day
 julia --project=$T scripts/replay_batch.jl --first 2026-06-04 --last 2026-06-04 --hours 3 --hive $HOME/.nemdb_cache --output <results>/batch_local-reference
-python3 scripts/simulation_statistics.py <results>/batch_local-reference
+julia --project=$T scripts/simulation_statistics.jl <results>/batch_local-reference
 ```
 
 The 2026-06-04 batch `errors.csv` should reproduce the original machine's CP2 numbers (table below)

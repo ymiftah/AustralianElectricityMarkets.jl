@@ -70,7 +70,7 @@ julia --heap-size-hint=4G --project=$T $T/baseline/capture.jl --hive $HOME/.nemd
 julia --project=$T $T/baseline/compare.jl $B/real_day $C/real_day $GATE_FLAGS
 O=/run/media/simba/Store/aem_validation/$(date +%F)_batch_psi-split-${label}_$(git rev-parse --short HEAD)
 julia --heap-size-hint=4G --project=$T scripts/replay_batch.jl --first 2026-06-04 --last 2026-06-04 --hours 3 --hive $HOME/.nemdb_cache --output $O
-python3 scripts/simulation_statistics.py $O
+julia --project=$T scripts/simulation_statistics.jl $O
 ```
 
 then the full root and Simulations suites. Expected: `GATE PASS`; `$O/simulation_statistics/errors.csv` no worse than the baseline's in any p5..p99 or max cell; `skipped_constraints.csv` identical to the baseline's (`diff`).
