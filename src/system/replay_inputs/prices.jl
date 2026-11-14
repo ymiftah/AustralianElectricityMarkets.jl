@@ -1,4 +1,4 @@
-# The band prices of each energy and FCAS bid, held as typed day-constants of the bid.
+# The band prices of each energy, FCAS and MNSP bid, held as typed day-constants of the bid.
 
 
 """
@@ -43,14 +43,15 @@ end
 """
     _set_band_prices!(sys::PSY.System) -> Nothing
 
-Sets `band_prices` of each energy bid of `sys` to the band prices of its side's `energy_offer` series (loss-factor
-referred) over the replay intervals, through [`_day_band_prices`](@ref). Replaces the bid; repeat calls recompute the
-same value. Also sets `band_prices` of each FCAS bid of a modelled side to the prices of its `offer_curves` series
-(no loss-factor referral, no rounding). Throws `ArgumentError` when a bid's prices vary within the replay range, or
-an FCAS bid's `offer_curves` is static. Requires the energy offer series.
+Sets `band_prices` of each energy, FCAS and MNSP bid of `sys` through [`_day_band_prices`](@ref). An energy bid takes
+the prices of its side's `energy_offer` series (loss-factor referred) over the replay intervals; an FCAS bid of a
+modelled side those of its `offer_curves` series, and an MNSP link bid those of its `offer_curves` (a static curve
+is its own prices), both unreferred and unrounded. Replaces each bid; repeat calls recompute the same values.
+Throws `ArgumentError` when a bid's prices vary within the replay range, or an FCAS bid's `offer_curves` is static.
+Requires the energy offer series.
 
 # Arguments
-- `sys`: the `System` whose energy bids are updated.
+- `sys`: the `System` whose bids are updated.
 
 # Returns
 `nothing`.
@@ -70,19 +71,26 @@ function _set_band_prices!(sys::PSY.System)
         end
         for bid in copy(get_fcas_bids(cost))
             isnothing(_fcas_bid_side(device, bid)) && continue
-            key = bid.offer_curves
-            key isa IS.StaticTimeSeriesKey || throw(
-                ArgumentError(
-                    "\"$(PSY.get_name(device))\" has a static `offer_curves` field for $(bid.service); FCAS offers need a series-backed bid.",
-                ),
-            )
-            name = IS.get_name(key)
+            name = IS.get_name(_fcas_series_key(device, bid.offer_curves, :offer_curves))
             series = PSY.get_time_series_array(PSY.SingleTimeSeries, device, name)
             curves = collect(values(series))
             label = "$(PSY.get_name(device)) $(bid.service) $(bid.direction)"
             prices = _day_band_prices(curves, [t in replay for t in PSY.TimeSeries.timestamp(series)], label)
             _set_fcas_bid!(cost, _with_band_prices(bid, prices))
         end
+    end
+    for device in PSY.get_components(PSY.AreaInterchange, sys), bid in collect(PSY.get_supplemental_attributes(NEMMNSPBid, device))
+        curve = bid.offer_curves
+        label = "$(PSY.get_name(device)) MNSP $(bid.direction)"
+        if curve isa PSY.PiecewiseStepData
+            prices = _day_band_prices([curve], [true], label)
+        else
+            series = PSY.get_time_series_array(PSY.SingleTimeSeries, device, IS.get_name(curve))
+            stamps = PSY.TimeSeries.timestamp(series)
+            prices = _day_band_prices(collect(values(series)), [t in replay for t in stamps], label)
+        end
+        PSY.remove_supplemental_attribute!(sys, device, bid)
+        PSY.add_supplemental_attribute!(sys, device, _with_band_prices(bid, prices))
     end
     return
 end
@@ -97,5 +105,11 @@ end
 function _with_band_prices(bid::NEMFCASBid, prices::NTuple{10, Float64})
     return NEMFCASBid(;
         (f => getfield(bid, f) for f in fieldnames(NEMFCASBid) if f != :band_prices)..., band_prices = prices,
+    )
+end
+
+function _with_band_prices(bid::NEMMNSPBid, prices::NTuple{10, Float64})
+    return NEMMNSPBid(;
+        (f => getfield(bid, f) for f in fieldnames(NEMMNSPBid) if f ∉ (:band_prices, :internal))..., band_prices = prices,
     )
 end

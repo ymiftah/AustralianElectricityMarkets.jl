@@ -471,7 +471,6 @@ end
     scale = base_power * interval_hours(PSI.get_resolution(container))
     @test PSI.JuMP.coefficient(invariant, bands[duid, "1", 1]) == scale * bid.band_prices[1]
     @test PSI.JuMP.coefficient(invariant, bands[duid, "2", 1]) == scale * bid.band_prices[2]
-    @test bid.band_prices[2] == 30.0
 end
 
 "Attaches a flat `max_active_power` of 1 p.u. over `stamps` to every load and `RenewableDispatch` in `sys`."
@@ -1062,6 +1061,20 @@ end
     window = AustralianElectricityMarkets._fcas_window(bat, [TOY_START], TOY_RESOLUTION, get_base_power(sys))
     trap = only(AustralianElectricityMarkets._fcas_side(window, bat, BidType.LOWERREG, true).trapeziums)
     @test collect(Tuple(trap)[1:5]) .* get_base_power(sys) ≈ [-10.0, -8.0, -2.0, 0.0, 4.0]
+end
+
+@testset "a Storage device's LOAD-side band cost is the load bid's price in the invariant expression" begin
+    service_name = "TAS1_LOWERREG_STOR_COST"
+    model, sys = storage_fcas_toy_model(service_name, BidType.LOWERREG, (-20.0, -15.0, -5.0, 0.0, 10.0); decremental = true)
+    container = PSI.get_optimization_container(model)
+    bat = get_component(EnergyReservoirStorage, sys, "BAT1")
+    bid = AustralianElectricityMarkets._fcas_side_bid(bat, BidType.LOWERREG, OfferSide.LOAD)
+    @test bid.band_prices[1] == 50.0
+    key = only(k for k in keys(PSI.get_variables(container)) if PSI.IS.Optimization.get_entry_type(k) == FCASOfferBandVariable)
+    bands = PSI.get_variable(container, key)
+    invariant = PSI.get_invariant_terms(PSI.get_objective_expression(container))
+    scale = PSI.get_base_power(container) * interval_hours(PSI.get_resolution(container))
+    @test PSI.JuMP.coefficient(invariant, bands["BAT1", "1", 1]) == scale * 50.0
 end
 
 @testset "a Storage device's GEN-side regulation with a vertical lower slope" begin

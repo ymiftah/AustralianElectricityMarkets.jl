@@ -101,7 +101,7 @@ function _fcas_series_key(device, value, field::Symbol)
     value isa IS.StaticTimeSeriesKey || throw(
         ArgumentError(
             "\"$(PSY.get_name(device))\" has a static `$(field)` field; FCAS trapeziums and MAXAVAIL need " *
-                "series-backed bid inputs, as set_market_bids! writes them.",
+                "series-backed bid inputs (offer curves included), as set_market_bids! writes them.",
         ),
     )
     return value

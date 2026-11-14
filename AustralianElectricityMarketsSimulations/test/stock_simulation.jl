@@ -289,13 +289,14 @@ end
 end
 
 # Area 2 adds Solitude ($50) and an 80 MW load; the interchange is an MNSP whose forward link
-# offers 30 MW at $10 and 100 MW at $40 (MAXAVAIL 200) in step 1, 100 MW at $5 (MAXAVAIL 60) in step 2.
+# offers 30 MW at $10 and 100 MW at $40 (MAXAVAIL 200) in step 1, 60 MW at $10 and 40 MW at $40 (MAXAVAIL 60)
+# in step 2; the band prices are constant over the day.
 function mnsp_sentinel_system(; mutate! = nothing)
     units = [
         TOY_CHEAP => toy_unit(300.0, [(300.0, 20.0)]; initial = 100.0, ramp_up = 100.0),
         "Solitude" => toy_unit(200.0, [(200.0, 50.0)]; initial = 50.0, ramp_up = 100.0),
     ]
-    forward = [(200.0, [(30.0, 10.0), (100.0, 40.0)]), (60.0, [(100.0, 5.0)])]
+    forward = [(200.0, [(30.0, 10.0), (100.0, 40.0)]), (60.0, [(60.0, 10.0), (40.0, 40.0)])]
     reverse_link = (100.0, [(100.0, 10.0)])
     return nem_toy_system(
         units, 50.0; horizon = TOY_RESOLUTION,
@@ -307,10 +308,10 @@ stock_area_price(solved, area) = only(filter(:REGIONID => ==(area), solved.price
 stock_flow(solved) = only(solved.interconnectors.MWFLOW)
 stock_loss(solved) = only(solved.interconnectors.MWLOSSES)
 
-@testset "MNSP band widths, prices and MAXAVAIL change between steps: simulation equals standalone solves" begin
+@testset "MNSP band widths and MAXAVAIL change between steps: simulation equals standalone solves" begin
     expected = [
         (flow = 30.0, solitude = 50.0, alta = 80.0, price2 = 50.0, objective = 4400 / 12),
-        (flow = 60.0, solitude = 20.0, alta = 110.0, price2 = 50.0, objective = 3500 / 12),
+        (flow = 60.0, solitude = 20.0, alta = 110.0, price2 = 50.0, objective = 3800 / 12),
     ]
     sim = stock_simulate(mnsp_sentinel_system())
     @test PSI.is_milp(PSI.get_optimization_container(sim.model))

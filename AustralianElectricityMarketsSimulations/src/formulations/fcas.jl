@@ -703,7 +703,7 @@ end
     _add_fcas_band_costs!(container, group, svc)
 
 Prices the [`FCASOfferBandVariable`](@ref)s of an [`_fcas_offer_groups`](@ref) `group` in the invariant objective
-expression. Each band's cost is its `band_prices` entry (`\$/MW`, the day price of the device's bid on that side)
+expression. Each band's cost is its `band_prices` entry (`\$/MWh`, the day price of the device's bid on that side)
 times the system base power and the interval length in hours.
 
 # Arguments

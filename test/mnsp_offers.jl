@@ -42,8 +42,11 @@ _key_values(ic, key; start = DateTime(2025, 1, 1, 11, 55), n = 2) = PowerSystems
         avail = _key_values(ic, forward.max_avail)
         @test avail == [594.0, 400.0]
         curves = _key_values(ic, forward.offer_curves)
-        @test get_x_coords(curves[1]) == [0.0, 100.0, 200.0, 300.0, 400.0, 494.0]
-        @test get_y_coords(curves[2]) == [80.0, 61.0, 75.0, 89.0]
+        # Every band is kept, so step k is PRICEBAND<k>; empty bands have zero width.
+        @test get_x_coords(curves[1]) == [0.0, 0.0, 100.0, 200.0, 300.0, 400.0, 494.0, 494.0, 494.0, 494.0, 494.0]
+        @test get_y_coords(curves[1]) == [0.01, 40.0, 61.0, 75.0, 89.0, 104.0, 114.0, 200.0, 450.0, 20300.0]
+        @test get_x_coords(curves[2]) == [0.0, 0.0, 100.0, 200.0, 300.0, 400.0, 400.0, 400.0, 400.0, 400.0, 400.0]
+        @test get_y_coords(curves[2]) == [0.01, 80.0, 61.0, 75.0, 89.0, 104.0, 114.0, 200.0, 450.0, 20300.0]
         links = get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPLink, ic)
         @test only(l for l in links if l.direction == AustralianElectricityMarkets.MNSPDirection.FORWARD).link_id == "BLNKTAS"
         reverse_link = only(l for l in links if l.direction == AustralianElectricityMarkets.MNSPDirection.REVERSE)
@@ -161,4 +164,16 @@ end
     raw = _key_values(get_component(AreaInterchange, sys, "IC2"), forward.fixed_load)
     @test raw[1] == 4.0
     @test isnan(raw[2])  # NULL at 12:00 is NaN, not zero
+end
+
+@testset "_mnsp_offer_curve keeps all ten bands so band k is PRICEBAND<k>" begin
+    AEM = AustralianElectricityMarkets
+    avail = [10.0, 0.0, 30.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    row = (; (Symbol("BANDAVAIL$i") => avail[i] for i in 1:10)..., (Symbol("PRICEBAND$i") => 100.0 * i for i in 1:10)...)
+    curve = AEM._mnsp_offer_curve(row)
+    @test length(PowerSystems.get_y_coords(curve)) == 10
+    @test diff(PowerSystems.get_x_coords(curve)) == avail
+    @test PowerSystems.get_y_coords(curve) == [100.0 * i for i in 1:10]
+    empty_row = (; (Symbol("BANDAVAIL$i") => 0.0 for i in 1:10)..., (Symbol("PRICEBAND$i") => 5.0 for i in 1:10)...)
+    @test PowerSystems.get_y_coords(AEM._mnsp_offer_curve(empty_row)) == fill(5.0, 10)
 end

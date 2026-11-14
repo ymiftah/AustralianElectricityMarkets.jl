@@ -112,7 +112,7 @@ One direction of a unit's offer for one FCAS market, as AEMO bid it.
 - `offer_curves`: the ten price bands, in MW and \$/MW, as `PiecewiseStepData`.
 - `max_avail`: `MAXAVAIL`, MW.
 - `trapezium`: the [`FCASTrapeziumPoints`](@ref) of the bid, MW.
-- `band_prices`: the ten band prices of the trading day in \$/MW, padded with `0.0`, or `nothing` until the
+- `band_prices`: the ten band prices of the trading day in \$/MWh, padded with `0.0`, or `nothing` until the
   replay inputs are written.
 """
 struct NEMFCASBid <: PSY.DeviceParameter

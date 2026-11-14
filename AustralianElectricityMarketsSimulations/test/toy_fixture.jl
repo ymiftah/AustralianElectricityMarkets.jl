@@ -418,6 +418,7 @@ function add_toy_interchange!(sys, stamps, ic)
             AustralianElectricityMarkets.NEMMNSPBid(;
                 direction,
                 offer_curves = _toy_series_key(sys, interchange, getproperty(AustralianElectricityMarkets.NEM_MNSP_SERIES, Symbol(dir, "_offer")), curves),
+                band_prices = AustralianElectricityMarkets._day_band_prices(curves, fill(true, length(curves)), "TOY $dir"),
                 max_avail = _toy_series_key(sys, interchange, getproperty(AustralianElectricityMarkets.NEM_MNSP_SERIES, Symbol(dir, "_max_avail")), avail),
                 ramp_up = _toy_series_key(sys, interchange, getproperty(AustralianElectricityMarkets.NEM_MNSP_SERIES, Symbol(dir, "_ramp_rate")), fill(1000.0, length(stamps))),
                 fixed_load = _toy_series_key(sys, interchange, getproperty(AustralianElectricityMarkets.NEM_MNSP_SERIES, Symbol(dir, "_fixed_load")), fill(NaN, length(stamps))),

@@ -121,7 +121,7 @@ export NEMInterconnectorLoss, InterconnectorLossVariable, InterconnectorLossSegm
     LossDemandCoefficientParameter
 export MNSPLinkFlowVariable, MNSPLinkConstraint, MNSPLinkDirectionVariable,
     MNSPLinkLossVariable, MNSPLinkBandVariable, MNSPBandWidthParameter,
-    MNSPMaxAvailParameter, MNSPBandPriceParameter
+    MNSPMaxAvailParameter
 
 export MNSPOperatingParameter, MNSPSlack
 

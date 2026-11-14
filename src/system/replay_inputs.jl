@@ -31,8 +31,8 @@ writer added. The seventh adds the demand term
 of each loss-modelled interchange's loss factor, named by [`NEM_SERIES`](@ref), from the loads' `"loss_demand"` series
 per unit of the system base. It reads the demand that [`set_demand!`](@ref) writes before the stage runs. The eighth
 sets the constraints that cannot bind over the replay intervals unavailable, through
-[`_set_constraint_availability!`](@ref). The ninth sets the band prices of each energy bid from the energy offer
-series, through [`_set_band_prices!`](@ref). The tenth transforms the single time series of the system into five-minute
+[`_set_constraint_availability!`](@ref). The ninth sets the band prices of each energy, FCAS and MNSP bid from its
+offer series, through [`_set_band_prices!`](@ref). The tenth transforms the single time series of the system into five-minute
 forecast windows, through [`_set_replay_forecasts!`](@ref). No series may be added after it.
 Called by [`nem_system`](@ref) before its input checks.
 

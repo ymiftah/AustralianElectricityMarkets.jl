@@ -121,7 +121,7 @@ _mnsp_max_avail_series(dir::AbstractString) = getproperty(NEM_MNSP_SERIES, Symbo
 
 
 function PSI.get_multiplier_value(
-        ::Union{MNSPBandWidthParameter, MNSPBandPriceParameter}, ::PSY.AreaInterchange, ::NEMInterconnectorLoss,
+        ::MNSPBandWidthParameter, ::PSY.AreaInterchange, ::NEMInterconnectorLoss,
     )
     return 1.0
 end
@@ -132,9 +132,9 @@ function PSI.get_multiplier_value(::MNSPMaxAvailParameter, ::PSY.AreaInterchange
 end
 
 
-# A band-width or band-price parameter's band axis: `_mnsp_band_labels` of the links carrying the series.
+# A band-width parameter's band axis: `_mnsp_band_labels` of the links carrying the series.
 function PSI.calc_additional_axes(
-        ::PSI.OptimizationContainer, ::Union{MNSPBandWidthParameter, MNSPBandPriceParameter},
+        ::PSI.OptimizationContainer, ::MNSPBandWidthParameter,
         devices::Union{Vector{PSY.AreaInterchange}, IS.FlattenIteratorWrapper{PSY.AreaInterchange}},
         ::PSI.DeviceModel{PSY.AreaInterchange, NEMInterconnectorLoss},
     )
@@ -358,14 +358,14 @@ end
 """
     _add_mnsp_band_costs!(container, devices, device_model)
 
-Adds one [`MNSPBandPriceParameter`](@ref) per link direction for the devices in `devices` carrying
-MNSP offers, and a cost target per band and time step pricing each [`MNSPLinkBandVariable`](@ref) at
-its offered price times the system base power and the interval hours.
+Prices each [`MNSPLinkBandVariable`](@ref) of the devices in `devices` carrying MNSP offers in the invariant
+objective expression: the `band_prices` entry (`\$/MWh`, the day price of the link's bid) times the system base
+power and the interval hours.
 
 # Arguments
 - `container`: the optimization container of the model being built.
 - `devices`: the `PSY.AreaInterchange` devices of the formulation.
-- `device_model`: the `PSI.DeviceModel` supplying the device model of the parameters.
+- `device_model`: the `PSI.DeviceModel` of the formulation.
 
 # Returns
 `nothing`.
@@ -373,21 +373,20 @@ its offered price times the system base power and the interval hours.
 function _add_mnsp_band_costs!(container::PSI.OptimizationContainer, devices, device_model)
     mnsp = filter(_has_mnsp_offers, collect(devices))
     isempty(mnsp) && return
-    names = PSY.get_name.(mnsp)
     labels = _mnsp_band_labels(mnsp)
     base_power = PSI.get_base_power(container)
     resolution = PSI.get_resolution(container)
     scale = base_power * interval_hours(resolution)
     time_steps = PSI.get_time_steps(container)
     for dir in _MNSP_DIRECTIONS
-        PSI.add_parameters!(
-            container, MNSPBandPriceParameter, mnsp, device_model;
-            meta = dir, time_series_name = getproperty(NEM_MNSP_SERIES, Symbol(dir, "_offer")),
-        )
-        key = PSI.ParameterKey(MNSPBandPriceParameter, PSY.AreaInterchange, dir)
         bands = PSI.get_variable(container, MNSPLinkBandVariable(), PSY.AreaInterchange, dir)
-        for name in names, (b, label) in enumerate(labels), t in time_steps
-            PSI.add_cost_target!(container, key, name, (b,), t, bands[name, label, t], scale)
+        for device in mnsp
+            name = PSY.get_name(device)
+            prices = _mnsp_bid(device, dir).band_prices
+            isnothing(prices) && throw(ArgumentError("$name has no MNSP $dir band prices; run the replay input stage."))
+            for t in time_steps, (b, label) in enumerate(labels)
+                PSI.add_to_objective_invariant_expression!(container, (scale * prices[b]) * bands[name, label, t])
+            end
         end
     end
     _add_mnsp_limit_costs!(container, mnsp)

@@ -521,6 +521,7 @@ function _mnsp_operating_series!(sys; initial = 0.0, up = 1000.0, down = 1000.0,
             AustralianElectricityMarkets.NEMMNSPBid(;
                 direction,
                 offer_curves = bid.offer_curves,
+                band_prices = bid.band_prices,
                 max_avail = bid.max_avail,
                 ramp_up = _add_key!(sys, ic, stamps, getproperty(names, Symbol(dir, "_ramp_rate")), fill(Float64(ramp), length(stamps))),
                 fixed_load = _add_key!(
@@ -534,15 +535,14 @@ function _mnsp_operating_series!(sys; initial = 0.0, up = 1000.0, down = 1000.0,
 end
 
 """
-    _attach_mnsp_offers!(sys; forward, reverse, forward_tlfs = (1.0, 1.0), reverse_tlfs = (1.0, 1.0), forward_after = nothing, operating = (;))
+    _attach_mnsp_offers!(sys; forward, reverse, forward_tlfs = (1.0, 1.0), reverse_tlfs = (1.0, 1.0), operating = (;))
 
 Gives `IC1` (area `"1"` to `"2"`) an MNSP offer per link and re-transforms the system's series.
-`forward` and `reverse` are `(max_avail_mw, [(band_mw, price), ...])`, constant over the loads' series
-unless `forward_after` (the same bands list) replaces the forward offer from the second timestamp on.
+`forward` and `reverse` are `(max_avail_mw, [(band_mw, price), ...])`, constant over the loads' series.
 `operating` holds the keywords of `_mnsp_operating_series!`, applied before the derived fixed loading is written.
 """
 function _attach_mnsp_offers!(
-        sys; forward, reverse, forward_tlfs = (1.0, 1.0), reverse_tlfs = (1.0, 1.0), forward_after = nothing, operating = (;),
+        sys; forward, reverse, forward_tlfs = (1.0, 1.0), reverse_tlfs = (1.0, 1.0), operating = (;),
     )
     ic = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
     load = first(PSY.get_components(PSY.PowerLoad, sys))
@@ -552,11 +552,7 @@ function _attach_mnsp_offers!(
             ("forward", forward, forward_tlfs), ("reverse", reverse, reverse_tlfs),
         )
         curve = offer_curve(bands)
-        offers = if dir == "forward" && !isnothing(forward_after)
-            [i == 1 ? curve : offer_curve(forward_after) for i in eachindex(grid)]
-        else
-            fill(curve, length(grid))
-        end
+        offers = fill(curve, length(grid))
         direction = dir == "forward" ? AustralianElectricityMarkets.MNSPDirection.FORWARD : AustralianElectricityMarkets.MNSPDirection.REVERSE
         names = AustralianElectricityMarkets.NEM_MNSP_SERIES
         for old in PSY.get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPBid, ic)
@@ -577,6 +573,7 @@ function _attach_mnsp_offers!(
             AustralianElectricityMarkets.NEMMNSPBid(;
                 direction,
                 offer_curves = _add_key!(sys, ic, grid, getproperty(names, Symbol(dir, "_offer")), offers),
+                band_prices = AustralianElectricityMarkets._day_band_prices(offers, fill(true, length(offers)), "IC1 $dir"),
                 max_avail = _add_key!(sys, ic, grid, getproperty(names, Symbol(dir, "_max_avail")), fill(Float64(max_avail), length(grid))),
                 ramp_up = _add_key!(sys, ic, grid, getproperty(names, Symbol(dir, "_ramp_rate")), fill(1000.0, length(grid))),
                 fixed_load = _add_key!(sys, ic, grid, getproperty(names, Symbol(dir, "_fixed_load")), fill(NaN, length(grid))),
@@ -650,46 +647,30 @@ end
     @test_throws r"incomplete directional offer inputs" AEMS._check_mnsp_offers(PSY.get_component(PSY.AreaInterchange, partial, "IC1"))
 end
 
-@testset "MNSP band prices are native time-series cost targets" begin
+@testset "MNSP band prices are typed day-constants in the invariant objective expression" begin
     sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
     _attach_mnsp_offers!(
         sys; forward = (500.0, [(200.0, 10.0), (300.0, 25.0)]), reverse = (500.0, [(500.0, 10.0)]),
-        forward_after = [(200.0, 40.0), (300.0, 5.0)],
     )
+    ic = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
+    @test AEMS._mnsp_bid(ic, "forward").band_prices == (10.0, 25.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     model = _decision_model(_loss_template(sys), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
-    base_power = PSI.get_base_power(container)
-    hours = AEMS.interval_hours(PSI.get_resolution(container))
-    key = PSI.ParameterKey(AEMS.MNSPBandPriceParameter, PSY.AreaInterchange, "forward")
-    prices = PSI.get_parameter_array(container, key)
-    price_column() = PSI.get_parameter_column_refs(PSI.get_parameter(container, key), "IC1")
-    multiplier = PSI.get_parameter_multiplier_array(container, key)
-    labels = axes(prices)[2]
-    bands = PSI.get_variable(container, AEMS.MNSPLinkBandVariable(), PSY.AreaInterchange, "forward")
-    @test all(==(1.0), multiplier)
-    @test [price_column()[b, 1] for b in labels[1:2]] == [10.0, 25.0]
-    @test [price_column()[b, 2] for b in labels[1:2]] == [40.0, 5.0]
-    @test all(==(0.0), [price_column()[b, t] for b in labels[3:end], t in 1:2])
-
-    # Each band's cost is price * (base power * interval hours), the coefficient of its band variable.
-    function check_band_costs(expected)
-        variant = PSI.get_variant_terms(PSI.get_objective_expression(container))
+    @test !isdefined(AEMS, :MNSPBandPriceParameter)
+    @test all(k -> nameof(PSI.IS.Optimization.get_entry_type(k)) != :MNSPBandPriceParameter, keys(PSI.get_parameters(container)))
+    cost_types = [PSI.IS.Optimization.get_entry_type(k) for k in keys(PSI.get_parameters(container))]
+    @test all(==(AEMS.GenericConstraintSlackCostParameter), filter(T -> T <: PSI.TimeSeriesCostParameter, cost_types))
+    scale = PSI.get_base_power(container) * AEMS.interval_hours(PSI.get_resolution(container))
+    invariant = PSI.get_invariant_terms(PSI.get_objective_expression(container))
+    for (dir, expected) in (("forward", [10.0, 25.0]), ("reverse", [10.0, 0.0]))
+        bands = PSI.get_variable(container, AEMS.MNSPLinkBandVariable(), PSY.AreaInterchange, dir)
+        labels = axes(bands)[2]
         for t in 1:2, (b, label) in enumerate(labels)
-            price = b <= size(expected, 1) ? expected[b, t] : 0.0
-            @test PSI.JuMP.coefficient(variant, bands["IC1", label, t]) == price * (base_power * hours)
+            price = b <= length(expected) ? expected[b] : 0.0
+            @test PSI.JuMP.coefficient(invariant, bands["IC1", label, t]) == scale * price
         end
     end
-    check_band_costs([10.0 40.0; 25.0 5.0])
-
-    # After one execution the window starts at the second timestamp; the update re-applies the costs.
-    PSI.set_execution_count!(model, 1)
-    PSI.cost_function_unsynch(container)
-    PSI.reset_variant_terms(PSI.get_objective_expression(container))
-    PSI.update_container_parameter_values!(container, model, key, PSI.DatasetContainer{PSI.InMemoryDataset}())
-    PSI.set_execution_count!(model, 0)
-    @test [price_column()[b, t] for b in labels[1:2], t in 1:2] == [40.0 40.0; 5.0 5.0]
-    check_band_costs([40.0 40.0; 5.0 5.0])
 end
 
 @testset "MNSP link offers bound and price the interconnector flow" begin
