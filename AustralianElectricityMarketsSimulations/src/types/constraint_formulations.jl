@@ -218,14 +218,26 @@ struct GenericConstraintSlackDown <: PSI.VariableType end
 
 
 """
-    GenericConstraintSlackCostParameter
+    GenericConstraintInvocationMaskParameter
 
-Time-series cost parameter pricing a [`GenericConstraint`](@ref)'s elastic slacks: its value is
-the constraint's invoked mask (`1.0`/`0.0`) per interval, read at each simulation step. Each
-slack's cost target scales the mask by the system base power, the interval coefficient of
-`GENERICCONSTRAINTWEIGHT` and the Market Price Cap, so a non-invoked interval's slack costs nothing.
+Constraint-coefficient parameter holding the relaxation mask `1 - invoked` of a
+[`GenericConstraint`](@ref) per interval, read at each simulation step from the constraint's `invoked`
+series. It is the coefficient of [`GenericConstraintRelaxation`](@ref) in the constraint row: `0.0`
+while the constraint is invoked and `1.0` while it is not, so a non-invoked interval's row is
+satisfiable at no cost.
 """
-struct GenericConstraintSlackCostParameter <: PSI.TimeSeriesCostParameter end
+struct GenericConstraintInvocationMaskParameter <: PSI.ConstraintCoefficientParameter end
+
+
+"""
+    GenericConstraintRelaxation
+
+Variable type for the unpriced relaxation of a [`GenericConstraint`](@ref) row, built when the owning
+`PSI.ServiceModel` has `use_slacks = true`. The container is indexed `[name, side, t]` with `side` in
+`"up"`/`"down"` and enters the row as `+up - down`, scaled by [`GenericConstraintInvocationMaskParameter`](@ref).
+Both sides are non-negative and carry no objective term.
+"""
+struct GenericConstraintRelaxation <: PSI.VariableType end
 
 
 """

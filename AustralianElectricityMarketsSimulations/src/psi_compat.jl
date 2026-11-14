@@ -62,6 +62,11 @@ function PSI._unwrap_for_param(::FCASRampingLimitParameter, v::NTuple{2, Float64
     return [v[1], v[2]]
 end
 
+# A generic constraint's invoked value becomes its relaxation coefficient `1 - invoked`.
+function PSI._unwrap_for_param(::GenericConstraintInvocationMaskParameter, v::Float64, _)
+    return 1.0 - v
+end
+
 # An offer curve's band widths in MW, padded with zero-width bands to the band axis.
 function PSI._unwrap_for_param(::MNSPBandWidthParameter, curve::IS.PiecewiseStepData, expected_axs)
     widths = diff(PSY.get_x_coords(curve))
