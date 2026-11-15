@@ -218,7 +218,7 @@ _cast_expr(col::String, T::DataType) = "TRY_CAST(\"$col\" AS $(_duckdb_type(T)))
 
 """
     _csv_to_parquet(conn, csv_path, available_cols, table_columns, path, partitions, sort_by, year, month;
-                    islocal=true, month_filter_column=nothing)
+                    islocal=true, month_filter_column=nothing, row_filter=nothing)
 
 Read `csv_path` entirely inside DuckDB, in one query — every line as VARCHAR,
 filtered to real "D" records, cast to `COLUMN_TYPES`, missing columns filled
@@ -244,6 +244,7 @@ applied earlier, line by line, in [`_write_d_lines`](@ref).
 - `year::Int`, `month::Int`: The archive month, written as the partition value.
 - `islocal::Bool`: Whether `path` is local, in which case it is created.
 - `month_filter_column`: Column scoping rows to the month, or `nothing`.
+- `row_filter`: `column => value` keeping only rows whose raw `column` equals `value`, or `nothing`.
 
 # Returns
 - The DuckDB result of the `COPY` statement.
@@ -252,6 +253,7 @@ function _csv_to_parquet(
         conn, csv_path::String, available_cols::Vector{String}, table_columns::Vector{String}, path::String,
         partitions::Vector{String}, sort_by::Vector{String}, year::Int, month::Int;
         islocal::Bool = true, month_filter_column::Union{Nothing, String} = nothing,
+        row_filter::Union{Nothing, Pair{String, String}} = nothing,
     )
     raw_names = vcat(["_record_type", "_namespace", "_report", "_version"], available_cols)
     names_sql = "[" * join(("'$n'" for n in raw_names), ", ") * "]"
@@ -278,6 +280,15 @@ function _csv_to_parquet(
     distinct_on = (!isnothing(month_filter_column) && !isempty(sort_cols)) ?
         "DISTINCT ON ($(join(("\"$c\"" for c in sort_cols), ", "))) " : ""
 
+    row_where = if isnothing(row_filter)
+        ""
+    else
+        first(row_filter) in available_cols || throw(
+            ArgumentError("row filter column $(first(row_filter)) not in the columns of $csv_path: $available_cols"),
+        )
+        "AND \"$(first(row_filter))\" = '$(replace(last(row_filter), "'" => "''"))'"
+    end
+
     islocal && mkpath(path)
     sql = """
         COPY (
@@ -285,7 +296,7 @@ function _csv_to_parquet(
             FROM read_csv('$csv_path', header=false, names=$names_sql, all_varchar=true,
                            delim=',', quote='"', escape='"', strict_mode=false,
                            null_padding=true, ignore_errors=true)
-            WHERE _record_type = 'D'
+            WHERE _record_type = 'D' $row_where
             $order_by
         ) TO '$path' (FORMAT PARQUET, PARTITION_BY ($partition_by), OVERWRITE_OR_IGNORE TRUE)
     """

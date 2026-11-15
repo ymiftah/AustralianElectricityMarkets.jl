@@ -191,7 +191,10 @@ end
 Reads the latest energy and FCAS offers of `markets` in one query: `BIDPEROFFER_D` period offers
 joined to their `BIDDAYOFFER_D` price bands, at native resolution. Each row is one
 `(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE)` with
-`first(date_range) <= INTERVAL_DATETIME < last(date_range)`.
+`first(date_range) <= INTERVAL_DATETIME < last(date_range)`. When `BIDDAYOFFER` is cached, the
+`MINIMUMLOAD` and `T1` to `T4` of an energy row come from the daily offer version in force at the
+interval: the latest `BIDDAYOFFER.OFFERDATE` at or before the period offer's `LASTCHANGED`. Rows
+without such a version, and every row when `BIDDAYOFFER` is not cached, keep the `BIDDAYOFFER_D` values.
 
 # Arguments
 - `db`: an `AEMDB` connection.
@@ -219,10 +222,12 @@ function read_offers(db, date_range; markets = NEM_MARKETS)
         :BIDDAYOFFER_D, _table_schema(db, price_source),
         ["MINIMUMLOAD", "DAILYENERGYCONSTRAINT", "T1", "T2", "T3", "T4", "NORMALSTATUS"],
     )
+    in_force = BidType.ENERGY in markets && _table_is_cached(db, :BIDDAYOFFER)
+    in_force && _require_columns(:BIDPEROFFER_D, _table_schema(db, period_source), ["LASTCHANGED"])
     offers = _massage_bids(
         db, start_date, end_date; bid_types = collect(BidType, markets), keep_bid_type = true,
         period_columns = ["FIXEDLOAD", "ENABLEMENTMIN", "LOWBREAKPOINT", "HIGHBREAKPOINT", "ENABLEMENTMAX", "ROCUP", "ROCDOWN", "ENERGYLIMIT"],
-        extra_price_columns = ["T1", "T2", "T3", "T4", "NORMALSTATUS"],
+        extra_price_columns = ["T1", "T2", "T3", "T4", "NORMALSTATUS"], in_force,
     )
     transform!(offers, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
     return offers
@@ -282,21 +287,26 @@ bands.
 A `DataFrame` with `SETTLEMENTDATE`, `DUID`, `DIRECTION`, `INTERVAL_DATETIME`, `PRICEBANDARRAY`,
 `BANDAVAILARRAY`, `MAXAVAIL`, `MINIMUMLOAD`, `DAILYENERGYCONSTRAINT`, and `BIDTYPE` when
 `keep_bid_type`. Native-resolution requests can also project `period_columns` from the same
-latest period rows.
+latest period rows. With `in_force`, at native resolution only, the `MINIMUMLOAD` and `T1` to `T4`
+of energy rows come from the `BIDDAYOFFER` version in force at the period offer's `LASTCHANGED`
+([`read_offers`](@ref)).
 """
 function _massage_bids(
         db, start_date, end_date;
         resolution::Union{Nothing, Dates.Period} = nothing, bid_types::AbstractVector{BidType} = [BidType.ENERGY],
         keep_bid_type::Bool = false, period_columns::AbstractVector{<:AbstractString} = String[],
-        extra_price_columns::AbstractVector{<:AbstractString} = String[],
+        extra_price_columns::AbstractVector{<:AbstractString} = String[], in_force::Bool = false,
     )
     period_source = read_hive(db, :BIDPEROFFER_D, (start_date - Day(1), end_date + Day(1)))
     band_columns = _band_columns(_table_schema(db, period_source), "BANDAVAIL")
     quantities = ["MAXAVAIL"; band_columns]
-    isempty(period_columns) || isnothing(resolution) || throw(
+    isempty(period_columns) && !in_force || isnothing(resolution) || throw(
         ArgumentError("additional period columns require native resolution"),
     )
-    period_sql, params = _period_offers_sql(db, bid_types, start_date, end_date, resolution; columns = [quantities; period_columns])
+    lookup_columns = in_force ? ["LASTCHANGED"] : String[]
+    period_sql, params = _period_offers_sql(
+        db, bid_types, start_date, end_date, resolution; columns = [quantities; period_columns; lookup_columns],
+    )
     bucket = isnothing(resolution) ? "INTERVAL_DATETIME" : _ceil_timestamp_sql("INTERVAL_DATETIME", resolution)
     period = if isnothing(resolution)
         "SELECT * FROM latest_period"
@@ -313,8 +323,19 @@ function _massage_bids(
     price_selection = join(["MINIMUMLOAD", "DAILYENERGYCONSTRAINT", extra_price_columns...], ", ")
     period_projection = join((", p.$c" for c in period_columns))
     bid_type_column = ", p.BIDTYPE"
-    extra_projection = join((", d.$c" for c in extra_price_columns))
+    replaced = in_force ? Set(["MINIMUMLOAD", "T1", "T2", "T3", "T4"]) : Set{String}()
+    day_column(c) = c in replaced ? "CASE WHEN f.DUID IS NULL THEN d.$c ELSE f.$c END AS $c" : "d.$c"
+    extra_projection = join((", " * day_column(c) for c in extra_price_columns))
     append!(params, _offer_days(start_date, end_date))
+    in_force_sql, in_force_join = if in_force
+        append!(params, _offer_days(start_date, end_date))
+        # The version in force is the latest whose OFFERDATE is at or before the period offer's LASTCHANGED.
+        asof_join = """ASOF LEFT JOIN versions f ON f.SETTLEMENTDATE = p.SETTLEMENTDATE AND f.DUID = p.DUID
+        AND f.DIRECTION = p.DIRECTION AND f.BIDTYPE = p.BIDTYPE AND p.LASTCHANGED >= f.OFFERDATE"""
+        _day_offer_versions_sql(db, start_date, end_date), asof_join
+    else
+        "", ""
+    end
     append!(params, (start_date, end_date))
     bids = _query(
         db,
@@ -328,13 +349,14 @@ function _massage_bids(
                  QUALIFY row_number() OVER (
                      PARTITION BY SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE ORDER BY VERSIONNO DESC
                  ) = 1
-             )
+             )$in_force_sql
         SELECT p.SETTLEMENTDATE, p.DUID, p.DIRECTION, p.INTERVAL_DATETIME,
                list_value($band_array) AS BANDAVAILARRAY,
-               p.MAXAVAIL, d.MINIMUMLOAD, d.DAILYENERGYCONSTRAINT $extra_projection $bid_type_column $period_projection,
+               p.MAXAVAIL, $(day_column("MINIMUMLOAD")), d.DAILYENERGYCONSTRAINT $extra_projection $bid_type_column $period_projection,
                d.DUID IS NULL AS MISSING_PRICE
         FROM period p
         LEFT JOIN prices d USING (SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE)
+        $in_force_join
         WHERE p.INTERVAL_DATETIME >= ? AND p.INTERVAL_DATETIME < ?
         ORDER BY p.SETTLEMENTDATE, p.INTERVAL_DATETIME, p.DUID, p.DIRECTION, p.BIDTYPE
         """,
@@ -364,4 +386,20 @@ function _massage_bids(
     insertcols!(bids, 5, :PRICEBANDARRAY => eltype(bands.PRICEBANDARRAY)[price_bands[k] for k in day_offers])
     keep_bid_type || select!(bids, Not(:BIDTYPE))
     return select!(bids, Not(:MISSING_PRICE))
+end
+
+
+# The `versions` CTE, prefixed with a comma: the fast-start columns of each energy `BIDDAYOFFER` version, by
+# `OFFERDATE`. Takes the trading-day bounds as two positional parameters.
+function _day_offer_versions_sql(db, start_date, end_date)
+    source = read_hive(db, :BIDDAYOFFER, (start_date - Day(1), end_date + Day(1)))
+    return """,
+    versions AS (
+        SELECT SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE, OFFERDATE, MINIMUMLOAD, T1, T2, T3, T4
+        FROM $source
+        WHERE BIDTYPE = 'ENERGY' AND SETTLEMENTDATE BETWEEN ? AND ?
+        QUALIFY row_number() OVER (
+            PARTITION BY SETTLEMENTDATE, DUID, DIRECTION, OFFERDATE ORDER BY VERSIONNO DESC
+        ) = 1
+    )"""
 end

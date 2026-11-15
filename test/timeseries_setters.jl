@@ -276,6 +276,29 @@
             @test all(==(AustralianElectricityMarkets.BidType.ENERGY), energy_only.BIDTYPE)
             @test nrow(energy_only) == nrow(subset(offers, :BIDTYPE => ByRow(==(AustralianElectricityMarkets.BidType.ENERGY))))
         end
+
+        @testset "fast-start columns come from the daily offer version in force" begin
+            late = DateTime(2025, 1, 1, 3, 0):Minute(5):DateTime(2025, 1, 1, 3, 30)
+            energy(o) = subset(o, :BIDTYPE => ByRow(==(AustralianElectricityMarkets.BidType.ENERGY)))
+            unit(o, duid, direction) = sort(subset(energy(o), :DUID => ByRow(==(duid)), :DIRECTION => ByRow(==(direction))), :INTERVAL_DATETIME)
+            bw04 = unit(read_offers(db, late), "BW04", "GEN")
+            # 03:00 keeps the initial offer, 03:05 to 03:15 the exact 03:02:34 rebid, 03:20 on the 03:17 rebid.
+            @test bw04.INTERVAL_DATETIME == collect(late)[1:(end - 1)]
+            @test bw04.T1 == [10.0, 12.0, 12.0, 12.0, 0.0, 0.0]
+            @test bw04.MINIMUMLOAD == [0.0, 5.0, 5.0, 5.0, 0.0, 0.0]
+            # Price bands and the other units stay on BIDDAYOFFER_D.
+            @test all(==(collect(51.0:60.0)), bw04.PRICEBANDARRAY)
+            @test all(iszero, unit(read_offers(db, late), "BW02", "GEN").T1)
+            @test all(iszero, unit(read_offers(db, late), "PUMP1", "LOAD").T1)
+
+            # Without BIDDAYOFFER cached, every row keeps the BIDDAYOFFER_D values.
+            hive = mktempdir()
+            cp(AEM_TEST_HIVE_DIR, hive; force = true)
+            rm(joinpath(hive, "BIDDAYOFFER"); recursive = true)
+            fallback = unit(read_offers(aem_connect(HiveConfiguration(hive_location = hive)), late), "BW04", "GEN")
+            @test all(==(10.0), fallback.T1)
+            @test all(iszero, fallback.MINIMUMLOAD)
+        end
     end
 
     @testset "read_bids resolution aggregation uses per-bucket mean (regression: scale-then-sum bug)" begin

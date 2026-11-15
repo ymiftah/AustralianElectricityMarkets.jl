@@ -89,6 +89,27 @@ The fast-start set is the units with a fast-start profile in their energy offer 
 energy bid whose `T1` to `T4` has a positive value at the interval. The profile and `M` are read from the bid of
 the interval.
 
+NEMDE reads `T1` to `T4`, `MinLoadingMW` and the `FastStart` flag from the energy offer version in force at the
+interval, and intraday rebids change them. `BIDDAYOFFER_D` holds one row per trading day, so those rebids are lost
+there. `BIDPEROFFER_D.LASTCHANGED` equals NEMDE's `Offer_EffectiveDate`, and MMSDM `BIDDAYOFFER` holds every
+version with its `OFFERDATE`. Joining the two on `(DUID, SETTLEMENTDATE, BIDTYPE = 'ENERGY', DIRECTION)` and
+`OFFERDATE = LASTCHANGED` reproduced NEMDE's flag, `T1` to `T4` and `MinLoadingMW` on all 63,878 fast-start rows
+of 2024-12-09, 2024-12-13 and 2024-12-15, with no mismatch. So:
+
+- the cache holds `BIDDAYOFFER` (every version, `ENERGY` rows only, a `row_filter` at populate time: about 0.7
+  million rows and 3 MB a month in 2024 H2, 1.3 million and 5.5 MB in 2026-06);
+- `read_offers` takes `MINIMUMLOAD` and `T1` to `T4` of each energy row from the latest version with
+  `OFFERDATE <= LASTCHANGED` (an `ASOF` join, so the exact match when it exists), keeps `BIDDAYOFFER_D` where no
+  version matches, and keeps the price bands from `BIDDAYOFFER_D`;
+- `BIDDAYOFFER` is a required table of `NEMDEConfiguration`, so a replay never silently runs on the per-day
+  values. `read_offers` still falls back to `BIDDAYOFFER_D` when it is not cached, for regional systems and
+  `set_market_bids!`, which do not require it;
+- a unit is fast-start per interval: `has_fast_start_profile` holds when the profile is fast-start at some
+  interval, and the per-interval flag (`NEM_FAST_START_SERIES.flag`, the `fast_start` field of
+  `fast_start_unit_inputs`) is false where the version in force has a zero profile. Run 2 then relaxes the unit's
+  profile rows and keeps its standard ramp rows there; the time-in-mode cap and the FCAS joint-ramping exemption
+  read the same per-interval profile.
+
 AEM reads `DISPATCHMODETIME` with the unit conditions and holds the previous interval's value in the observed
 state. The derived state (starting mode, capped time in mode) is written per interval by the replay input stage,
 and the kernel (`fast_start_end_state`, `fast_start_envelope`) is a pure function of it, run 1's target and the
@@ -158,24 +179,24 @@ profile governs a unit on it, and dropping the fixed loading in modes 1 and 2 ca
 
 ## Verification (2026-11-15, benchmark mode)
 
-| Interval | Published ROP | Replay before | Replay with both runs |
-| --- | --- | --- | --- |
-| 2024-12-13 07:35 | QLD 77.73, NSW 74.74 | QLD +68 | to the cent in every region |
-| 2024-12-15 16:30 | QLD 214.48, NSW 223.34 | NSW +65, VIC -55 | QLD +11.27, NSW +11.74, others to the cent |
-| 2024-12-09 14:55 | QLD 200.00, NSW 171.45 | QLD -100 | QLD -46.17, NSW -41.12, VIC/SA -0.6 |
+| Interval | Published ROP | Replay before | Both runs, per-day offer | Both runs, offer version in force |
+| --- | --- | --- | --- | --- |
+| 2024-12-13 07:35 | QLD 77.73, NSW 74.74 | QLD +68 | to the cent in every region | to the cent in every region |
+| 2024-12-15 16:30 | QLD 214.48, NSW 223.34 | NSW +65, VIC -55 | QLD +11.27, NSW +11.74, others to the cent | to the cent in every region |
+| 2024-12-09 14:55 | QLD 200.00, NSW 171.45 | QLD -100 | QLD -46.17, NSW -41.12, VIC/SA -0.6 | to the cent except SA +1.16 |
 
-The two residuals are inputs, not rules: with the named units' profile rows set by hand, both intervals reproduce
-the published prices to the cent.
+The two residuals of the per-day offer were inputs, not rules: the offer versions in force explain both.
 
-- 2024-12-15 16:30: W/HOE#1 starts in mode 0, run 1 dispatches it at 205 MW, and run 2 holds it at its mode-2
-  target of 20 MW. NEMDE published 26.31 MW in `DISPATCHMODE` 0, so it did not commit the unit. W/HOE#1 runs in mode
-  0 in 142 intervals of December 2024 (W/HOE#2 178, PUMP2 124, SNAPPER1 263), which the MMS inputs do not explain.
-- 2024-12-09 14:55: CG2 and CG3 (published `DISPATCHMODETIME` 10 in mode 1 at 14:50, offered `T1 = 10`) end in mode
-  2 after 5 minutes in the replay, 62.5 MW, against NEMDE's 1 minute, 12.5 MW; URANQ14 stays in mode 1 from 14:50 to
-  15:00 with `T1 = 6`. Either NEMDE's `T1` differs from the day's `BIDDAYOFFER_D` value (an intraday offer version)
-  or NEMDE reset the units' mode time. BRAEMAR2 (143 MW) and BRAEMAR3 (33 MW) match, so the BRAEMAR2 ramp-base
-  departure above is explained by the ramp from minimum loading: 110 MW plus 11 MW/min over the 3 minutes since
-  mode 2.
+- 2024-12-15 16:30: W/HOE#1 started in mode 0, run 1 dispatched it at 205 MW and run 2 held it at its mode-2
+  target of 20 MW, while NEMDE published 26.31 MW in `DISPATCHMODE` 0. Its rebid at 16:04 set `T1` to `T4` and
+  `MINIMUMLOAD` to 0, so NEMDE did not treat it as fast-start at 16:30. The per-day `BIDDAYOFFER_D` row kept a
+  non-zero profile.
+- 2024-12-09 14:55: CG2 and CG3 had been rebid to `T1 = 14` and URANQ14 to `T1 = 21`, against the per-day `T1 = 10`
+  and `T1 = 6`, so they stay in mode 1 as NEMDE has them. BRAEMAR2 (143 MW) and BRAEMAR3 (33 MW) match, so the
+  BRAEMAR2 ramp-base departure above is explained by the ramp from minimum loading: 110 MW plus 11 MW/min over
+  the 3 minutes since mode 2.
+- The SA gap at 2024-12-09 14:55 (solved -42.50, published -43.66) was there before the fast-start work and is
+  unrelated to it.
 
 ## Consequences
 
@@ -201,4 +222,4 @@ the published prices to the cent.
 - AEMO, [FCAS Model in NEMDE v3.0](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/dispatch/policy_and_process/fcas-model-in-nemde.pdf),
   section 6.5 Table 3 footnote (joint ramping exemption of fast-start units in modes 0 to 2).
 - AEMO, Electricity Data Model v5.7.0: `DISPATCHLOAD.DISPATCHMODE` and `DISPATCHMODETIME`, `BIDDAYOFFER_D.T1` to
-  `T4` and `MINIMUMLOAD`.
+  `T4` and `MINIMUMLOAD`, `BIDDAYOFFER.OFFERDATE` (every offer version) and `BIDPEROFFER_D.LASTCHANGED`.

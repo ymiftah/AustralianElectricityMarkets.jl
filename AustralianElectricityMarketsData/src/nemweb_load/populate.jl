@@ -60,6 +60,7 @@ function _add_data(source::DataSource, year::Int, month::Int; fetch_archive = _g
                     conn, d_only_path, available_cols, source.table_columns, source.path,
                     source.partitions, source.table_sort_by, year, month;
                     islocal = islocal(source), month_filter_column = source.month_filter_column,
+                    row_filter = source.row_filter,
                 )
             finally
                 DBInterface.close!(conn)

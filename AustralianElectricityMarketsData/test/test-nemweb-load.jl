@@ -65,14 +65,14 @@ end
 
 _run_csv_to_parquet(
     csv_path, table_columns, out_path;
-    sort_by = String[], year = 2024, month = 1, month_filter_column = nothing,
+    sort_by = String[], year = 2024, month = 1, month_filter_column = nothing, row_filter = nothing,
 ) =
 let conn = DuckDB.DB()
     try
         available_cols = _peek_header_columns(csv_path)
         _csv_to_parquet(
             conn, csv_path, available_cols, table_columns, out_path, [ARCHIVE_MONTH_PARTITION], sort_by, year, month;
-            month_filter_column,
+            month_filter_column, row_filter,
         )
     finally
         DBInterface.close!(conn)
@@ -501,6 +501,7 @@ end
     @test AustralianElectricityMarketsData.get_filesystem(source) == "file"
     @test AustralianElectricityMarketsData.islocal(source)
     @test DataSource("T", ["C"], config).month_filter_column === nothing
+    @test DataSource("T", ["C"], config).row_filter === nothing
 end
 
 @testset "DataSource: remote path keeps the scheme" begin
@@ -544,6 +545,40 @@ end
     finally
         isfile(csv_path) && rm(csv_path)
     end
+end
+
+@testset "_csv_to_parquet: row_filter keeps only the matching rows" begin
+    csv_path = make_nemweb_csv(
+        "BIDDAYOFFER",
+        ["DUID", "BIDTYPE", "SETTLEMENTDATE", "OFFERDATE", "T1"],
+        [
+            ("U1", "ENERGY", "2026/06/01 00:00:00", "2026/06/01 10:00:00.000", "5"),
+            ("U1", "RAISE6SEC", "2026/06/01 00:00:00", "2026/06/01 10:00:00.000", ""),
+            ("U1", "ENERGY", "2026/06/01 00:00:00", "2026/06/01 16:04:00.000", "0"),
+        ],
+    )
+    tmpdir = mktempdir()
+    try
+        cols = ["DUID", "BIDTYPE", "SETTLEMENTDATE", "OFFERDATE", "T1"]
+        _run_csv_to_parquet(csv_path, cols, tmpdir; row_filter = "BIDTYPE" => "ENERGY")
+        df = sort(_read_parquet_file(tmpdir), :OFFERDATE)
+        @test df.BIDTYPE == ["ENERGY", "ENERGY"]
+        @test df.OFFERDATE == [DateTime(2026, 6, 1, 10), DateTime(2026, 6, 1, 16, 4)]
+        @test df.T1 == [5.0, 0.0]
+        @test_throws ArgumentError _run_csv_to_parquet(csv_path, cols, mktempdir(); row_filter = "ABSENT" => "X")
+    finally
+        isfile(csv_path) && rm(csv_path)
+    end
+end
+
+@testset "BIDDAYOFFER spec: every rebid version, ENERGY rows only, typed fast-start columns" begin
+    db = aem_connect(HiveConfiguration(hive_location = mktempdir()))
+    source = get_table(db, :BIDDAYOFFER)
+    @test source.row_filter == ("BIDTYPE" => "ENERGY")
+    @test issubset(["OFFERDATE", "MINIMUMLOAD", "T1", "T2", "T3", "T4"], source.table_columns)
+    @test issubset(source.table_sort_by, source.table_columns)
+    @test AustralianElectricityMarketsData.COLUMN_TYPES["OFFERDATE"] == DateTime
+    @test get_table(db, :BIDDAYOFFER_D).row_filter === nothing
 end
 
 @testset "get_table: month_filter_column is set only for DISPATCH_FCAS_REQ_CONSTRAINT" begin

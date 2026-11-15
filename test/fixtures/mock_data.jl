@@ -398,6 +398,16 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
     df_bid_per_offer.ROCUP = [b == "ENERGY" ? 1.0 : r for (b, r) in zip(df_bid_per_offer.BIDTYPE, df_bid_per_offer.ROCUP)]
     df_bid_per_offer.ROCDOWN = [b == "ENERGY" ? 1.0 : r for (b, r) in zip(df_bid_per_offer.BIDTYPE, df_bid_per_offer.ROCDOWN)]
     df_bid_per_offer.ENERGYLIMIT = Vector{Union{Missing, Float64}}(missing, nrow(df_bid_per_offer))
+    # Every offer was made on 2024-12-31 at noon, except BW04's energy GEN rebids in force from 03:05
+    # (exact OFFERDATE) and from 03:20 (a LASTCHANGED after the 03:17 version, which is in force).
+    initial_offer = DateTime(2024, 12, 31, 12)
+    bw04_energy = (df_bid_per_offer.DUID .== "BW04") .& (df_bid_per_offer.BIDTYPE .== "ENERGY") .&
+        (df_bid_per_offer.DIRECTION .== "GEN")
+    df_bid_per_offer.LASTCHANGED = map(zip(bw04_energy, df_bid_per_offer.INTERVAL_DATETIME)) do (rebid, t)
+        rebid && t >= DateTime(2025, 1, 1, 3, 20) && return DateTime(2025, 1, 1, 3, 17, 30)
+        rebid && t >= DateTime(2025, 1, 1, 3, 5) && return DateTime(2025, 1, 1, 3, 2, 34)
+        return initial_offer
+    end
     save_hive(df_bid_per_offer, :BIDPEROFFER_D)
 
     # 11. BIDDAYOFFER_D (Daily)
@@ -469,6 +479,22 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
     bid_day_offer.T4 = zeros(nrow(bid_day_offer))
     bid_day_offer.NORMALSTATUS = fill("ON", nrow(bid_day_offer))
     save_hive(bid_day_offer, :BIDDAYOFFER_D)
+
+    # 11b. BIDDAYOFFER: every energy version. The initial offers match BIDDAYOFFER_D (PUMP1 and WDR1 have
+    # none, so they keep its values); BW04 rebids at 03:02:34 to T1 = 12 with a 5 MW minimum load and at
+    # 03:17 to a zero profile, which is not fast-start.
+    initial_versions = select(
+        subset(bid_day_offer, :BIDTYPE => ByRow(==("ENERGY")), :DUID => ByRow(d -> d ∉ ("PUMP1", "WDR1"))),
+        :DUID, :SETTLEMENTDATE, :BIDTYPE, :DIRECTION, :VERSIONNO, :MINIMUMLOAD, :T1, :T2, :T3, :T4, :archive_month,
+    )
+    initial_versions.OFFERDATE = fill(initial_offer, nrow(initial_versions))
+    bw04_rebids = DataFrame(
+        DUID = ["BW04", "BW04"], SETTLEMENTDATE = fill(test_date, 2), BIDTYPE = fill("ENERGY", 2),
+        DIRECTION = fill("GEN", 2), VERSIONNO = [2, 3], MINIMUMLOAD = [5.0, 0.0], T1 = [12.0, 0.0],
+        T2 = [0.0, 0.0], T3 = [0.0, 0.0], T4 = [0.0, 0.0], archive_month = fill("2025-01", 2),
+        OFFERDATE = [DateTime(2025, 1, 1, 3, 2, 34), DateTime(2025, 1, 1, 3, 17)],
+    )
+    save_hive(vcat(initial_versions, bw04_rebids), :BIDDAYOFFER)
 
     # FCAS requirements are generic-constraint-based (RESERVE has been unpopulated by AEMO
     # since Dec 2003 - see read_fcas_requirements docstring): one governing GENCONID per
