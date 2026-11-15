@@ -6,10 +6,11 @@ using TOML
 using SHA
 
 export scheduled_days, trading_steps, batch_steps, may_start_day, parse_options, write_status,
-    read_status, write_csv, supervise, run_schedule
+    read_status, write_csv, supervise, run_schedule, sample_intervals, read_intervals_file,
+    intervals_by_day, selected_intervals
 
-# Snapshot package sources as well as scripts: a commit alone does not identify a dirty checkout.
-function package_source_hashes(root)
+# The package files whose sources are hashed and snapshotted: a commit alone does not identify a dirty checkout.
+function package_source_files(root)
     files = String[]
     for package in ("", "AustralianElectricityMarketsCache", "AustralianElectricityMarketsData", "AustralianElectricityMarketsSimulations")
         for name in ("Project.toml", "Manifest.toml", joinpath("test", "Project.toml"), joinpath("test", "Manifest.toml"))
@@ -22,13 +23,19 @@ function package_source_hashes(root)
             endswith(name, ".jl") && push!(files, joinpath(folder, name))
         end
     end
-    return Dict(relpath(path, root) => bytes2hex(sha256(read(path))) for path in files)
+    return files
 end
 
+function package_source_hashes(root)
+    return Dict(relpath(path, root) => bytes2hex(sha256(read(path))) for path in package_source_files(root))
+end
+
+# Copies each package file under `output` and returns the hashes of the bytes copied, reading each file once.
 function snapshot_package_sources(root, output)
     hashes = Dict{String, String}()
-    for relative in keys(package_source_hashes(root))
-        data = read(joinpath(root, relative))
+    for path in package_source_files(root)
+        relative = relpath(path, root)
+        data = read(path)
         destination = joinpath(output, relative)
         mkpath(dirname(destination))
         write(destination, data)
@@ -72,9 +79,105 @@ function batch_steps(options, day::Date)
     return start:Minute(5):(start + Minute(5) * (parse(Int, options["intervals"]) - 1))
 end
 
+"""
+    sample_intervals(first_day::Date, last_day::Date, n::Integer, seed::Integer) -> Vector{DateTime}
+
+Draws `n` distinct interval-ending timestamps uniformly from the five-minute grid of the trading days
+`first_day` through `last_day`, from 04:05 on `first_day` to 04:00 on the day after `last_day`.
+
+# Arguments
+- `first_day`, `last_day`: the first and last trading day, inclusive.
+- `n`: the number of intervals, at most the number of grid points.
+- `seed`: the seed of the draw; the same seed and period give the same intervals.
+
+# Returns
+The sorted `Vector{DateTime}` of the drawn interval-ending timestamps.
+"""
+function sample_intervals(first_day::Date, last_day::Date, n::Integer, seed::Integer)
+    grid = first(trading_steps(first_day)):Minute(5):last(trading_steps(last_day))
+    0 < n <= length(grid) || throw(ArgumentError("--sample must be between 1 and $(length(grid)) for this period, got $n"))
+    return sort!(grid[randperm(Xoshiro(seed), length(grid))[1:n]])
+end
+
+"""
+    read_intervals_file(path) -> Vector{DateTime}
+
+Reads a CSV of interval-ending timestamps with the header `interval` and one ISO timestamp per row.
+
+# Arguments
+- `path`: the CSV file.
+
+# Returns
+The sorted `Vector{DateTime}`. Throws `ArgumentError` for a missing or other header, an unparsable
+timestamp, a timestamp off the five-minute grid, a duplicate, or an empty list.
+"""
+function read_intervals_file(path)
+    isfile(path) || throw(ArgumentError("intervals file does not exist: $path"))
+    lines = filter(!isempty, strip.(readlines(path)))
+    !isempty(lines) && first(lines) == "interval" || throw(ArgumentError("intervals file must start with the header `interval`: $path"))
+    intervals = map(lines[2:end]) do text
+        t = try
+            DateTime(text)
+        catch
+            throw(ArgumentError("intervals file has an unparsable timestamp: $text"))
+        end
+        second(t) == 0 && millisecond(t) == 0 && minute(t) % 5 == 0 ||
+            throw(ArgumentError("intervals file timestamp is off the 5-minute grid: $text"))
+        return t
+    end
+    isempty(intervals) && throw(ArgumentError("intervals file has no intervals: $path"))
+    allunique(intervals) || throw(ArgumentError("intervals file has duplicate timestamps: $path"))
+    return sort!(intervals)
+end
+
+"""
+    selected_intervals(options) -> Union{Nothing, Vector{DateTime}}
+
+Returns the interval-ending timestamps selected by `--intervals-file` or `--sample`, or `nothing` when
+neither is set.
+
+# Arguments
+- `options`: the parsed options or the `run.toml` configuration, with string values.
+
+# Returns
+The sorted `Vector{DateTime}`, or `nothing` for whole-day and `--start` runs.
+"""
+function selected_intervals(options)
+    if !isempty(options["intervals-file"])
+        return read_intervals_file(options["intervals-file"])
+    elseif !isempty(options["sample"])
+        return sample_intervals(
+            Date(options["first"]), Date(options["last"]), parse(Int, options["sample"]), parse(Int, options["seed"]),
+        )
+    end
+    return nothing
+end
+
+"""
+    intervals_by_day(intervals) -> Dict{Date, Vector{DateTime}}
+
+Groups interval-ending timestamps by the trading day they belong to.
+
+# Arguments
+- `intervals`: the interval-ending timestamps.
+
+# Returns
+A `Dict` from trading day to the sorted timestamps of that day. An interval ending 00:05 through 04:00
+belongs to the previous calendar day's trading day.
+"""
+function intervals_by_day(intervals)
+    grouped = Dict{Date, Vector{DateTime}}()
+    for t in sort(intervals)
+        push!(get!(Vector{DateTime}, grouped, _trading_day(t)), t)
+    end
+    return grouped
+end
+
 # Requires `--start` and `--intervals` together, and a range that stays within one trading day.
 function _validate_range(options)
     start_text, intervals_text = options["start"], options["intervals"]
+    modes = count(!isempty, (start_text, options["intervals-file"], options["sample"]))
+    modes <= 1 || throw(ArgumentError("--start/--intervals, --intervals-file and --sample are alternatives; give only one"))
     isempty(start_text) == isempty(intervals_text) ||
         throw(ArgumentError("--start and --intervals must be given together"))
     isempty(start_text) && return
@@ -101,7 +204,7 @@ function parse_options(args)
     options = Dict(
         "first" => "2026-01-01", "last" => "2026-06-30", "hours" => "10",
         "seed" => "20261026", "hive" => joinpath(homedir(), ".nemdb_cache"),
-        "output" => joinpath("/run/media/simba/Store/aem_validation", Dates.format(now(UTC), "yyyymmddTHHMMSS") * "Z_$(getpid())"),
+        "output" => "", "intervals-file" => "", "sample" => "",
         "solver-threads" => "1", "cache-size-mib" => "64",
         "time-series-in-memory" => "false", "closed-loop" => "false", "start" => "", "intervals" => "",
     )
@@ -125,7 +228,15 @@ function parse_options(args)
         end
     end
     parse(Int, options["seed"])
+    isempty(options["output"]) && throw(ArgumentError("--output FOLDER is required; use --help"))
     _validate_range(options)
+    if !isempty(options["intervals-file"]) || !isempty(options["sample"])
+        parse(Bool, options["closed-loop"]) &&
+            throw(ArgumentError("--closed-loop true needs consecutive intervals; it cannot be combined with --sample or --intervals-file"))
+        isempty(options["sample"]) || (parse(Int, options["sample"]) > 0 || throw(ArgumentError("--sample must be positive")))
+        options["intervals-file"] = isempty(options["intervals-file"]) ? "" : abspath(expanduser(options["intervals-file"]))
+        selected_intervals(options)
+    end
     options["output"] = abspath(expanduser(options["output"]))
     options["hive"] = abspath(expanduser(options["hive"]))
     return options
@@ -159,17 +270,33 @@ function _csv_cell(value)
     return occursin(r"[,\"\n\r]", text) ? "\"" * replace(text, "\"" => "\"\"") * "\"" : text
 end
 
+"""
+    write_csv(path, columns, rows; append = false)
+
+Writes `rows` (tuples or `NamedTuple`s of cells) under the header `columns`. `missing` is written as an
+empty cell; cells with a comma, quote or newline are quoted. For a DataFrame `df`, pass `names(df)` and
+`zip(eachcol(df)...)`.
+
+# Arguments
+- `path`: the CSV file.
+- `columns`, `rows`: the header names and an iterable of rows, each iterating its cells in column order.
+- `append`: append to an existing file, writing the header only when the file is new.
+
+# Returns
+`nothing`.
+"""
 function write_csv(path, columns, rows; append = false)
     header = !append || !isfile(path)
     open(path, append ? "a" : "w") do io
         header && println(io, join(_csv_cell.(columns), ','))
         for row in rows
-            println(io, join(_csv_cell.(collect(row)), ','))
+            println(io, join((_csv_cell(cell) for cell in row), ','))
         end
         flush(io)
     end
     return
 end
+
 
 function run_schedule(execute_day, folder, days, budget_s; elapsed)
     completed, failed = 0, 0
@@ -194,7 +321,6 @@ function run_schedule(execute_day, folder, days, budget_s; elapsed)
             failed += 1
         end
         write_status(folder, "between_days"; trading_day = string(day), details = "completed=$completed failed=$failed")
-        GC.gc()
     end
     return (; completed, failed, reason = "exhausted")
 end
@@ -220,14 +346,20 @@ function supervise(options)
     open(joinpath(folder, "run.toml"), "w") do io
         TOML.print(io, config)
     end
-    days = if isempty(options["start"])
+    selected = selected_intervals(options)
+    by_day = isnothing(selected) ? nothing : intervals_by_day(selected)
+    days = if !isnothing(by_day)
+        write_csv(joinpath(folder, "selected_intervals.csv"), ("interval",), ((t,) for t in selected))
+        shuffle!(Xoshiro(parse(Int, options["seed"])), sort!(collect(keys(by_day))))
+    elseif isempty(options["start"])
         scheduled_days(Date(options["first"]), Date(options["last"]), parse(Int, options["seed"]))
     else
         [_trading_day(DateTime(options["start"]))]
     end
+    day_steps(day) = isnothing(by_day) ? batch_steps(options, day) : by_day[day]
     write_csv(
-        joinpath(folder, "scheduled_days.csv"), ("order", "trading_day", "start", "stop"),
-        ((i, day, first(batch_steps(options, day)), last(batch_steps(options, day))) for (i, day) in enumerate(days))
+        joinpath(folder, "scheduled_days.csv"), ("order", "trading_day", "start", "stop", "n_intervals"),
+        ((i, day, first(day_steps(day)), last(day_steps(day)), length(day_steps(day))) for (i, day) in enumerate(days))
     )
     write_status(folder, "loading")
     project = dirname(Base.active_project())
@@ -276,7 +408,8 @@ function run_worker(command::Cmd, folder, started_ns; poll_seconds = 5.0, notice
                     flush(stdout)
                     last_notice, last_phase = elapsed_s, phase
                 end
-                sleep(poll_seconds)
+                # Wake as soon as the worker exits rather than at the next poll.
+                timedwait(() -> process_exited(worker), poll_seconds; pollint = 0.05)
             end
             wait(worker)
             success(worker) || throw(ProcessFailedException(worker))

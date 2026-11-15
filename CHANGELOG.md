@@ -129,6 +129,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `scripts/replay_batch.jl` replays specific intervals instead of whole trading days: `--intervals-file PATH` (CSV, header `interval`) or `--sample N` with `--first`, `--last` and `--seed` (N distinct random five-minute intervals, trading-day aligned). Each trading day is one worker that builds one system over its selected intervals and solves each as its own one-interval open-loop model, so `scripts/simulation_statistics.jl` reports the output unchanged. `benchmarking/` holds the interval list of nempy's 2024 H2 benchmark and the command to replay it.
+
 - Closed-loop replay: `DecisionModel(NEMClosedLoopDispatchProblem, template, sys; ...)` starts the first interval from AEMO's observed state and each later interval of a `Simulation` from the previous interval's solved output. The starting output of each unit and the starting flow of each MNSP are the new `NEMInitialPower` and `NEMInitialFlow` initial conditions, updated from the simulation's system state, and the inputs derived from that state (battery ramp rates, fixed-loading invocation, effective FCAS offers and regulation ramping limits) are recomputed each step by AEM's own writer code through the new `closed_loop_input` (with `is_state_dependent_input` and `closed_loop_unit_state`). Fast-start dispatch modes keep their observed values. The replay batch runner takes `--closed-loop true`.
 
 - `compare_intervals` joins the published outcome of a set of intervals onto its solved outcome, and `comparison_summary` reports the paired gaps of each metric, as `AustralianElectricityMarketsSimulations` functions. Replay workflows and the batch worker use them in place of their private copies.
@@ -505,6 +507,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The state-dependent dispatch inputs are pure functions of a `NEMUnitState`: `max_active_power_floor`, `in_fast_start_profile`, `fixed_load_invoked` and `effective_fixed_load`, `fcas_state_stranded_ok` and `fcas_both_sides_stranded_ok`, `fcas_ramping_active` and `fcas_ramping_limit`, `mnsp_ramp_envelope`, and `composite_ramp_rates` for the composite of a bidirectional unit's generation- and load-side ramp rates across zero.
 
 ### Changed
+
+- `scripts/replay_batch.jl` requires `--output` (it no longer defaults to a machine-specific folder), the supervisor wakes as soon as a worker exits, and the `preflight` phase, which marked no work, is no longer recorded in `phases.csv`.
 
 - The FCAS kernels `fcas_preconditions_ok`, `fcas_effective_offer` and `fcas_ramping_limits` take MW inputs and are exported from `AustralianElectricityMarkets`. `FCAS_BAND_COUNT`, `FCAS_INACTIVE_LIMIT_MW`, `fcas_effective_series_name`, `fcas_ramping_series_name`, `fcas_offer_sides` and `fcas_upper_regulation_service` move there from `AustralianElectricityMarketsSimulations`, which imports them. `fcas_state_stranded_ok` takes its `storage` flag as a positional argument.
 

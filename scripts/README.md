@@ -15,8 +15,8 @@ julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/replay_
 
 ```sh
 julia --project=AustralianElectricityMarketsSimulations/test scripts/simulation_statistics.jl \
-    /run/media/simba/Store/aem_validation/overnight_10h_20261027T120955Z \
-    /run/media/simba/Store/aem_validation/overnight_10h_parallel_20261027T131045Z \
+    $HOME/aem_validation/overnight_10h_20261027T120955Z \
+    $HOME/aem_validation/overnight_10h_parallel_20261027T131045Z \
     --hive "$HOME/.nemdb_cache"
 ```
 
@@ -45,7 +45,7 @@ The report includes:
 | `over_constrained_intervals.csv` | Price-triggered intervals with a generic-constraint violation, excluded from the pooled errors in `report.md` and `statistics.json` |
 | `slowest_intervals.csv` | Slowest update, MIP, pricing and write calls per day |
 | `native_timers.csv` | Native timer snapshots with their hierarchy and call counts; nested totals overlap |
-| `phase_boundaries.csv` | Loading, preflight, build, execution, comparison and export boundaries with observed phase spans |
+| `phase_boundaries.csv` | Loading, build, execution, comparison and export boundaries with observed phase spans |
 
 Energy comparisons use **ROP against ROP**, not RRP. Percentiles use linear
 interpolation; unqualified error percentiles describe absolute errors. Signed
@@ -90,7 +90,8 @@ construction, execution, comparisons and exports. It is checked between days;
 there is no solver time limit.
 
 ```sh
-julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/replay_batch.jl
+julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/replay_batch.jl \
+    --output "$HOME/aem_validation/overnight-2026-01-to-06"
 ```
 
 The examples use `-O1` for Julia code optimisation. Each trading day runs in a
@@ -98,18 +99,15 @@ fresh Julia process, so package loading and first-use compilation recur per day.
 This bounds native HDF5 and solver resource lifetimes. The supervisor checks one
 monotonic admission deadline and never kills the final admitted day at that deadline.
 
-Default outputs go to a new timestamped subfolder of
-`/run/media/simba/Store/aem_validation/`, for example
-`/run/media/simba/Store/aem_validation/20261026T100000Z_12345/`.
-The timestamp is UTC. The script prints the actual folder on launch.
-Use `--output` to specify the exact run folder; it must not already exist.
+`--output` is required and names the new run folder, which must not already exist. The script prints
+it on launch.
 
 For an unattended run that survives closing the terminal:
 
 ```sh
 mkdir -p scripts/results
 nohup julia -O1 --project=AustralianElectricityMarketsSimulations/test \
-    scripts/replay_batch.jl \
+    scripts/replay_batch.jl --output "$HOME/aem_validation/overnight" \
     > scripts/results/overnight-launch.log 2>&1 < /dev/null &
 echo $! > scripts/results/overnight.pid
 tail -f scripts/results/overnight-launch.log
@@ -117,7 +115,7 @@ tail -f scripts/results/overnight-launch.log
 
 The launch log shows the output folder and each phase change of the worker, with elapsed time. The
 supervisor writes the worker's detailed output to `<run folder>/run.log`.
-The machine must remain awake and the Store drive mounted during the run.
+The machine must remain awake and the output drive mounted during the run.
 
 An explicit configuration equivalent to the defaults:
 
@@ -126,7 +124,7 @@ julia -O1 --project=AustralianElectricityMarketsSimulations/test \
     scripts/replay_batch.jl \
     --first 2026-01-01 --last 2026-06-30 --hours 10 --seed 20261026 \
     --hive "$HOME/.nemdb_cache" \
-    --output /run/media/simba/Store/aem_validation/overnight-2026-01-to-06 \
+    --output $HOME/aem_validation/overnight-2026-01-to-06 \
     --solver-threads 1 --cache-size-mib 64
 ```
 
@@ -147,8 +145,36 @@ and `--seed` for scheduling. This replays 10 intervals from 2026-06-04T04:05:00:
 julia -O1 --project=AustralianElectricityMarketsSimulations/test \
     scripts/replay_batch.jl \
     --start 2026-06-04T04:05:00 --intervals 10 \
-    --output /run/media/simba/Store/aem_validation/range-2026-06-04-10
+    --output $HOME/aem_validation/range-2026-06-04-10
 ```
+
+### Selected intervals (benchmark mode)
+
+`--intervals-file PATH` replays the intervals of a CSV (header `interval`, one interval-ending ISO timestamp
+per row, on the five-minute grid) instead of whole days. `--sample N` draws `N` distinct intervals uniformly
+at random over `--first` 04:05 through `--last` plus one day 04:00, seeded by `--seed`. The options, and
+`--start`, are alternatives, and `--closed-loop true` is rejected because it needs consecutive intervals.
+`--hours` still applies between days; days run in a seeded random order, so a truncated run is itself a
+random subset.
+
+```sh
+julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/replay_batch.jl \
+    --sample 1000 --first 2026-01-01 --last 2026-06-30 --seed 1 --hours 14 \
+    --output "$HOME/aem_validation/sample-1000"
+```
+
+The selected intervals are grouped by trading day, and each day is one worker with one system build
+(one per financial-year chunk when a day crosses July 1). The system covers the day's first to last selected
+interval, and each selected interval is solved as its own one-interval open-loop `DecisionModel`, built
+from AEMO's observed state, with no `Simulation`. A `Simulation` over the covering range would solve
+every interval between the selected ones, about 288 solves a day instead of the roughly 7 a day that
+1000 intervals over 150 days need, and a model per interval is the same independent solve as the nempy
+benchmark. The cost is one model build per interval instead of one per day.
+The day folders hold the same CSVs as a whole-day run, restricted to the selected intervals (`chunks.csv`
+counts them in `n_steps`; `simulation_build_s` sums the model builds and `execute_s` the solves). There are
+no native PSI simulation folders, `interval_timings.csv` or `timers_*.toml` files. `provenance.toml`
+records the sampling settings under `interval_sampling`. `scripts/simulation_statistics.jl` reads the run
+unchanged. `benchmarking/` has the interval list of nempy's 2024 H2 benchmark.
 
 The seed fixes the shuffled order for the same Julia version. Change `--seed` for
 a different order. Failed days are recorded and skipped, with no automatic retry.
@@ -206,7 +232,7 @@ Check these files in the morning even if the command exits successfully.
 Set `run` to the folder printed at launch:
 
 ```sh
-run=/run/media/simba/Store/aem_validation/20261026T100000Z_12345
+run=$HOME/aem_validation/20261026T100000Z_12345
 tail -f "$run/run.log"
 ```
 
@@ -222,9 +248,10 @@ flushed as they are written; successfully exported days survive later failures.
 | File | Contents |
 | --- | --- |
 | `run.toml` | Options, Julia version, Git revision, start time and solver gaps |
-| `scheduled_days.csv` | Full shuffled order, with each day's first and last interval |
+| `scheduled_days.csv` | Full shuffled order, with each day's first and last interval and its interval count |
+| `selected_intervals.csv` | With `--sample` or `--intervals-file`: the selected intervals, header `interval` |
 | `status.toml` | Current trading day and phase; completion/failure counts at the end |
-| `phases.csv` | UTC time and elapsed seconds at preflight, system build, model build, execution, comparison and export boundaries |
+| `phases.csv` | UTC time and elapsed seconds at system build, model build, execution, comparison and export boundaries |
 | `days.csv` | One row per successfully exported day, with interval count and timing totals |
 | `failures.csv` | One row per failed day, elapsed time and exception; created only on failure |
 | `outcome.toml` | Final completed/failed counts, elapsed time and stopping reason |
@@ -288,7 +315,7 @@ import PowerSimulations as PSI
 db = aem_connect(HiveConfiguration(hive_location = joinpath(homedir(), ".nemdb_cache")))
 optimizer = nemde_optimizer(; threads = 1, output_flag = false)
 template = template_nemde()
-folder = "/run/media/simba/Store/aem_validation/consecutive-days"
+folder = "$HOME/aem_validation/consecutive-days"
 
 for (k, steps) in enumerate(replay_chunks(trading_day_steps(Date(2026, 1, 1))))
     chunk_folder = joinpath(folder, "chunk_$k")

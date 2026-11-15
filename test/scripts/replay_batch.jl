@@ -14,23 +14,80 @@ using .ReplayBatchSupport
     @test may_start_day(35999.0, 36000.0)
     @test !may_start_day(36000.0, 36000.0)
     @test_throws ArgumentError scheduled_days(Date(2026, 7, 1), Date(2026, 1, 1), 1)
-    defaults = parse_options(String[])
+    @test_throws ArgumentError parse_options(String[])
+    defaults = parse_options(["--output", "runs/x"])
+    @test defaults["output"] == abspath("runs/x")
     for flag in ("time-series-in-memory", "closed-loop")
         @test defaults[flag] == "false"
-        @test parse_options(["--$flag", "true"])[flag] == "true"
+        @test parse_options(["--output", "x", "--$flag", "true"])[flag] == "true"
     end
-    @test dirname(defaults["output"]) == "/run/media/simba/Store/aem_validation"
-    @test batch_steps(parse_options(["--start", "2026-06-04T04:05:00", "--intervals", "10"]), Date(2026, 6, 4)) ==
+    @test batch_steps(parse_options(["--output", "x", "--start", "2026-06-04T04:05:00", "--intervals", "10"]), Date(2026, 6, 4)) ==
         DateTime(2026, 6, 4, 4, 5):Minute(5):DateTime(2026, 6, 4, 4, 50)
     @test batch_steps(defaults, Date(2026, 6, 4)) == trading_steps(Date(2026, 6, 4))
-    for args in (
+    out = ["--output", "x"]
+    for extra in (
             ["--hours", "0"], ["--hours", "NaN"], ["--sample-seconds", "5"], ["--unknown", "x"], ["--output"],
             ["--time-series-in-memory", "yes"], ["--closed-loop", "maybe"],
             ["--start", "2026-06-04T04:05:00"], ["--intervals", "10"],
             ["--start", "2026-06-04T04:07:00", "--intervals", "10"], ["--start", "2026-06-04T04:05:00", "--intervals", "0"],
             ["--start", "2026-06-05T04:00:00", "--intervals", "2"],
         )
-        @test_throws ArgumentError parse_options(args)
+        @test_throws ArgumentError parse_options([out; extra])
+    end
+    @test_throws ArgumentError parse_options(["--output"])
+end
+
+@testset "interval sampling options, reproducibility and trading-day grouping" begin
+    first_day, last_day = Date(2024, 7, 1), Date(2024, 12, 31)
+    drawn = sample_intervals(first_day, last_day, 1000, 1)
+    @test drawn == sample_intervals(first_day, last_day, 1000, 1)
+    @test drawn != sample_intervals(first_day, last_day, 1000, 2)
+    @test issorted(drawn) && allunique(drawn) && length(drawn) == 1000
+    @test all(t -> minute(t) % 5 == 0 && DateTime(2024, 7, 1, 4, 5) <= t <= DateTime(2025, 1, 1, 4), drawn)
+    # Drawing every grid point returns the whole period.
+    one_day = sample_intervals(Date(2026, 6, 4), Date(2026, 6, 4), 288, 3)
+    @test one_day == collect(trading_steps(Date(2026, 6, 4)))
+    @test_throws ArgumentError sample_intervals(Date(2026, 6, 4), Date(2026, 6, 4), 289, 3)
+
+    grouped = intervals_by_day(
+        [DateTime(2026, 7, 1, 0, 5), DateTime(2026, 6, 30, 4, 5), DateTime(2026, 7, 1, 4), DateTime(2026, 7, 1, 4, 5)],
+    )
+    @test grouped == Dict(
+        Date(2026, 6, 30) => [DateTime(2026, 6, 30, 4, 5), DateTime(2026, 7, 1, 0, 5), DateTime(2026, 7, 1, 4)],
+        Date(2026, 7, 1) => [DateTime(2026, 7, 1, 4, 5)],
+    )
+    @test sum(length, values(intervals_by_day(drawn))) == 1000
+
+    sampled = parse_options(
+        ["--output", "x", "--sample", "50", "--first", "2026-06-01", "--last", "2026-06-10", "--seed", "7"],
+    )
+    @test selected_intervals(sampled) == sample_intervals(Date(2026, 6, 1), Date(2026, 6, 10), 50, 7)
+    @test isnothing(selected_intervals(parse_options(["--output", "x"])))
+
+    mktempdir() do dir
+        path = joinpath(dir, "intervals.csv")
+        write(path, "interval\n2026-06-04T04:10:00\n2026-06-04T04:05:00\n")
+        @test read_intervals_file(path) == [DateTime(2026, 6, 4, 4, 5), DateTime(2026, 6, 4, 4, 10)]
+        @test selected_intervals(parse_options(["--output", "x", "--intervals-file", path])) ==
+            read_intervals_file(path)
+        for (name, text) in (
+                "header" => "time\n2026-06-04T04:05:00\n", "off-grid" => "interval\n2026-06-04T04:07:00\n",
+                "duplicate" => "interval\n2026-06-04T04:05:00\n2026-06-04T04:05:00\n", "empty" => "interval\n",
+                "garbage" => "interval\nsoon\n",
+            )
+            bad = joinpath(dir, "$name.csv")
+            write(bad, text)
+            @test_throws ArgumentError read_intervals_file(bad)
+        end
+        @test_throws ArgumentError parse_options(["--output", "x", "--intervals-file", joinpath(dir, "missing.csv")])
+    end
+
+    for extra in (
+            ["--sample", "0"], ["--sample", "x"], ["--sample", "10", "--closed-loop", "true"],
+            ["--sample", "10", "--start", "2026-06-04T04:05:00", "--intervals", "2"],
+            ["--sample", "10", "--intervals-file", "a.csv"], ["--sample", "99999999"],
+        )
+        @test_throws ArgumentError parse_options(["--output", "x", extra...])
     end
 end
 
@@ -75,6 +132,14 @@ end
     end
 end
 
+@testset "write_csv writes zipped columns" begin
+    mktempdir() do dir
+        path = joinpath(dir, "frame.csv")
+        write_csv(path, ("a", "b"), zip([1, 2], ["x", missing]))
+        @test read(path, String) == "a,b\n1,x\n2,\n"
+    end
+end
+
 @testset "day workers have independent process lifetimes" begin
     mktempdir() do folder
         polled = Int[]
@@ -88,6 +153,11 @@ end
         @test first_pid in polled && second_pid in polled
         @test !isfile(joinpath(folder, "memory.csv"))
         @test_throws ProcessFailedException worker("exit(2)")
+        # A long poll interval does not delay the return after the worker exits.
+        elapsed = @elapsed ReplayBatchSupport.run_worker(
+            `$(Base.julia_cmd()) --startup-file=no -e '1'`, folder, time_ns(); poll_seconds = 30.0, notice = false,
+        )
+        @test elapsed < 25
     end
 end
 

@@ -24,6 +24,10 @@ const _TIMING_COLUMNS = (
     "gc_s", "compilation_s", "timed_solve_s", "pricing_s", "auxiliary_s", "schema_version",
 )
 const _TIMING_SCHEMA_VERSION = 2
+const _TimingRow = NamedTuple{
+    Symbol.(_TIMING_COLUMNS),
+    Tuple{String, String, Int, String, Float64, Float64, Float64, Float64, Float64, Float64, Float64, Int},
+}
 const _QUARTER_HOUR_MS = 900_000
 
 _no_phase(phase) = nothing
@@ -36,22 +40,47 @@ function _log_skipped_constraints(skipped::DataFrame)
     return
 end
 
+# The replay system over `first_step` through `last_step`, plus the two intervals the input preparation reads ahead.
+function _build_system(db, first_step, last_step, folder, time_series_in_memory)
+    horizon = first_step:DISPATCH_INTERVAL:(last_step + 2DISPATCH_INTERVAL)
+    ts_directory = time_series_in_memory ? nothing : joinpath(folder, "time_series")
+    time_series_in_memory || mkpath(ts_directory)
+    return nem_system(
+        db, NEMDEConfiguration(); date_range = horizon, intervention = 0, interval_flow_limits = false,
+        time_series_in_memory, time_series_directory = ts_directory,
+    )
+end
+
+# The solver statistics of `results` as the `solver_stats.csv` table, one row per entry of `steps`.
+function _solver_stats_table(results, steps, k)
+    stats = PSI.read_optimizer_stats(results)
+    nrow(stats) == length(steps) || error("Chunk $k: $(nrow(stats)) optimizer stat rows for $(length(steps)) steps.")
+    return DataFrame(
+        SETTLEMENTDATE = collect(steps), chunk = fill(k, length(steps)),
+        objective_value = stats.objective_value, solver_solve_time = stats.solver_solve_time,
+        timed_solve_time = stats.timed_solve_time,
+        timed_calculate_dual_variables = stats.timed_calculate_dual_variables,
+        termination_status = stats.termination_status,
+    )
+end
+
+# The ramp-limited unit rows of the constraint violations, as `ramp_violations.csv`.
+function _ramp_violations(violations)
+    return @chain violations begin
+        subset(:family => ByRow(==("unit_ramp")))
+        select(:name => :DUID, :DateTime, :MW, :direction)
+    end
+end
+
 # Builds, executes and compares one chunk of `steps` in `folder`; returns its tables and phase timings.
 function _replay_chunk(
         db, steps::StepRange{DateTime}, k::Integer, folder::AbstractString;
         optimizer, time_series_in_memory::Bool, cache_size_mib::Integer, on_phase, problem = NEMDispatchProblem,
     )
     template = template_nemde()
-    horizon = first(steps):DISPATCH_INTERVAL:(last(steps) + 2DISPATCH_INTERVAL)
-    on_phase(:preflight)
     on_phase(:system_build)
     t0 = time()
-    ts_directory = time_series_in_memory ? nothing : joinpath(folder, "time_series")
-    time_series_in_memory || mkpath(ts_directory)
-    sys = nem_system(
-        db, NEMDEConfiguration(); date_range = horizon, intervention = 0, interval_flow_limits = false,
-        time_series_in_memory, time_series_directory = ts_directory,
-    )
+    sys = _build_system(db, first(steps), last(steps), folder, time_series_in_memory)
     system_build_s = time() - t0
 
     on_phase(:model_build)
@@ -92,19 +121,8 @@ function _replay_chunk(
     solved = read_solved_interval(results, sys)
     comparison = compare_intervals(read_published_interval(db, steps), solved)
     violations = read_constraint_violations(results, sys)
-    ramp = @chain violations begin
-        subset(:family => ByRow(==("unit_ramp")))
-        select(:name => :DUID, :DateTime, :MW, :direction)
-    end
-    stats = PSI.read_optimizer_stats(results)
-    nrow(stats) == length(steps) || error("Chunk $k: $(nrow(stats)) optimizer stat rows for $(length(steps)) steps.")
-    solver_stats = DataFrame(
-        SETTLEMENTDATE = collect(steps), chunk = fill(k, length(steps)),
-        objective_value = stats.objective_value, solver_solve_time = stats.solver_solve_time,
-        timed_solve_time = stats.timed_solve_time,
-        timed_calculate_dual_variables = stats.timed_calculate_dual_variables,
-        termination_status = stats.termination_status,
-    )
+    ramp = _ramp_violations(violations)
+    solver_stats = _solver_stats_table(results, steps, k)
     compare_s = time() - t3
     return (;
         timings = (; system_build_s, simulation_build_s, execute_s, compare_s), comparison,
@@ -119,8 +137,8 @@ end
 
 Replays the intervals `steps`, or the trading day `day`, in consecutive [`replay_chunks`](@ref) written to
 `folder/chunk_<k>`. Each chunk is built on a one-chunk `nem_system`, executed and compared with the
-published outcome. `on_phase` receives `:preflight`, `:system_build`, `:model_build`, `:execute` and
-`:compare` for each chunk.
+published outcome. `on_phase` receives `:system_build`, `:model_build`, `:execute` and `:compare` for each
+chunk.
 
 # Arguments
 - `db`: the `AEMDB` connection to the cache.
@@ -149,9 +167,112 @@ function _replay_day(
             db, chunks[k], k, mkpath(folders[k]); optimizer, time_series_in_memory, cache_size_mib, on_phase, problem,
         )
     end
+    return _stack_chunks(outs, chunks, folders, length.(chunks))
+end
+
+"""
+    _replay_intervals(db, intervals::Vector{DateTime}, folder; optimizer, time_series_in_memory, on_phase = _no_phase) -> NamedTuple
+
+Replays the selected `intervals` of one trading day, which need not be consecutive. Each financial-year
+chunk of the day builds one `nem_system` over its first to last selected interval, and every selected
+interval is solved as its own one-interval `PSI.DecisionModel` (open loop, from AEMO's observed state),
+then compared with the published outcome.
+
+# Arguments
+- `db`: the `AEMDB` connection to the cache.
+- `intervals`: the sorted interval-ending timestamps, all in one trading day.
+- `folder`: the output folder of the chunks.
+- `optimizer`: the JuMP optimizer, e.g. from [`nemde_optimizer`](@ref).
+- `time_series_in_memory`: whether time series are held in memory rather than written per chunk.
+- `on_phase`: optional callback receiving `:system_build`, `:execute` and `:compare` for each chunk.
+
+# Returns
+The `NamedTuple` of [`_replay_day`](@ref), where `chunks` counts the selected intervals in `n_steps`,
+`simulation_build_s` sums the per-interval model builds and `execute_s` the solves and result reads.
+"""
+function _replay_intervals(
+        db, intervals::Vector{DateTime}, folder::AbstractString;
+        optimizer, time_series_in_memory::Bool, on_phase = _no_phase,
+    )
+    selected = Set(intervals)
+    spans = replay_chunks(first(intervals):DISPATCH_INTERVAL:last(intervals))
+    chunks = filter(!isempty, [filter(in(selected), span) for span in spans])
+    folders = [joinpath(folder, "chunk_$k") for k in eachindex(chunks)]
+    outs = map(eachindex(chunks)) do k
+        _replay_sampled_chunk(db, chunks[k], k, mkpath(folders[k]); optimizer, time_series_in_memory, on_phase)
+    end
+    return _stack_chunks(outs, chunks, folders, length.(chunks))
+end
+
+# Solves each of `intervals` as a standalone model on one shared system, keeping their comparison rows.
+function _replay_sampled_chunk(
+        db, intervals::Vector{DateTime}, k::Integer, folder::AbstractString;
+        optimizer, time_series_in_memory::Bool, on_phase,
+    )
+    template = template_nemde()
+    on_phase(:system_build)
+    t0 = time()
+    sys = _build_system(db, first(intervals), last(intervals), folder, time_series_in_memory)
+    system_build_s = time() - t0
+
+    on_phase(:execute)
+    skipped = Ref(DataFrame())
+    parts = map(enumerate(intervals)) do (i, t)
+        t1 = time()
+        model = PSI.DecisionModel(NEMDispatchProblem, template, sys; optimizer, initial_time = t, name = _DECISION_NAME)
+        # The skipped-constraint report depends on the system and template only, so the first model gives it.
+        i == 1 && (skipped[] = replay_skipped_constraints(sys, template))
+        output_dir = mktempdir(folder)
+        status = PSI.build!(model; output_dir)
+        build_s = time() - t1
+        if status != PSI.ModelBuildStatus.BUILT
+            _log_skipped_constraints(skipped[])
+            error("Interval $t failed to build ($status); see the logs.")
+        end
+        t2 = time()
+        status = try
+            PSI.solve!(model)
+        catch
+            _log_skipped_constraints(skipped[])
+            rethrow()
+        end
+        status == PSI.RunStatus.SUCCESSFULLY_FINALIZED || error("Interval $t failed to solve ($status).")
+        results = PSI.OptimizationProblemResults(model)
+        solved = read_solved_interval(results, sys)
+        violations = read_constraint_violations(results, sys)
+        stats = _solver_stats_table(results, [t], k)
+        rm(output_dir; recursive = true)
+        return (; solved, violations, stats, build_s, solve_s = time() - t2)
+    end
+
+    on_phase(:compare)
+    t3 = time()
+    selected = Set(intervals)
+    published = read_published_interval(db, first(intervals):DISPATCH_INTERVAL:last(intervals))
+    published = NamedTuple(
+        table => subset(frame, :SETTLEMENTDATE => ByRow(in(selected))) for (table, frame) in pairs(published)
+    )
+    solved = NamedTuple(
+        table => reduce(vcat, [getproperty(part.solved, table) for part in parts]) for table in keys(first(parts).solved)
+    )
+    violations = reduce(vcat, [part.violations for part in parts])
+    return (;
+        timings = (;
+            system_build_s, simulation_build_s = sum(part.build_s for part in parts),
+            execute_s = sum(part.solve_s for part in parts), compare_s = time() - t3,
+        ),
+        comparison = compare_intervals(published, solved),
+        skipped_constraints = insertcols(skipped[], 1, :chunk => fill(k, nrow(skipped[]))),
+        constraint_violations = violations, ramp_violations = _ramp_violations(violations),
+        solver_stats = reduce(vcat, [part.stats for part in parts]),
+    )
+end
+
+# Stacks the per-chunk tables of a day and tabulates the chunks, with `n_steps` intervals each.
+function _stack_chunks(outs, chunks, folders, n_steps)
     stacked(field) = reduce(vcat, [getproperty(out, field) for out in outs])
     chunk_table = DataFrame(
-        chunk = eachindex(chunks), start = first.(chunks), stop = last.(chunks), n_steps = length.(chunks),
+        chunk = eachindex(chunks), start = first.(chunks), stop = last.(chunks), n_steps = n_steps,
         folder = folders,
     )
     for field in (:system_build_s, :simulation_build_s, :execute_s, :compare_s)
@@ -173,7 +294,7 @@ function _replay_day(db, day::Date, folder::AbstractString; kwargs...)
 end
 
 function _write_frame(path, frame)
-    write_csv(path, names(frame), eachrow(frame))
+    write_csv(path, names(frame), zip(eachcol(frame)...))
     return
 end
 
@@ -196,78 +317,21 @@ function save_day(folder, result)
     )
 end
 
-"""
-    _round_utc_offset(offset_ms::Real) -> Dates.Millisecond
-
-Rounds a UTC offset in milliseconds to the nearest quarter hour, which absorbs the skew between
-the two clock reads that produce it.
-
-# Arguments
-
-  - `offset_ms::Real`: the offset in milliseconds.
-
-# Returns
-
-  - `Dates.Millisecond`: the offset rounded to a multiple of 15 minutes.
-"""
-function _round_utc_offset(offset_ms::Real)
-    rounded = round(Int, offset_ms / _QUARTER_HOUR_MS) * _QUARTER_HOUR_MS
-    return Dates.Millisecond(rounded)
-end
-
-"""
-    _utc_offset() -> Dates.Millisecond
-
-Returns the local clock's offset from UTC, rounded to the nearest quarter hour.
-
-# Returns
-
-  - `Dates.Millisecond`: the local-minus-UTC offset.
-"""
+# The local clock's offset from UTC, rounded to a quarter hour to absorb the skew between the two reads.
 function _utc_offset()
-    offset = _round_utc_offset(Dates.value(Dates.now() - Dates.now(Dates.UTC)))
-    return offset
+    return _round_utc_offset(Dates.value(Dates.now() - Dates.now(Dates.UTC)))
+end
+
+# `value` as a `Float64`, or `NaN` when it is missing.
+_nan_if_missing(value) = ismissing(value) ? NaN : Float64(value)
+
+# Rounds a UTC offset in milliseconds to the nearest quarter hour.
+function _round_utc_offset(offset_ms::Real)
+    return Dates.Millisecond(round(Int, offset_ms / _QUARTER_HOUR_MS) * _QUARTER_HOUR_MS)
 end
 
 """
-    _timing_seconds(from::DateTime, to::DateTime) -> Float64
-
-Returns the length of the span from `from` to `to` in seconds.
-
-# Arguments
-
-  - `from::DateTime`: start of the span.
-  - `to::DateTime`: end of the span.
-
-# Returns
-
-  - `Float64`: the span length in seconds.
-"""
-function _timing_seconds(from::DateTime, to::DateTime)
-    seconds = Dates.value(to - from) / 1000
-    return seconds
-end
-
-"""
-    _timing_nan(value) -> Float64
-
-Returns `value` as a `Float64`, or `NaN` when it is missing.
-
-# Arguments
-
-  - `value`: a number or `missing`.
-
-# Returns
-
-  - `Float64`: the converted value, or `NaN`.
-"""
-function _timing_nan(value)
-    result = ismissing(value) ? NaN : Float64(value)
-    return result
-end
-
-"""
-    _interval_timing_rows(simulation, model, results) -> Vector{NamedTuple}
+    _interval_timing_rows(simulation, model, results) -> Vector{_TimingRow}
 
 Builds the `parameter_update` and `solve_and_write` rows of every executed step of `model`.
 The `parameter_update` span runs from the step's start event to the last `ParameterUpdateEvent`
@@ -284,7 +348,7 @@ write, native state update and warm start, and ends at the step's done event.
 
 # Returns
 
-  - `Vector{NamedTuple}`: one row per phase per step, with the fields of `_TIMING_COLUMNS`.
+  - `Vector{_TimingRow}`: one row per phase per step, with the fields of `_TIMING_COLUMNS`.
 """
 function _interval_timing_rows(simulation, model, results)
     folder = PSI.get_simulation_dir(simulation)
@@ -306,7 +370,7 @@ function _interval_timing_rows(simulation, model, results)
     end
 
     offset = _utc_offset()
-    rows = NamedTuple[]
+    rows = _TimingRow[]
     for (i, start) in enumerate(starts)
         done = get(dones, start.step, nothing)
         isnothing(done) && error("Model $name: step $(start.step) has no done event.")
@@ -319,7 +383,7 @@ function _interval_timing_rows(simulation, model, results)
         push!(
             rows, (;
                 timestamp_utc = string(updated - offset), interval_aest = interval, execution_count = count,
-                phase = "parameter_update", wall_s = _timing_seconds(started, updated),
+                phase = "parameter_update", wall_s = Dates.value(updated - started) / 1000,
                 allocated_bytes = NaN, gc_s = NaN, compilation_s = NaN,
                 timed_solve_s = NaN, pricing_s = NaN, auxiliary_s = NaN,
                 schema_version = _TIMING_SCHEMA_VERSION,
@@ -328,8 +392,8 @@ function _interval_timing_rows(simulation, model, results)
         push!(
             rows, (;
                 timestamp_utc = string(finished - offset), interval_aest = interval, execution_count = count,
-                phase = "solve_and_write", wall_s = _timing_seconds(updated, finished),
-                allocated_bytes = _timing_nan(stat.solve_bytes_alloc), gc_s = _timing_nan(stat.sec_in_gc),
+                phase = "solve_and_write", wall_s = Dates.value(finished - updated) / 1000,
+                allocated_bytes = _nan_if_missing(stat.solve_bytes_alloc), gc_s = _nan_if_missing(stat.sec_in_gc),
                 compilation_s = NaN, timed_solve_s = stat.timed_solve_time,
                 pricing_s = stat.timed_calculate_dual_variables, auxiliary_s = stat.timed_calculate_aux_variables,
                 schema_version = _TIMING_SCHEMA_VERSION,
@@ -363,12 +427,7 @@ rebuild and initial-condition updates are counted in `solve_and_write`.
 function _write_interval_timings!(simulation, model, results)
     path = joinpath(PSI.get_output_dir(model), "interval_timings.csv")
     rows = _interval_timing_rows(simulation, model, results)
-    open(path, "w") do io
-        println(io, join(_TIMING_COLUMNS, ','))
-        for row in rows
-            println(io, join((row[Symbol(column)] for column in _TIMING_COLUMNS), ','))
-        end
-    end
+    write_csv(path, _TIMING_COLUMNS, rows)
     return path
 end
 
@@ -389,7 +448,19 @@ function main(folder, day::Date)
     package_hashes = ReplayBatchSupport.snapshot_package_sources(package_root, joinpath(day_folder, "package_source"))
     time_series_in_memory = parse(Bool, config["time-series-in-memory"])
     closed_loop = parse(Bool, get(config, "closed-loop", "false"))
+    sampled = !isempty(config["sample"]) || !isempty(config["intervals-file"])
+    day_intervals = sampled ? get(
+            ReplayBatchSupport.intervals_by_day(ReplayBatchSupport.read_intervals_file(joinpath(folder, "selected_intervals.csv"))),
+            day, DateTime[],
+        ) : DateTime[]
+    sampled && isempty(day_intervals) && error("No selected intervals fall in trading day $day.")
     provenance = Dict(
+        "interval_sampling" => Dict{String, Any}(
+            "mode" => isempty(config["sample"]) ? (isempty(config["intervals-file"]) ? "none" : "file") : "random",
+            "sample" => config["sample"], "intervals_file" => config["intervals-file"],
+            "seed" => config["seed"], "first" => config["first"], "last" => config["last"],
+            "day_intervals" => length(day_intervals),
+        ),
         "revision" => actual_revision, "supervisor_revision" => config["git_revision"],
         "time_series_in_memory" => time_series_in_memory, "closed_loop" => closed_loop,
         "checkout_status" => checkout_status, "package_source_hashes" => package_hashes, "optimization_level" => Int(Base.JLOptions().opt_level),
@@ -409,7 +480,6 @@ function main(folder, day::Date)
     for name in readdir(@__DIR__)
         any(ext -> endswith(name, ext), (".jl", ".py", ".md")) && cp(joinpath(@__DIR__, name), joinpath(source_folder, name))
     end
-    cp(joinpath(dirname(dirname(dirname(Base.active_project()))), "Manifest.toml"), joinpath(day_folder, "Manifest.toml"))
     open(joinpath(day_folder, "provenance.toml"), "w") do io
         TOML.print(io, provenance)
     end
@@ -436,12 +506,15 @@ function main(folder, day::Date)
         end
         db = aem_connect(HiveConfiguration(hive_location = config["hive"]))
         try
-            steps = ReplayBatchSupport.batch_steps(config, day)
-            result = _replay_day(
-                db, steps, day_folder;
-                optimizer, time_series_in_memory, cache_size_mib = parse(Int, config["cache-size-mib"]), on_phase,
-                problem = closed_loop ? NEMClosedLoopDispatchProblem : NEMDispatchProblem,
-            )
+            result = if sampled
+                _replay_intervals(db, day_intervals, day_folder; optimizer, time_series_in_memory, on_phase)
+            else
+                _replay_day(
+                    db, ReplayBatchSupport.batch_steps(config, day), day_folder;
+                    optimizer, time_series_in_memory, cache_size_mib = parse(Int, config["cache-size-mib"]), on_phase,
+                    problem = closed_loop ? NEMClosedLoopDispatchProblem : NEMDispatchProblem,
+                )
+            end
             on_phase(:export)
             totals = save_day(day_folder, result)
             println("Completed $day: $totals")
