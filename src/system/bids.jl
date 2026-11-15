@@ -319,11 +319,20 @@ end
 """
     set_market_bids!(sys, db, date_range; markets = NEM_MARKETS, resolution = Minute(5)) -> (; added, excluded)
 
-Stores the bids of each unit of `sys` for `date_range`: one [`read_offers`](@ref) read of the
-`markets`, written as one series per bid field ([`bid_series_name`](@ref)) and recorded on the unit's
-[`NEMOfferCost`](@ref) as [`NEMEnergyBid`](@ref)s and [`NEMFCASBid`](@ref)s. The values are as offered:
-MW, \$/MWh at the connection point and MW/min. A unit's loss factors, from which AEMSim refers its
-energy prices, are on its [`NEMRegistration`](@ref) recorded by [`nem_network`](@ref).
+Stores the bids of each unit of `sys` for `date_range`. On a replay system (units carrying NEM unit
+data, built by [`nem_network`](@ref) or `nem_system(db, NEMDEConfiguration(); date_range)`) it is one
+[`read_offers`](@ref) read of the `markets`, written as one series per bid field
+([`bid_series_name`](@ref)) and recorded on the unit's [`NEMOfferCost`](@ref) as
+[`NEMEnergyBid`](@ref)s and [`NEMFCASBid`](@ref)s. The values are as offered: MW, \$/MWh at the
+connection point and MW/min. A unit's loss factors, from which AEMSim refers its energy prices, are on
+its [`NEMRegistration`](@ref) recorded by [`nem_network`](@ref).
+
+On a system without NEM unit data, such as one built with [`RegionalNetworkConfiguration`](@ref), only
+the energy bids are read and each bidding unit gets a `MarketBidCost` for PowerSimulations' own
+formulations: the incremental offer curves of its `GEN` bid and the decremental curves of its `LOAD`
+bid, as `SingleTimeSeries` in natural units. Each curve's prices are divided by the unit's loss
+factor from [`read_loss_factors`](@ref), so they are referred to the regional reference node, and its
+quantity is capped at the interval's `MAXAVAIL`. FCAS bids are not read and no service is added.
 
 Generators bid `GEN`. Scheduled loads bid `LOAD`, and a non-scheduled load bids no energy; an available one
 gets a zero `MAXAVAIL` series of the `LOAD` energy bid name instead. Storage
@@ -347,7 +356,95 @@ function set_market_bids!(
         sys, db, date_range;
         markets = NEM_MARKETS, resolution::Dates.Period = Minute(5),
     )
+    if !_is_replay_system(sys)
+        offers = read_offers(db, date_range; markets = (BidType.ENERGY,))
+        factors = read_loss_factors(db; as_of = first(date_range), through = last(date_range) - resolution)
+        return _set_regional_market_bids!(sys, offers, factors, date_range; resolution)
+    end
     return _set_market_bids!(sys, read_offers(db, date_range; markets), date_range; markets, resolution)
+end
+
+
+# Whether any device of `sys` carries NEM unit data, as a replay system's devices do.
+_is_replay_system(sys) = any(has_nem_unit_data, get_components(Device, sys))
+
+
+# The energy offer curve of each stamp of `grid` from `rows`, with its prices divided by `loss_factor`
+# and its quantity capped at the stamp's `MAXAVAIL` (zero where there is no row).
+function _referred_curves_on_grid(rows, grid, loss_factor::Float64)
+    index = _stamp_index(rows.INTERVAL_DATETIME)
+    max_avail = _numeric_on_grid(index, rows.MAXAVAIL, grid)
+    return map(_curves_on_grid(index, rows, grid), max_avail) do curve, cap
+        return PiecewiseStepData(min.(get_x_coords(curve), cap), get_y_coords(curve) ./ loss_factor)
+    end
+end
+
+
+"""
+    _set_regional_market_bids!(sys, offers, factors, date_range; resolution = Minute(5)) -> (; added, excluded)
+
+Gives each bidding unit of `sys` a `MarketBidCost` from the energy rows of `offers` (from
+[`read_offers`](@ref)), as [`set_market_bids!`](@ref) does on a system without NEM unit data:
+incremental curves from the `GEN` bid of a generator or storage unit, decremental curves from the
+`LOAD` bid of a scheduled load or storage unit, referred by the loss factors of `factors` (from
+[`read_loss_factors`](@ref)). A unit missing a required direction is set unavailable; a bidding unit
+without a loss factor throws an `ArgumentError`. Non-scheduled loads are left as built.
+
+# Returns
+`(; added, excluded)`, both empty: no FCAS service is added.
+"""
+function _set_regional_market_bids!(sys, offers::DataFrame, factors::DataFrame, date_range; resolution::Dates.Period = Minute(5))
+    start_date = first(date_range)
+    grid = _replay_grid(date_range, resolution)
+    offers = subset(offers, :BIDTYPE => ByRow(==(BidType.ENERGY)))
+    if resolution != Minute(5)
+        offers = _aggregate_offers(offers, resolution)
+        subset!(offers, :INTERVAL_DATETIME => ByRow(t -> start_date <= t < last(date_range)))
+    end
+    groups = groupby(offers, [:DUID, :DIRECTION])
+    loss_factor = Dict(String(r.DUID) => (gen = Float64(r.GEN_LOSS_FACTOR), load = Float64(r.LOAD_LOSS_FACTOR)) for r in eachrow(factors))
+    unbid = String[]
+    for device in (d for T in (Generator, ControllableLoad, Storage) for d in get_components(T, sys))
+        device isa ControllableLoad && is_non_scheduled_load(device) && continue
+        name = get_name(device)
+        required = device isa Storage ? (BidDirection.GEN, BidDirection.LOAD) :
+            device isa ControllableLoad ? (BidDirection.LOAD,) : (BidDirection.GEN,)
+        rows = [get(groups, (name, string(direction)), nothing) for direction in required]
+        if any(isnothing, rows)
+            set_available!(device, false)
+            push!(unbid, name)
+            continue
+        end
+        haskey(loss_factor, name) || throw(
+            ArgumentError("set_market_bids!: $name has no DUDETAILSUMMARY loss factor over $date_range"),
+        )
+        set_available!(device, true)
+        set_operation_cost!(
+            device,
+            MarketBidCost(; no_load_cost = 0.0, start_up = (hot = 0.0, warm = 0.0, cold = 0.0), shut_down = 0.0),
+        )
+        for (direction, direction_rows) in zip(required, rows)
+            _check_stamps_on_grid(direction_rows.INTERVAL_DATETIME, grid, "energy bids for $name $(string(direction))")
+            gen = direction == BidDirection.GEN
+            curves = _referred_curves_on_grid(direction_rows, grid, gen ? loss_factor[name].gen : loss_factor[name].load)
+            prefix = gen ? "incremental" : "decremental"
+            initial = gen ? zeros(length(grid)) : first.(get_y_coords.(curves))
+            for series_name in ("$(prefix)_variable_cost", "$(prefix)_initial_input")
+                remove_single_series!(sys, device, series_name)
+            end
+            cost_series = single_series("$(prefix)_variable_cost", start_date, curves, resolution)
+            initial_series = single_series("$(prefix)_initial_input", start_date, initial, resolution)
+            if gen
+                set_incremental_variable_cost!(sys, device, cost_series, UnitSystem.NATURAL_UNITS)
+                set_incremental_initial_input!(sys, device, initial_series)
+            else
+                set_decremental_variable_cost!(sys, device, cost_series, UnitSystem.NATURAL_UNITS)
+                set_decremental_initial_input!(sys, device, initial_series)
+            end
+        end
+    end
+    isempty(unbid) || @warn "set_market_bids!: $(length(unbid)) unit(s) have no bid data for a required direction; setting to unavailable: $(join(unbid, ", "))"
+    return (; added = String[], excluded = Dict{String, Vector{String}}())
 end
 
 # Stores the bids of `offers`, the [`read_offers`](@ref) rows of `date_range`, as [`set_market_bids!`](@ref)

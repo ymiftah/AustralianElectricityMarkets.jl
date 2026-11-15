@@ -175,4 +175,40 @@
         max_avail = series(asload, AEM.bid_series_name(BidType.ENERGY, :max_avail, AEM.BidDirection.LOAD))
         @test !isempty(max_avail) && all(==(0.0), max_avail)
     end
+
+    @testset "a regional system gets MarketBidCost curves referred by the loss factor and capped at MAXAVAIL" begin
+        sys = nem_system(db, RegionalNetworkConfiguration(); as_of = first(interval))
+        @test !AEM._is_replay_system(sys)
+        res = set_market_bids!(sys, db, interval)
+        @test isempty(res.added) && isempty(res.excluded)
+        @test isempty(get_components(FCASService, sys))
+        offers = read_offers(db, interval)
+        factors = Dict(r.DUID => r for r in eachrow(read_loss_factors(db; as_of = first(interval), through = last(interval) - Minute(5))))
+        checked = 0
+        for device in (d for T in (Generator, ControllableLoad, Storage) for d in get_components(T, sys))
+            cost = get_operation_cost(device)
+            cost isa MarketBidCost || continue
+            name = get_name(device)
+            for (direction, getter, factor) in (
+                    (AEM.BidDirection.GEN, get_incremental_variable_cost, factors[name].GEN_LOSS_FACTOR),
+                    (AEM.BidDirection.LOAD, get_decremental_variable_cost, factors[name].LOAD_LOSS_FACTOR),
+                )
+                by = rows_by_stamp(offers, name, BidType.ENERGY, direction)
+                isempty(by) && continue
+                stored = values(getter(device, cost; start_time = first(interval), len = length(grid)))
+                stored_curves = [get_function_data(get_value_curve(c)) for c in stored]
+                for (k, t) in enumerate(grid)
+                    expected = expected_curves(by, direction)[k]
+                    cap = haskey(by, t) ? _num(by[t].MAXAVAIL) : 0.0
+                    @test _matches(get_x_coords(stored_curves[k]), min.(expected.x, cap))
+                    @test _matches(get_y_coords(stored_curves[k]), expected.y ./ factor)
+                end
+                checked += 1
+            end
+            @test get_available(device)
+        end
+        @test checked > 0
+        # A regional unit with no GEN offer is set unavailable.
+        @test all(d -> get_available(d) == (get_operation_cost(d) isa MarketBidCost), get_components(ThermalStandard, sys))
+    end
 end

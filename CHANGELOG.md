@@ -1027,6 +1027,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `set_market_bids!` works again on a system without NEM unit data, such as one built with `RegionalNetworkConfiguration`: each bidding unit gets a `MarketBidCost` with incremental (`GEN`) and decremental (`LOAD`) offer curves for PowerSimulations' own formulations, its prices divided by the unit's loss factor and its quantity capped at `MAXAVAIL`. Only energy bids are read. The `market_bids`, `interchanges` and `clearing-with-batteries` how-tos run again.
+
 - A replay network builds the generator unit of a battery still registered as a separate scheduled generator and scheduled load (energy source `Battery Storage`, `DISPATCHTYPE = GENERATOR`, no storage data) as a `ThermalStandard` with prime mover `BA`. Neither the battery nor the generator builder took these units, so replays of late 2024 (for example `RESS1G`, `TB2BG1`, `BBATTERY` on 2024-10-05) left out units NEMDE dispatched. Regional networks still omit them.
 
 - `get_dropped_terms` has a `registered` column: whether `DUDETAILSUMMARY` registers the unit at some interval of the build range. `nem_system` and `check_template_against_sys` fail only on dropped terms of registered units; a term of a unit not registered over the range contributes zero, as in nempy. `check_template_against_sys` also accepts `:vacuous_unknown_duid` skips.
