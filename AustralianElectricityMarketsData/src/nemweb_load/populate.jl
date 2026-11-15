@@ -1,34 +1,46 @@
 # ── DataSource-based fetch/write pipeline ─────────────────────────────────────
 
 """
-    _clear_local_partition(source::DataSource, partition_dir::String)
+    _clear_local_partition(source::DataSource, partition_dir::String) -> Nothing
 
-Remove `partition_dir` if it exists — but only for local sources. `_add_data`
-is only ever called when `populate` has already decided to (re)fetch this
-month (not cached, or `force_new=true`); for local filesystems, clearing the
-partition unconditionally here is always correct and removes any risk of
-stale files from a previous run coexisting with fresh ones. For remote
-filesystems there is deliberately no equivalent clear step, remote rewrites
-rely solely on COPY's OVERWRITE_OR_IGNORE.
+Remove `partition_dir` if it exists, for local sources only, so stale files from a previous
+run never coexist with freshly written ones. Remote rewrites rely on `COPY`'s
+`OVERWRITE_OR_IGNORE` instead.
+
+# Arguments
+- `source::DataSource`: The table being populated.
+- `partition_dir::String`: The month's partition directory.
+
+# Returns
+- `Nothing`.
 """
 function _clear_local_partition(source::DataSource, partition_dir::String)
     islocal(source) || return
-    return isdir(partition_dir) && rm(partition_dir; recursive = true, force = true)
+    isdir(partition_dir) && rm(partition_dir; recursive = true, force = true)
+    return
 end
 
 
 """
-    _add_data(source::DataSource, year::Int, month::Int; fetch_archive = _get_archive)
+    _add_data(source::DataSource, year::Int, month::Int; fetch_archive = _get_archive) -> Nothing
 
-Download the NEMWEB archive for the given month and write it to the
-Hive-partitioned parquet cache. `fetch_archive(table_name, year, month)` returns the
-downloaded ZIP path(s).
+Download the NEMWEB archive for the given month and write it to the Hive-partitioned parquet
+cache, replacing the month's local partition. A month AEMO does not publish is logged and
+skipped; any other failure is rethrown.
+
+# Arguments
+- `source::DataSource`: The table to fetch and where to write it.
+- `year::Int`, `month::Int`: The archive month.
+- `fetch_archive`: `fetch_archive(table_name, year, month)` returns the downloaded ZIP path(s).
+
+# Returns
+- `Nothing`.
 """
 function _add_data(source::DataSource, year::Int, month::Int; fetch_archive = _get_archive)
     partition_dir = joinpath(source.path, "$ARCHIVE_MONTH_PARTITION=$(Date(year, month, 1))")
     _clear_local_partition(source, partition_dir)
 
-    return try
+    try
         @info "Fetching data" table = source.table_name year month
         zip_paths = fetch_archive(source.table_name, year, month)
         lo, hi = isnothing(source.month_filter_column) ? (nothing, nothing) : _month_filter_bounds(year, month)
@@ -67,13 +79,25 @@ function _add_data(source::DataSource, year::Int, month::Int; fetch_archive = _g
             rethrow(e)
         end
     end
+    return
 end
 
 
 """
     populate(source::DataSource, date_range::StepRange{Date}; force_new::Bool=false, fetch_archive=_get_archive)
 
-Populate table with data from a date range.
+Populate one table's cache with each month of `date_range`, skipping months already cached
+unless `force_new` is set.
+
+# Arguments
+- `source::DataSource`: The table to populate.
+- `date_range::StepRange{Date}`: Dates whose months are populated; only the first and last
+  dates matter.
+- `force_new::Bool`: Refetch months that are already cached.
+- `fetch_archive`: `fetch_archive(table_name, year, month)` returns the downloaded ZIP path(s).
+
+# Returns
+- `Nothing`.
 """
 function populate(
         source::DataSource, date_range::StepRange{Date};
@@ -83,21 +107,14 @@ function populate(
     stop = last(date_range)
     @info "Populating table" table = source.table_name start = start stop = stop
     date_range = start:Month(1):stop
+    # One partition listing replaces a per-month existence check (a connection each on a remote filesystem).
+    cached = force_new ? Date[] : _cached_months(source)
     for date in date_range
         year, month = Dates.year(date), Dates.month(date)
-
-        data_exists = false
-        if !force_new
-            # Check for Hive-partitioned data
-            partition_date = Date(year, month, 1)
-            partition_dir = joinpath(source.path, "$ARCHIVE_MONTH_PARTITION=$(partition_date)")
-            data_exists = _partition_has_data(source, partition_dir)
-        end
-
-        if !data_exists
-            _add_data(source, year, month; fetch_archive)
-        else
+        if Date(year, month, 1) in cached
             @info "Data already exists, skipping" table = source.table_name year month
+        else
+            _add_data(source, year, month; fetch_archive)
         end
     end
     return
@@ -109,6 +126,15 @@ end
 
 Populate `table_name`'s Hive-partitioned parquet cache (under `db.config.hive_location`)
 with data for a date range.
+
+# Arguments
+- `db::AEMDB`: Database whose configuration locates the cache.
+- `table_name::Symbol`: Table to populate.
+- `start_date::Date`, `end_date::Date`: First and last dates; their months are populated.
+- `force_new::Bool`: Refetch months that are already cached.
+
+# Returns
+- `Nothing`.
 
 # Examples
 ```julia
@@ -132,6 +158,15 @@ end
              force_new::Bool=false)
 
 Populate `tables` (or all known tables when unspecified) for a date range.
+
+# Arguments
+- `db::AEMDB`: Database whose configuration locates the cache.
+- `start_date::Date`, `end_date::Date`: First and last dates; their months are populated.
+- `tables::Vector{Symbol}`: Tables to populate.
+- `force_new::Bool`: Refetch months that are already cached.
+
+# Returns
+- `Nothing`.
 
 # Examples
 ```julia

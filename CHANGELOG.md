@@ -511,6 +511,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `populate` streams each NEMWEB download to disk and memory-maps the ZIP when reading it, instead of buffering the whole body in memory twice. The month window of a month-filtered table (`DISPATCH_FCAS_REQ_CONSTRAINT`) is applied once, in a quoting-aware field parser that no longer splits every line (about four times faster on 1.5 million lines); the redundant SQL filter is removed, and a configured filter column absent from the file now throws instead of silently disabling the filter.
+
+- `populate` lists a table's cached months once, and `show(::AEMDB)` and `cached_date_range` reuse one DuckDB connection, where a remote (`s3`/`gs`) cache previously opened a connection per partition. Local-filesystem behaviour is unchanged.
+
 - `scripts/replay_batch.jl` requires `--output` (it no longer defaults to a machine-specific folder), the supervisor wakes as soon as a worker exits, and the `preflight` phase, which marked no work, is no longer recorded in `phases.csv`.
 
 - The FCAS kernels `fcas_preconditions_ok`, `fcas_effective_offer` and `fcas_ramping_limits` take MW inputs and are exported from `AustralianElectricityMarkets`. `FCAS_BAND_COUNT`, `FCAS_INACTIVE_LIMIT_MW`, `fcas_effective_series_name`, `fcas_ramping_series_name`, `fcas_offer_sides` and `fcas_upper_regulation_service` move there from `AustralianElectricityMarketsSimulations`, which imports them. `fcas_state_stranded_ok` takes its `storage` flag as a positional argument.
@@ -1011,6 +1015,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `mnsp_series_name`, and the `NEM_SERIES.from_to_flow_limit` and `NEM_SERIES.to_from_flow_limit` constants. MNSP series names are in `NEM_MNSP_SERIES` and interconnector flow limits are read through `NEMInterconnectorLimits` and `NEM_INTERCONNECTOR_SERIES`.
 
 ### Fixed
+
+- The `HiveConfiguration` docstring gives the `filesystem` default as `"file"`, and the `AEMDB`, `populate` and internal `populate` helper docstrings follow the reference format.
 
 - `set_regional_availability!` throws an `ArgumentError` when the start of its range is off the resolution grid, clamps every value to [0, 1], and gives a device with zero capacity 0.0 at every stamp.
 - `never_invoked_constraints` scans every `GenericConstraint`, available or not, so a reused system reports the constraints an earlier replay excluded as never invoked again.

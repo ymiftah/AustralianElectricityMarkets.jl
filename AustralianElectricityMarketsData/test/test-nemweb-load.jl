@@ -2,8 +2,8 @@ using AustralianElectricityMarketsData: HiveConfiguration
 using AustralianElectricityMarketsData:
     DataSource, get_table, MissingDataError, TransientDownloadError, _TABLE_SPECS, ARCHIVE_MONTH_PARTITION,
     _extract_d_lines, _csv_to_parquet, _new_duckdb_connection, _get_archive, NEMWEB_URL, NEMWEB_URL_ALT,
-    _month_filter_bounds
-using DataFrames, Dates, Logging, ZipFile, DuckDB, DBInterface
+    _month_filter_bounds, _csv_field, _fetch_with_retry, _download_and_cache
+using DataFrames, Dates, Logging, ZipFile, DuckDB, DBInterface, HTTP, Test
 
 # A minimal NEMWEB CSV (plain, not zipped) at a temp path. I and D records carry AEMO's fixed
 # 4-field prefix (record type, namespace, report, version) before the columns.
@@ -257,6 +257,83 @@ const MONTH_FILTER_ROWS = [
     @test _month_filter_bounds(2026, 12) == ("2026/12/01 00:00:00", "2027/01/01 00:00:00")
 end
 
+@testset "_csv_field: picks one field, strips quotes, and honours commas inside quotes" begin
+    line = "D,TEST,T,1,\"2026/06/01 00:05:00\",\"a, b\",plain,"
+    @test _csv_field(line, 1) == "D"
+    @test _csv_field(line, 5) == "2026/06/01 00:05:00"
+    @test _csv_field(line, 6) == "a, b"
+    @test _csv_field(line, 7) == "plain"
+    @test _csv_field(line, 8) == ""
+    @test _csv_field(line, 5) isa SubString{String}
+    @test_throws ArgumentError _csv_field(line, 9)
+    # A comma-bearing quoted field before the target must not shift the field index.
+    @test _csv_field("D,T,T,1,\"x,y\",\"2026/06/01 00:05:00\"", 6) == "2026/06/01 00:05:00"
+end
+
+@testset "_extract_d_lines: month filter reads the right field past quoted commas and ignores fractional seconds" begin
+    rows = [
+        ("\"note, with comma\"", "2026/06/01 00:00:00.000", "BOUNDARY_FRACTION"),
+        ("\"note\"", "2026/06/01 00:05:00.000", "IN"),
+    ]
+    csv_path = make_nemweb_csv("T", ["NOTE", "INTERVAL_DATETIME", "ID"], rows)
+    zip_path = make_zip_with_csv(csv_path)
+    lo, hi = _month_filter_bounds(2026, 6)
+    try
+        d_path, _ = _extract_d_lines(zip_path; month_filter_column = "INTERVAL_DATETIME", lo, hi)
+        try
+            @test [split(l, ",")[end] for l in readlines(d_path)] == ["IN"]
+        finally
+            rm(d_path; force = true)
+        end
+        @test_throws ArgumentError _extract_d_lines(zip_path; month_filter_column = "NO_SUCH_COLUMN", lo, hi)
+    finally
+        rm(csv_path; force = true)
+        rm(zip_path; force = true)
+    end
+end
+
+# A stand-in for HTTP.get that replays scripted (status, body) answers, writing each body to the response stream.
+function scripted_http_get(script)
+    calls = Ref(0)
+    function http_get(url; response_stream = nothing, kwargs...)
+        calls[] += 1
+        status, body = script[min(calls[], length(script))]
+        isnothing(response_stream) || write(response_stream, body)
+        return HTTP.Response(status, isnothing(response_stream) ? body : "")
+    end
+    return http_get, calls
+end
+
+@testset "_download_and_cache: streams the body to the file, never into the response" begin
+    http_get, calls = scripted_http_get([(200, "zip-bytes")])
+    dest = joinpath(mktempdir(), "sub", "a.zip")
+    @test _download_and_cache("http://example.invalid/a.zip", dest; http_get) === nothing
+    @test read(dest, String) == "zip-bytes"
+    @test calls[] == 1
+end
+
+@testset "_download_and_cache: a retry truncates the partial file from the failed attempt" begin
+    http_get, calls = scripted_http_get([(503, "junk-from-the-failed-attempt"), (200, "ok")])
+    dest = joinpath(mktempdir(), "a.zip")
+    logs, _ = Test.collect_test_logs() do
+        _download_and_cache("http://example.invalid/a.zip", dest; http_get)
+    end
+    @test calls[] == 2
+    @test read(dest, String) == "ok"
+end
+
+@testset "_download_and_cache: a 404 throws MissingDataError and leaves no file" begin
+    http_get, _ = scripted_http_get([(404, "not found page")])
+    dest = joinpath(mktempdir(), "a.zip")
+    @test_throws MissingDataError _download_and_cache("http://example.invalid/a.zip", dest; http_get)
+    @test !isfile(dest)
+end
+
+@testset "_fetch_with_retry: without dest the body stays in the response" begin
+    http_get, _ = scripted_http_get([(200, "body")])
+    @test String(_fetch_with_retry("http://example.invalid/x"; http_get).body) == "body"
+end
+
 @testset "_extract_d_lines: month filtering keeps only in-window D lines, boundary included" begin
     csv_path = make_nemweb_csv("DISPATCH_FCAS_REQ_CONSTRAINT", ["INTERVAL_DATETIME", "REGIONID"], MONTH_FILTER_ROWS)
     zip_path = make_zip_with_csv(csv_path)
@@ -342,18 +419,31 @@ end
     end
 end
 
-@testset "_csv_to_parquet: month_filter_column drops rows outside the archive month, including the boundary interval" begin
+@testset "month window: lines outside the archive month never reach the parquet, boundary interval included" begin
     csv_path = make_nemweb_csv("DISPATCH_FCAS_REQ_CONSTRAINT", ["INTERVAL_DATETIME", "REGIONID"], MONTH_FILTER_ROWS)
+    zip_path = make_zip_with_csv(csv_path)
+    lo, hi = _month_filter_bounds(2026, 6)
     tmpdir = mktempdir()
     try
-        _run_csv_to_parquet(
-            csv_path, ["INTERVAL_DATETIME", "REGIONID"], tmpdir;
-            year = 2026, month = 6, month_filter_column = "INTERVAL_DATETIME",
-        )
-        df = _read_parquet_file(tmpdir)
-        @test Set(df.REGIONID) == Set(["FIRST", "LAST", "NEXT_BOUNDARY"])
+        d_path, available_cols = _extract_d_lines(zip_path; month_filter_column = "INTERVAL_DATETIME", lo, hi)
+        try
+            conn = DuckDB.DB()
+            try
+                _csv_to_parquet(
+                    conn, d_path, available_cols, ["INTERVAL_DATETIME", "REGIONID"], tmpdir,
+                    [ARCHIVE_MONTH_PARTITION], String[], 2026, 6;
+                    month_filter_column = "INTERVAL_DATETIME",
+                )
+            finally
+                DBInterface.close!(conn)
+            end
+        finally
+            rm(d_path; force = true)
+        end
+        @test Set(_read_parquet_file(tmpdir).REGIONID) == Set(["FIRST", "LAST", "NEXT_BOUNDARY"])
     finally
-        isfile(csv_path) && rm(csv_path)
+        rm(csv_path; force = true)
+        rm(zip_path; force = true)
     end
 end
 

@@ -5,7 +5,7 @@ Configuration for accessing data.
 
 # Fields
 - `hive_location::String`: The directory where data is cached. Defaults to `~/.nemdb_cache`.
-- `filesystem::String`: The filesystem to use for the cache. Defaults to `"local"`. Can be s3, gs.
+- `filesystem::String`: The filesystem to use for the cache. Defaults to `"file"`; `"s3"` and `"gs"` select remote storage.
 """
 @kwdef struct HiveConfiguration
     hive_location::String = joinpath(homedir(), ".nemdb_cache")
