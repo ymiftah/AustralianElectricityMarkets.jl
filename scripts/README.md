@@ -170,15 +170,14 @@ julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/replay_
     --output "$HOME/aem_validation/sample-1000"
 ```
 
-The selected intervals are grouped by trading day, and each day is one worker with one system build
-(one per financial-year chunk when a day crosses July 1). The system covers the day's first to last selected
-interval, and each selected interval is solved as its own one-interval open-loop `DecisionModel`, built
-from AEMO's observed state, with no `Simulation`. A `Simulation` over the covering range would solve
-every interval between the selected ones, about 288 solves a day instead of the roughly 7 a day that
-1000 intervals over 150 days need, and a model per interval is the same independent solve as the nempy
-benchmark. The cost is one model build per interval instead of one per day.
+The selected intervals are grouped by trading day, and each day is one worker. Each selected interval is
+its own chunk, with a system built over that interval alone and a one-interval open-loop `DecisionModel`,
+built from AEMO's observed state, with no `Simulation`. This is the same independent solve as the nempy
+benchmark, and a gap in the published inputs between two selected intervals (for example the missing
+`BIDPEROFFER_D` rows at 13:30 to 13:45 on 2024-11-19) cannot fail them. A system covering the day's
+selected intervals builds in about the same total time but reads every interval in between.
 The day folders hold the same CSVs as a whole-day run, restricted to the selected intervals (`chunks.csv`
-counts them in `n_steps`; `simulation_build_s` sums the model builds and `execute_s` the solves). There are
+has one row per interval; `simulation_build_s` is the model build and `execute_s` the solve). There are
 no native PSI simulation folders, `interval_timings.csv` or `timers_*.toml` files. `provenance.toml`
 records the sampling settings under `interval_sampling`. `scripts/simulation_statistics.jl` reads the run
 unchanged. `benchmarking/` has the interval list of nempy's 2024 H2 benchmark.

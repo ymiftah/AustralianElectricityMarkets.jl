@@ -173,10 +173,10 @@ end
 """
     _replay_intervals(db, intervals::Vector{DateTime}, folder; optimizer, time_series_in_memory, on_phase = _no_phase) -> NamedTuple
 
-Replays the selected `intervals` of one trading day, which need not be consecutive. Each financial-year
-chunk of the day builds one `nem_system` over its first to last selected interval, and every selected
-interval is solved as its own one-interval `PSI.DecisionModel` (open loop, from AEMO's observed state),
-then compared with the published outcome.
+Replays the selected `intervals` of one trading day, which need not be consecutive. Each selected interval
+is its own chunk: one `nem_system` over that interval and one one-interval `PSI.DecisionModel` (open loop,
+from AEMO's observed state), then compared with the published outcome. Inputs between selected intervals
+are never read.
 
 # Arguments
 - `db`: the `AEMDB` connection to the cache.
@@ -194,9 +194,7 @@ function _replay_intervals(
         db, intervals::Vector{DateTime}, folder::AbstractString;
         optimizer, time_series_in_memory::Bool, on_phase = _no_phase,
     )
-    selected = Set(intervals)
-    spans = replay_chunks(first(intervals):DISPATCH_INTERVAL:last(intervals))
-    chunks = filter(!isempty, [filter(in(selected), span) for span in spans])
+    chunks = [[t] for t in intervals]
     folders = [joinpath(folder, "chunk_$k") for k in eachindex(chunks)]
     outs = map(eachindex(chunks)) do k
         _replay_sampled_chunk(db, chunks[k], k, mkpath(folders[k]); optimizer, time_series_in_memory, on_phase)
