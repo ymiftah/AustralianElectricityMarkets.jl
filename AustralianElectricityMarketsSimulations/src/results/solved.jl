@@ -24,7 +24,7 @@ base power and the interval length to give `\$/MWh`. Throws when a price is not 
 
 # Returns
 A `DataFrame` with `SETTLEMENTDATE`, `REGIONID` and `ROP`, the same columns as the `prices` of
-[`read_published_interval`](@ref).
+[`read_published_interval`](@ref AustralianElectricityMarkets.read_published_interval).
 """
 function read_prices(
         results::Union{PSI.OptimizationProblemResults, PSI.SimulationProblemResults}, sys::PSY.System,
@@ -57,7 +57,7 @@ constraint, non-positive for `<=`. Warns when a constraint with requirements has
 
 # Returns
 A `DataFrame` with `SETTLEMENTDATE`, `REGIONID`, `BIDTYPE` and `ROP`, the same columns as
-[`read_published_interval`](@ref) reports for FCAS prices.
+[`read_published_interval`](@ref AustralianElectricityMarkets.read_published_interval) reports for FCAS prices.
 """
 function read_fcas_prices(
         results::Union{PSI.OptimizationProblemResults, PSI.SimulationProblemResults}, sys::PSY.System;
@@ -101,7 +101,7 @@ end
     read_solved_interval(results, sys::PSY.System) -> NamedTuple
 
 Reads the solved outcome of a PSI model over every interval of `results`, in the keys and columns of
-[`read_published_interval`](@ref) so that solved and published outcomes compare by a join. Solved
+[`read_published_interval`](@ref AustralianElectricityMarkets.read_published_interval) so that solved and published outcomes compare by a join. Solved
 prices carry `ROP` only, with no `RRP`.
 
 # Arguments

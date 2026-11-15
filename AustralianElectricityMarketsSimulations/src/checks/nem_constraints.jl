@@ -219,7 +219,7 @@ A template with no `GenericConstraint` service model reports the unavailable con
 caller's template or the expanded template of a built model alike.
 
 # Arguments
-- `sys`: the replay system built by [`nem_system`](@ref).
+- `sys`: the replay system built by [`nem_system`](@ref AustralianElectricityMarkets.nem_system).
 - `template`: the `PSI.ProblemTemplate` the replay builds, e.g. [`template_nemde`](@ref)().
 
 # Returns

@@ -146,7 +146,7 @@ end
 
 Adds `param`, keyed by `model`'s component type and `meta`, unless it exists, through PowerSimulations'
 time-series parameter `add_parameters!` for the available components of `model` carrying a `ts_name`
-forecast, on the axes of [`_fcas_parameter_axes`](@ref).
+forecast, on the axes of `_fcas_parameter_axes`.
 
 # Returns
 `nothing`.

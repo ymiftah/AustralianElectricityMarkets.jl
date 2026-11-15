@@ -164,7 +164,9 @@ end #hide
 #
 # The starting mode and minutes in mode come from the previous interval's `DISPATCHMODE` and
 # `DISPATCHMODETIME` in `DISPATCHLOAD`, the minutes capped at the length of the mode. The
-# profile and ``M`` come from the unit's energy offer in `BIDDAYOFFER_D`. Pass
+# profile and ``M`` come from the version of the unit's energy offer in force at the interval:
+# the `BIDDAYOFFER` row whose `OFFERDATE` equals the `LASTCHANGED` of the interval's
+# `BIDPEROFFER_D` row, so a rebid during the day changes them. Pass
 # `fast_start = false` to `nem_dispatch_sequence`, or `--fast-start false` to the batch
 # runner, to solve one model per interval, without profiles.
 #
@@ -193,8 +195,8 @@ end #hide
 #
 # | Symbol | Quantity | Table | Columns | Time key | Role |
 # | --- | --- | --- | --- | --- | --- |
-# | ``M`` | Minimum load | `BIDDAYOFFER_D` | `MINIMUMLOAD`, with `BIDTYPE = ENERGY` | Trading day | Input |
-# | ``T_1`` to ``T_4`` | Profile durations, minutes | `BIDDAYOFFER_D` | `T1`, `T2`, `T3`, `T4` | Trading day | Input |
+# | ``M`` | Minimum load | `BIDDAYOFFER` | `MINIMUMLOAD`, with `BIDTYPE = ENERGY` | Offer version in force | Input |
+# | ``T_1`` to ``T_4`` | Profile durations, minutes | `BIDDAYOFFER` | `T1`, `T2`, `T3`, `T4` | Offer version in force | Input |
 # | | Availability | `BIDPEROFFER_D` | `MAXAVAIL` | Trading day and interval end | Input |
 # | ``p^0_u`` | Metered starting output | `DISPATCHLOAD` | `INITIALMW` | Interval end | Input |
 # | | Mode and minutes in mode at the start | `DISPATCHLOAD` | `DISPATCHMODE`, `DISPATCHMODETIME` | Interval end of the **previous** interval | Input |

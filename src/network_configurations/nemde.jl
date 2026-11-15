@@ -2,7 +2,7 @@
     NEMDEConfiguration()
 
 Constructs a constrained network with the demand, bids, dispatch inputs and loss data needed
-for historical dispatch simulation. Pass `date_range` to [`nem_system`](@ref).
+for historical dispatch simulation. Pass `date_range` to [`nem_system`](@ref AustralianElectricityMarkets.nem_system).
 
 # Example
 ```julia

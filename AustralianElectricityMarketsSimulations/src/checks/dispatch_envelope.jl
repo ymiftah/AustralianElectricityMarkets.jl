@@ -7,7 +7,7 @@ ramping are resolved by the model's priced violation variables.
 
 # Arguments
 - `template`: the dispatch template.
-- `sys`: the system built by [`nem_system`](@ref), whose time series are checked.
+- `sys`: the system built by [`nem_system`](@ref AustralianElectricityMarkets.nem_system), whose time series are checked.
 
 # Returns
 `nothing`; invalid or missing energy inputs, or a system without replay intervals, raise `ArgumentError`.

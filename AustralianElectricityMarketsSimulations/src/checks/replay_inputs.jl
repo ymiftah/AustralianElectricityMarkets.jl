@@ -8,7 +8,7 @@ of the setters that built it: with a `GenericConstraint` service model, [`get_mi
 `SPDCONNECTIONPOINTCONSTRAINT`, `SPDREGIONCONSTRAINT`, `SPDINTERCONNECTORCONSTRAINT`); the
 dispatch-limit series of the dispatch-limits build (`DISPATCHLOAD`) on every dispatch
 device, the resolution and five-minute alignment of the series keyed by each device's
-[`NEMObservedState`](@ref); and, with a `PSY.AreaInterchange` device model, the offers of
+[`NEMObservedState`](@ref AustralianElectricityMarkets.NEMObservedState); and, with a `PSY.AreaInterchange` device model, the offers of
 `set_mnsp_offers!` (`INTERCONNECTORCONSTRAINT`, `MNSP_INTERCONNECTOR`, `MNSP_DAYOFFER`,
 `MNSP_BIDOFFERPERIOD`, `DISPATCH_MNSPBIDTRK`) on every available MNSP.
 
@@ -40,7 +40,7 @@ end
 """
     _check_state_series_alignment(device)
 
-Verifies that the series keyed by `device`'s [`NEMObservedState`](@ref) are dispatch-interval series:
+Verifies that the series keyed by `device`'s [`NEMObservedState`](@ref AustralianElectricityMarkets.NEMObservedState) are dispatch-interval series:
 each is a five-minute `SingleTimeSeries` on a five-minute boundary, so the per-step state read lands
 on the interval it names.
 

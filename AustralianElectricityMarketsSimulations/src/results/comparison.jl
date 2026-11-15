@@ -5,7 +5,7 @@ Joins the published outcome of a set of intervals onto its solved outcome, one r
 Solved values a model does not produce are `missing`.
 
 # Arguments
-- `published`: the outcome from [`read_published_interval`](@ref) over the intervals.
+- `published`: the outcome from [`read_published_interval`](@ref AustralianElectricityMarkets.read_published_interval) over the intervals.
 - `solved`: the outcome from [`read_solved_interval`](@ref) over the same intervals.
 
 # Returns

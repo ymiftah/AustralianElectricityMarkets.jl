@@ -270,6 +270,12 @@ PSY.set_description!(value::GenericConstraint, val) = value.description = val
 
 get_terms(value::GenericConstraint) = value.terms
 
+"""
+    get_fcas_requirements(value::GenericConstraint)
+
+The FCAS requirements of `value`: the `(region, service)` FCAS markets whose prices the constraint
+governs, empty for a constraint that sets no FCAS price.
+"""
 get_fcas_requirements(value::GenericConstraint) = value.fcas_requirements
 
 PSY.get_ext(value::GenericConstraint) = value.ext
