@@ -43,7 +43,7 @@ function _nem_network(db; replay::Bool = false, time_series_in_memory = true, as
     sys = System(BASE_POWER; time_series_in_memory = time_series_in_memory, kwargs...)
     _add_buses!(sys, bus_df)
     _add_loads!(sys, loads_df)
-    _add_generation!(sys, gen_df)
+    _add_generation!(sys, gen_df; legacy_batteries = replay)
     _add_branches!(sys, branch_df)
     _add_batteries!(sys, batteries_df)
     _add_scheduled_loads!(sys, scheduled_loads_df; replay)

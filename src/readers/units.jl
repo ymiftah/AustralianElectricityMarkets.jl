@@ -11,6 +11,29 @@ end
 
 
 """
+    _registered_duids(db, duids, as_of, through) -> Set{String}
+
+The DUIDs of `duids` that `DUDETAILSUMMARY` (latest archive) registers at some instant of
+`[as_of, through]`.
+"""
+function _registered_duids(db, duids, as_of, through)
+    isempty(duids) && return Set{String}()
+    summary_table = read_hive(db, :DUDETAILSUMMARY)
+    listed = join(("'" * replace(String(d), "'" => "''") * "'" for d in unique(duids)), ", ")
+    registered = _query(
+        db,
+        """
+        SELECT DISTINCT DUID FROM $summary_table
+        WHERE archive_month = (SELECT max(archive_month) FROM $summary_table)
+          AND DUID IN ($listed) AND $(_registration_window_sql())
+        """,
+        [through, as_of],
+    )
+    return Set{String}(registered.DUID)
+end
+
+
+"""
     read_units(db; as_of = nothing, through = nothing)
 
 Reads commissioned unit metadata, one row per `DUID` including scheduled loads. Scheduled loads

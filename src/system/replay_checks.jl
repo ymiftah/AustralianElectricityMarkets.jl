@@ -10,7 +10,8 @@ const _NEM_DEVICE_RECORDS = (
     _check_nemde_replay_inputs(sys::PSY.System) -> Nothing
 
 Verifies that `sys` holds every input a NEMDE dispatch replay reads: the typed records of every NEM
-dispatch device, a constraint build report with nothing missing, defaulted, skipped or dropped, and
+dispatch device, a constraint build report with nothing missing, defaulted or skipped and no dropped term
+of a unit registered over the range, and
 two directional links with a bid and observed state on every MNSP.
 
 # Arguments
@@ -87,12 +88,13 @@ function _check_nemde_constraint_report(sys)
                 "or build with every unit, region and interconnector the constraints name",
         ),
     )
-    dropped = filter(:constraint => c -> c ∉ vacuous, get_dropped_terms(sys))
+    # A dropped term of a unit not registered over the range (retired or not yet registered) contributes zero.
+    dropped = filter([:constraint, :registered] => (c, r) -> c ∉ vacuous && r, get_dropped_terms(sys))
     isempty(dropped.constraint) || throw(
         ArgumentError(
-            "nem_system: $(nrow(dropped)) unit term(s) were dropped from built constraints: " *
+            "nem_system: $(nrow(dropped)) term(s) of units registered over the range were dropped from built constraints: " *
                 join(("$(row.constraint): $(row.key)" for row in eachrow(dropped)), ", ") *
-                "; build with every unit the constraints name",
+                "; build with every registered unit the constraints name",
         ),
     )
     return

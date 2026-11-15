@@ -12,7 +12,7 @@ built constraints the replay inputs made unavailable.
 - `missing_constraint_intervals`: the dispatch intervals with no invoked constraint.
 - `defaulted_constraint_weights`: the versioned names built with the default `constraint_weight`.
 - `dropped_terms`: one row per unit term dropped from a built constraint, with `constraint`, `kind`,
-  `key`, `bid_type` and `factor`.
+  `key`, `bid_type`, `factor` and `registered` (the unit is registered at some interval of the build range).
 - `unavailable_constraints`: one row per built constraint set unavailable by the replay inputs, with
   `constraint` and `reason` (`"never_invoked"` or `"no_available_device"`).
 """

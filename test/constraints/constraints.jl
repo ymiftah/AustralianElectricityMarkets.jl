@@ -788,7 +788,9 @@ end
     row = only(filter(:constraint => ==(vname("N_PHANTOM_TEST")), get_skipped_constraints(sys)))
     @test row.reason == :vacuous_unknown_duid
 
-    # The strict invoked-coverage check accepts the vacuous constraint, not the dropped mixed one.
+    # PHANTOM1 is registered (DUDETAILSUMMARY) but not built: the check accepts the vacuous constraint, not the
+    # dropped mixed one.
+    @test all(get_dropped_terms(sys).registered)
     err = try
         check(sys)
         nothing
@@ -798,6 +800,24 @@ end
     @test err isa ArgumentError
     @test occursin(vname("N_ONE_PHANTOM_TERM"), err.msg)
     @test !occursin(vname("N_PHANTOM_TEST"), err.msg)
+
+    # The dropped term of a unit not registered over the range contributes zero and passes the check.
+    report = AustralianElectricityMarkets.get_build_report(sys)
+    AustralianElectricityMarkets.set_build_report!(
+        sys,
+        AustralianElectricityMarkets.NEMBuildReport(;
+            skipped_constraints = report.skipped_constraints,
+            missing_constraint_intervals = report.missing_constraint_intervals,
+            defaulted_constraint_weights = report.defaulted_constraint_weights,
+            dropped_terms = [merge(t, Dict{String, Any}("registered" => false)) for t in report.dropped_terms],
+            unavailable_constraints = report.unavailable_constraints,
+        ),
+    )
+    @test isnothing(check(sys))
+    registered = AustralianElectricityMarkets.Readers._registered_duids
+    @test registered(db, ["PHANTOM1", "BW01", "NOT_A_DUID"], first(date_range), last(date_range)) == Set(["PHANTOM1", "BW01"])
+    @test registered(db, ["BW01"], DateTime(1990, 1, 1), DateTime(1990, 1, 2)) == Set{String}()
+    @test isempty(registered(db, String[], first(date_range), last(date_range)))
 
     # A violated zero left-hand side (0 >= 5) is never silently omitted.
     sys, added, skipped = build_with_rhs(5.0)

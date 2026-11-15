@@ -33,8 +33,9 @@ absent from `sys`.
 - `sys`: a `System` built by `nem_system`.
 
 # Returns
-A `DataFrame` with `constraint` (versioned name), `kind`, `key`, `bid_type` and `factor`, one row
-per dropped term. Empty when nothing was dropped or no constraints were built into `sys`.
+A `DataFrame` with `constraint` (versioned name), `kind`, `key`, `bid_type`, `factor` and `registered`
+(whether `DUDETAILSUMMARY` registers the unit at some interval of the build range; `true` when not
+recorded), one row per dropped term. Empty when nothing was dropped or no constraints were built into `sys`.
 """
 function get_dropped_terms(sys)
     rows = get_build_report(sys).dropped_terms
@@ -44,6 +45,7 @@ function get_dropped_terms(sys)
         key = String[r["key"] for r in rows],
         bid_type = String[r["bid_type"] for r in rows],
         factor = Float64[r["factor"] for r in rows],
+        registered = Bool[get(r, "registered", true) for r in rows],
     )
 end
 

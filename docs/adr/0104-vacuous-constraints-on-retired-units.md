@@ -6,9 +6,11 @@ Accepted.
 
 ## Context
 
-In mid-2024 AEMO re-registered batteries as single bidirectional units (BDU) under the Integrating
-Energy Storage Systems (IESS) rule change. The former generator and load DUIDs (for example `VBBG1`,
-`BULBESG1`, `BBATTERY`, `TB2BG1`) are no longer registered and are absent from a replay `System`. Some
+From mid-2024 AEMO re-registered batteries as single bidirectional units (BDU) under the Integrating
+Energy Storage Systems (IESS) rule change, one battery at a time through 2024 and 2025. Once a battery
+moved, its former generator and load DUIDs (for example `VBBG1`, `BULBESG1`) are no longer registered
+and are absent from a replay `System`. Until it moved they were registered and dispatched; see
+[0105](0105-split-battery-units-and-unregistered-terms.md) for how those are built. Some
 GENCONDATA versions, still invoked in late 2024, keep naming them (for example
 `#BBATTERY_E@2023-09-14#1`, `F_V_BULBESG1_LREG@2024-03-25#1`, `V_VBBG1_ZERO@2024-03-25#1`), and every
 term of such a constraint is a unit term on one of those DUIDs.

@@ -250,9 +250,16 @@ function get_generators_dataframe(bus_df, units)
     units = _map_unit_technology(units)
     # Scheduled loads (some have a GENUNITS row) are built by `get_scheduled_loads_dataframe`.
     "DISPATCHTYPE" in names(units) && subset!(units, :DISPATCHTYPE => ByRow(!isequal("LOAD")))
+    # A battery registered as separate generator and load units: its generator half has no storage data.
+    units.legacy_battery = if "DISPATCHTYPE" in names(units)
+        isequal.(units.TECHNOLOGY, Ref(PrimeMovers.BA)) .& isequal.(units.DISPATCHTYPE, "GENERATOR")
+    else
+        falses(nrow(units))
+    end
 
     return @chain units begin
         select!(
+            :legacy_battery,
             :REGIONID => ByRow(x -> x * GEN_SUFFIX) => :bus_name,
             :REGIONID => :region,
             :DUID => :name,
@@ -554,7 +561,7 @@ end
 
 
 """
-    _add_generation!(sys, gen_df)
+    _add_generation!(sys, gen_df; legacy_batteries = false)
 
 Adds the renewable, hydro and thermal generators of `gen_df` to `sys` with zero operation costs,
 each with its station attached as a [`NEMStation`](@ref). `_set_isp_generation_costs!` replaces
@@ -563,11 +570,13 @@ those costs with the ISP operating costs.
 # Arguments
 - `sys`: The `PowerSystems.System` object.
 - `gen_df`: A `DataFrame` of generator data.
+- `legacy_batteries`: also add the generator unit of each battery registered as separate generator
+  and load units, as a `ThermalStandard` with the battery prime mover.
 
 # Returns
 `sys`.
 """
-function _add_generation!(sys, gen_df)
+function _add_generation!(sys, gen_df; legacy_batteries::Bool = false)
     stations = Dict{String, NEMStation}()
     renewable = subset(
         gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:RenewableDispatch]))
@@ -620,7 +629,9 @@ function _add_generation!(sys, gen_df)
     _attach_stations!(sys, hydro, stations)
 
     thermal = subset(
-        gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:ThermalStandard]))
+        gen_df,
+        [:technology, :legacy_battery] =>
+            ByRow((t, b) -> t in MATCH_TYPE_TO_PRIMEMOVER[:ThermalStandard] || (legacy_batteries && b)),
     )
     thermal_components = (
         ThermalStandard(;

@@ -1017,6 +1017,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A replay network builds the generator unit of a battery still registered as a separate scheduled generator and scheduled load (energy source `Battery Storage`, `DISPATCHTYPE = GENERATOR`, no storage data) as a `ThermalStandard` with prime mover `BA`. Neither the battery nor the generator builder took these units, so replays of late 2024 (for example `RESS1G`, `TB2BG1`, `BBATTERY` on 2024-10-05) left out units NEMDE dispatched. Regional networks still omit them.
+
+- `get_dropped_terms` has a `registered` column: whether `DUDETAILSUMMARY` registers the unit at some interval of the build range. `nem_system` and `check_template_against_sys` fail only on dropped terms of registered units; a term of a unit not registered over the range contributes zero, as in nempy. `check_template_against_sys` also accepts `:vacuous_unknown_duid` skips.
+
 - `nem_system` no longer fails on an invoked generic constraint whose every term names a unit absent from the `System` (for example batteries re-registered as bidirectional units in 2024) when its zero left-hand side satisfies the constraint at every invoked interval: it is skipped with the new reason `:vacuous_unknown_duid` and its dropped terms are still recorded. A violated one still throws, naming the constraint. AEMO *Schedule of Constraint Violation Penalties* prices violations of generic constraints; nempy leaves an empty-left-hand-side row in the LP.
 
 - The `HiveConfiguration` docstring gives the `filesystem` default as `"file"`, and the `AEMDB`, `populate` and internal `populate` helper docstrings follow the reference format.

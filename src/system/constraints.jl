@@ -265,7 +265,8 @@ the constraints given the default weight 1.0 for a NULL `GENERICCONSTRAINTWEIGHT
 ([`get_defaulted_constraint_weights`](@ref)) are recorded the same way.
 
 A unit term whose DUID is absent from `sys` is dropped, as nempy does for a unit that is not in the
-dispatch, and recorded in the build report ([`get_dropped_terms`](@ref)).
+dispatch, and recorded in the build report ([`get_dropped_terms`](@ref)) with whether `DUDETAILSUMMARY`
+registers the unit at some interval of `date_range`.
 An unresolved region or interconnector term, or a constraint with no resolvable term, skips the constraint.
 A constraint whose every term is a dropped unit term has a zero left-hand side; when `0 sense RHS` holds
 at every invoked interval it cannot bind and is skipped as `:vacuous_unknown_duid` (its dropped terms are
@@ -481,6 +482,13 @@ function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; interven
             reason_counts[reason] = get(reason_counts, reason, 0) + 1
         end
         @warn "nem constraints: skipped $(length(skipped)) of $(nrow(gencon_versions)) invoked constraint versions (by reason: $(join(("$r=$n" for (r, n) in sort(collect(reason_counts))), ", "))); see get_skipped_constraints" reason_counts
+    end
+
+    # A dropped DUID registered in the window is a unit the build left out; one that is not was retired or not yet registered.
+    dropped_keys = String[term["key"] for terms in values(merge(dropped, vacuous_dropped)) for term in terms]
+    registered = Readers._registered_duids(db, dropped_keys, start_date, last(date_range) - resolution)
+    for terms in values(merge(dropped, vacuous_dropped)), term in terms
+        term["registered"] = term["key"] in registered
     end
 
     if !isempty(dropped)

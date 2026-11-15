@@ -25,6 +25,25 @@
         @test df.base_power[1] == 100.0
     end
 
+    @testset "generator unit of a battery registered as separate generator and load units" begin
+        RM = AustralianElectricityMarkets.RegionModel
+        bus_df = RM.get_bus_dataframe(db)
+        units = read_units(db)
+        # BW02 as the generator half of a split battery: a battery energy source, no storage data.
+        units.CO2E_ENERGY_SOURCE = [d == "BW02" ? "Battery Storage" : s for (d, s) in zip(units.DUID, units.CO2E_ENERGY_SOURCE)]
+        gen_df = RM.get_generators_dataframe(bus_df, units)
+        @test gen_df.legacy_battery == (gen_df.name .== "BW02")
+        for legacy_batteries in (false, true)
+            sys = System(100.0)
+            RM._add_buses!(sys, bus_df)
+            RM._add_generation!(sys, gen_df; legacy_batteries)
+            bw02 = get_component(Device, sys, "BW02")
+            @test isnothing(bw02) == !legacy_batteries
+            legacy_batteries && @test bw02 isa ThermalStandard && get_prime_mover_type(bw02) == PrimeMovers.BA
+            @test isnothing(get_component(Device, sys, "BW01"))  # a bidirectional unit is a storage, not a generator
+        end
+    end
+
     @testset "read_units keeps units without a GENUNITS row" begin
         units = read_units(db)
         # PUMP2 is a scheduled load with no GENUNITS/DUALLOC row, so no technology or fuel.

@@ -77,7 +77,8 @@ function _check_state_series_alignment(device)
 end
 
 
-# The constraint-build records of `sys` are empty: every invoked constraint, weight and term was read.
+# The constraint-build records of `sys` are empty: every invoked constraint, weight and term was read. A vacuous
+# constraint (every unit unknown, satisfiable) and a term of a unit not registered over the range are allowed.
 function _check_replay_constraint_inputs(sys::PSY.System)
     missing_intervals = get_missing_constraint_intervals(sys)
     isempty(missing_intervals) || throw(
@@ -93,7 +94,9 @@ function _check_replay_constraint_inputs(sys::PSY.System)
                 "repopulate GENCONDATA with populate(...; force_new = true)",
         ),
     )
-    skipped_inputs = get_skipped_constraints(sys)
+    all_skipped = get_skipped_constraints(sys)
+    vacuous = Set(all_skipped.constraint[all_skipped.reason .== :vacuous_unknown_duid])
+    skipped_inputs = filter(:reason => !=(:vacuous_unknown_duid), all_skipped)
     isempty(skipped_inputs) || throw(
         ArgumentError(
             "check_template_against_sys: incomplete constraint inputs: $(join(skipped_inputs.constraint, ", ")); see " *
@@ -101,7 +104,7 @@ function _check_replay_constraint_inputs(sys::PSY.System)
                 "SPD*CONSTRAINT tables with populate(...; force_new = true)",
         ),
     )
-    dropped_inputs = get_dropped_terms(sys)
+    dropped_inputs = filter([:constraint, :registered] => (c, r) -> c ∉ vacuous && r, get_dropped_terms(sys))
     isempty(dropped_inputs) || throw(
         ArgumentError(
             "check_template_against_sys: incomplete constraint terms: " *
