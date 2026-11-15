@@ -158,6 +158,25 @@ function PSI.update_parameter_values!(
     return
 end
 
+# The closed-loop input values of the step at `t`, shared by the parameters that read one series (the four FCAS
+# offer parameters read one effective-offer series); a new step starts a new cache.
+function _closed_loop_cache!(model, t::DateTime)
+    ext = PSI.get_ext(PSI.get_settings(model))
+    entry = get(ext, "closed_loop_cache", nothing)
+    if isnothing(entry) || first(entry) != t
+        entry = (t, Dict{Tuple{DataType, String, String}, Any}())
+        ext["closed_loop_cache"] = entry
+    end
+    return last(entry)
+end
+
+# Each device's prepared closed-loop inputs, read once for the whole simulation.
+function _closed_loop_inputs!(model, device, base::Float64)
+    ext = PSI.get_ext(PSI.get_settings(model))
+    store = get!(() -> Dict{Tuple{DataType, String}, Any}(), ext, "closed_loop_inputs")
+    return get!(() -> AustralianElectricityMarkets.closed_loop_inputs(device, base), store, (typeof(device), PSY.get_name(device)))
+end
+
 function _update_state_dependent_parameter!(model, param_container, param::P, ::Type{T}, series, state) where {P, T}
     container = PSI.get_optimization_container(model)
     attributes = PSI.get_attributes(param_container)
@@ -169,11 +188,14 @@ function _update_state_dependent_parameter!(model, param_container, param::P, ::
     output = _solved_output(state, T)
     device_model = PSI.get_model(PSI.get_template(model), T)
     written = Dict{String, Tuple{String, Any}}()
+    cache = _closed_loop_cache!(model, t)
     for device in PSI.get_available_components(device_model, PSI.get_system(model))
         name = PSY.get_name(device)
         uuid = get(attributes.component_name_to_ts_uuid, name, nothing)
         isnothing(uuid) && continue
-        value = AustralianElectricityMarkets.closed_loop_input(device, series, t, output(name) * base, base)
+        value = get!(cache, (T, name, series)) do
+            AustralianElectricityMarkets.closed_loop_input(_closed_loop_inputs!(model, device, base), series, t, output(name) * base)
+        end
         isnothing(value) && continue
         if haskey(written, uuid)
             other, previous = written[uuid]

@@ -126,16 +126,18 @@ function _fixed_load_step_series(device, stamps::AbstractVector{DateTime}; state
     gens = _fixed_load_mw_series(device, OfferSide.GEN, stamps)
     loads = _fixed_load_mw_series(device, OfferSide.LOAD, stamps)
     storage = device isa PSY.Storage
-    return map(eachindex(stamps)) do i
-        state = states[i]
-        gen, load = gens[i], loads[i]
-        target = if storage
-            effective_fixed_load(gen, state) - effective_fixed_load(load, state)
-        else
-            effective_fixed_load(gen, state) + effective_fixed_load(load, state)
-        end
-        return (; target, invoked = fixed_load_invoked(gen, state) || fixed_load_invoked(load, state))
+    return [_fixed_load_step_at(gens[i], loads[i], states[i], storage) for i in eachindex(stamps)]
+end
+
+
+# The fixed-loading target (MW, net injection axis) and invocation of one interval from each side's raw loading.
+function _fixed_load_step_at(gen::Real, load::Real, state::NEMUnitState, storage::Bool)
+    target = if storage
+        effective_fixed_load(gen, state) - effective_fixed_load(load, state)
+    else
+        effective_fixed_load(gen, state) + effective_fixed_load(load, state)
     end
+    return (; target, invoked = fixed_load_invoked(gen, state) || fixed_load_invoked(load, state))
 end
 
 

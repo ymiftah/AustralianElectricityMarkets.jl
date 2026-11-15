@@ -71,23 +71,36 @@ function _effective_ramp_rates(device, up, down, interval_hours::Real; initial =
             [effective_ramp_limit(bid_down[i], down.values[i]) for i in eachindex(down.values)],
         )
     end
-    minutes = interval_hours * 60
-    gen_up = _bid_ramp_rates(device, OfferSide.GEN, :roc_up, up)
-    gen_down = _bid_ramp_rates(device, OfferSide.GEN, :roc_down, up)
-    load_up = _bid_ramp_rates(device, OfferSide.LOAD, :roc_up, up)
-    load_down = _bid_ramp_rates(device, OfferSide.LOAD, :roc_down, up)
+    inputs = _storage_ramp_inputs(device, up, interval_hours)
     initial = something(initial, _aligned_values(device, get_observed_state(device).initial_mw, up))
-    down_telemetry = _aligned_values(device, _nem_unit_data(device).telemetry.ramp_down_limit, up)
+    rates = [_storage_ramp_at(inputs, i, initial[i]) for i in eachindex(up.values)]
+    return first.(rates), last.(rates)
+end
+
+
+# The state-independent inputs of a storage device's composite ramp over the grid of `up`: its bid rates on both
+# sides in MW/min and its telemetered limits in MW/h.
+function _storage_ramp_inputs(device, up, interval_hours::Real)
+    return (;
+        minutes = interval_hours * 60,
+        gen_up = _bid_ramp_rates(device, OfferSide.GEN, :roc_up, up),
+        gen_down = _bid_ramp_rates(device, OfferSide.GEN, :roc_down, up),
+        load_up = _bid_ramp_rates(device, OfferSide.LOAD, :roc_up, up),
+        load_down = _bid_ramp_rates(device, OfferSide.LOAD, :roc_down, up),
+        up = up.values,
+        down = _aligned_values(device, _nem_unit_data(device).telemetry.ramp_down_limit, up),
+    )
+end
+
+
+# A storage device's ramp limits in MW/h at interval `i` for the starting output `initial_mw`, in MW.
+function _storage_ramp_at(inputs, i::Int, initial_mw::Real)
     # AEMO Dispatch Procedure (SO_OP_3705) Appendix C: the composite rate of a unit bid on both
     # sides, compared with its SCADA ramp rate.
-    rates = [
-        composite_ramp_rates(gen_up[i], gen_down[i], load_up[i], load_down[i], minutes, NEMUnitState(initial[i], 0))
-            for i in eachindex(up.values)
-    ]
-    return (
-        [effective_ramp_limit(rates[i][1], up.values[i]) for i in eachindex(rates)],
-        [effective_ramp_limit(rates[i][2], down_telemetry[i]) for i in eachindex(rates)],
+    up, down = composite_ramp_rates(
+        inputs.gen_up[i], inputs.gen_down[i], inputs.load_up[i], inputs.load_down[i], inputs.minutes, NEMUnitState(Float64(initial_mw), 0),
     )
+    return effective_ramp_limit(up, inputs.up[i]), effective_ramp_limit(down, inputs.down[i])
 end
 
 
