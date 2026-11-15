@@ -17,6 +17,7 @@ _nem_unit_slack_cvp(::_EnergyOfferVariant) = ENERGY_OFFER_CVP_FACTOR
 _nem_unit_slack_cvp(variant::_EnergyLimitVariant) = _energy_limit_cvp(variant)
 _nem_unit_slack_cvp(::_FixedLoadVariant) = FIXED_LOADING_CVP_FACTOR
 _nem_unit_slack_cvp(::_UnitRampVariant) = UNIT_RAMP_CVP_FACTOR
+_nem_unit_slack_cvp(::_FastStartVariant) = FAST_START_CVP_FACTOR
 
 
 """

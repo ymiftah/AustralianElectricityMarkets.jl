@@ -138,6 +138,11 @@ julia -O1 --project=AustralianElectricityMarketsSimulations/test \
 `--time-series-in-memory true` holds the time series in memory (default `false`, on disk), which cuts
 per-step parameter updates but raises peak memory.
 
+Every mode builds its decision models with `nem_dispatch_sequence`. When the system has a unit whose energy
+offer carries a fast-start profile, each interval runs NEMDE's two dispatch runs: the commitment run
+(`fast_start_commitment`) and then the dispatch run (`dispatch`), which holds the fast-start units to their
+inflexibility profile. The outputs, comparisons and violations are the dispatch run's.
+
 `--closed-loop true` replays each interval after the first from the previous interval's solved output instead
 of AEMO's observed state (`NEMClosedLoopDispatchProblem`). It is a counterfactual run: its gap to NEMDE grows with
 the gap between the solved and metered trajectories. Each day's `provenance.toml` records `closed_loop`, and the
@@ -171,14 +176,16 @@ julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/replay_
 ```
 
 The selected intervals are grouped by trading day, and each day is one worker. Each selected interval is
-its own chunk, with a system built over that interval alone and a one-interval open-loop `DecisionModel`,
-built from AEMO's observed state, with no `Simulation`. This is the same independent solve as the nempy
+its own chunk, with a system built over that interval alone and a one-step open-loop simulation of
+`nem_dispatch_sequence`, built from AEMO's observed state: NEMDE's commitment and dispatch runs when the
+system has a fast-start unit, one model otherwise. This is the same independent solve as the nempy
 benchmark, and a gap in the published inputs between two selected intervals (for example the missing
 `BIDPEROFFER_D` rows at 13:30 to 13:45 on 2024-11-19) cannot fail them. A system covering the day's
 selected intervals builds in about the same total time but reads every interval in between.
 The day folders hold the same CSVs as a whole-day run, restricted to the selected intervals (`chunks.csv`
-has one row per interval; `simulation_build_s` is the model build and `execute_s` the solve). There are
-no native PSI simulation folders, `interval_timings.csv` or `timers_*.toml` files. `provenance.toml`
+has one row per interval; `simulation_build_s` is the build of both models and `execute_s` their solves).
+Each interval's simulation folder is removed once read, so there are no native PSI simulation folders,
+`interval_timings.csv` or `timers_*.toml` files. `provenance.toml`
 records the sampling settings under `interval_sampling`. `scripts/simulation_statistics.jl` reads the run
 unchanged. `benchmarking/` has the interval list of nempy's 2024 H2 benchmark.
 

@@ -24,7 +24,7 @@ end
 # Holds `values`, natural units, as the series of a toy unit's telemetry or observed-state `field`, and
 # rebuilds the struct to hold its key; other fields keep their values or take the defaults.
 function set_toy_unit_field!(sys, device, stamps, field::Symbol, values)
-    observed = field in (:initial_mw, :dispatch_mode)
+    observed = field in (:initial_mw, :dispatch_mode, :dispatch_mode_time)
     names = observed ? AustralianElectricityMarkets.NEM_OBSERVED_SERIES : AustralianElectricityMarkets.NEM_TELEMETRY_SERIES
     name = getproperty(names, field)
     AustralianElectricityMarkets.replace_single_series!(
@@ -85,8 +85,8 @@ _has_nan(value::Tuple) = any(isnan, value)
 
 function _toy_observed_fields(device)
     current = _toy_unit_field(device, :observed_state)
-    isnothing(current) && return (initial_mw = 0.0, dispatch_mode = 0)
-    return (initial_mw = current.initial_mw, dispatch_mode = current.dispatch_mode)
+    isnothing(current) && return (initial_mw = 0.0, dispatch_mode = 0, dispatch_mode_time = 0.0)
+    return (initial_mw = current.initial_mw, dispatch_mode = current.dispatch_mode, dispatch_mode_time = current.dispatch_mode_time)
 end
 
 # The two `5_bus_hydro_ed_sys` units the toy keeps; both sit on bus1.
@@ -589,11 +589,11 @@ end
 
 # Records an energy bid of `device` on `direction`, with `curves` (one per stamp, as offered) and
 # `max_avail` (MW per stamp), `roc_up`/`roc_down` (MW/min per stamp, `NaN` for no bid ramp) and unit
-# loss factors of 1. `fixed_load`, when given, is the `FIXEDLOAD`, MW per stamp; `fast_start_profile`, when
-# given, is a `FastStartProfile` held as a static bid value.
+# loss factors of 1. `fixed_load`, when given, is the `FIXEDLOAD`, MW per stamp; `fast_start_profile` and
+# `minimum_load`, when given, are a `FastStartProfile` and a `MINIMUMLOAD` in MW held as static bid values.
 function _toy_energy_bid!(
         sys, device, direction, stamps, curves, max_avail;
-        roc_up = NaN, roc_down = NaN, fixed_load = nothing, fast_start_profile = nothing,
+        roc_up = NaN, roc_down = NaN, fixed_load = nothing, fast_start_profile = nothing, minimum_load = nothing,
     )
     AEM = AustralianElectricityMarkets
     field(f::Symbol) = AEM.bid_series_name(BidType.ENERGY, f, direction)
@@ -614,7 +614,7 @@ function _toy_energy_bid!(
         direction, offer_curves = AEM._series_key(device, field(:offer_curves)),
         max_avail = AEM._series_key(device, field(:max_avail)),
         roc_up = AEM._series_key(device, field(:roc_up)), roc_down = AEM._series_key(device, field(:roc_down)),
-        fixed_load = fixed_load_key, fast_start_profile,
+        fixed_load = fixed_load_key, fast_start_profile, minimum_load,
     )
     AEM._set_energy_bid!(AEM._nem_offer_cost(device), bid)
     current = AEM.has_registration(device) ? AEM.get_registration(device).schedule_type : ScheduleType.SCHEDULED

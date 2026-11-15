@@ -256,7 +256,8 @@ end
     PSI.construct_device!(container, sys, ::PSI.ModelConstructStage, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_model)
 
 Model stage for [`AbstractNEMDispatch`](@ref): the elastic energy availability constraints, the ramp
-constraint and the energy offer bands and their objective.
+constraint, the fast-start rows of a fast-start run ([`_add_fast_start_rows!`](@ref)) and the energy offer bands
+and their objective.
 
 # Returns
 `nothing`.
@@ -275,6 +276,7 @@ function PSI.construct_device!(
     PSI.add_constraints!(container, NEMUnitConstraint, devices, model, network_model)
 
     PSI.add_constraints!(container, PSI.RampConstraint, PSI.ActivePowerVariable, devices, model, network_model)
+    _add_fast_start_rows!(container, devices, model)
 
     PSI.add_feedforward_constraints!(container, model, devices)
     PSI.objective_function!(container, devices, model, PSI.get_network_formulation(network_model))

@@ -19,7 +19,9 @@ using AustralianElectricityMarkets: _mnsp_bid, _MNSP_DIRECTIONS, BidType, Constr
     energy_offer_sides, FCAS_CAPACITY_CVP_FACTOR, FCAS_RAMPING_CVP_FACTOR, FCAS_MAXAVAIL_CVP_FACTOR,
     FCAS_BDU_RAMPING_CVP_FACTOR, _financial_year_mpc, get_fcas_requirements, get_service, fixed_load_invoked,
     _max_active_power, FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, fcas_effective_series_name, fcas_ramping_series_name,
-    fcas_upper_regulation_service, fcas_offer_sides, _other_regulation
+    fcas_upper_regulation_service, fcas_offer_sides, _other_regulation, FAST_START_CVP_FACTOR, NEM_FAST_START_SERIES,
+    NEMUnitState, has_fast_start_profile, fast_start_unit_inputs, fast_start_end_state, fast_start_envelope,
+    fast_start_ramp_up_limit, fast_start_ramp_exempt
 using Chain
 using DataFrames: DataFrame, ByRow, combine, eachrow, groupby, leftjoin, nrow, rename, select, sort!, transform
 using Dates
@@ -52,6 +54,7 @@ include("types/interconnector_losses.jl")
 include("types/mnsp.jl")
 include("types/mnsp_limits.jl")
 include("types/state.jl")
+include("types/fast_start.jl")
 
 include("formulations/slacks.jl")
 include("formulations/generic_constraints.jl")
@@ -76,6 +79,8 @@ include("templates/template_nemde.jl")
 include("problems/optimizer.jl")
 include("problems/nem_dispatch.jl")
 include("formulations/closed_loop.jl")
+include("formulations/fast_start.jl")
+include("problems/dispatch_sequence.jl")
 include("results/read_results.jl")
 include("results/solved.jl")
 include("results/violations.jl")
@@ -88,6 +93,8 @@ export FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, fcas_effective_series_name, fcas
 export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient, trading_day_steps, replay_chunks
 export NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys, replay_skipped_constraints
 export AbstractNEMDispatchProblem, NEMDispatchProblem, NEMClosedLoopDispatchProblem, nemde_optimizer, NEMDE_HIGHS_OPTIONS
+export nem_dispatch_sequence, FAST_START_COMMITMENT_NAME, FastStartModeTimeSeriesParameter,
+    FastStartCommitmentTargetParameter
 export EnergyOfferBandVariable, EnergyBandWidthParameter
 export EnergyLimitTimeSeriesParameter
 export FixedLoadTimeSeriesParameter, FixedLoadInvokedTimeSeriesParameter

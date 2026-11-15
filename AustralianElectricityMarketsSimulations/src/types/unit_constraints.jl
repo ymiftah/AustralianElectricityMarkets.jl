@@ -12,5 +12,8 @@ device type and row. The key meta names the row, composed with the row's own con
 - `"fixed_load|upper"` and `"fixed_load|lower"`: AEMO's Energy Inflexible Offer rows (*Schedule of
   Constraint Violation Penalty Factors* v8.0, item 13, "Unit = X MW") holding a unit's net energy at its
   fixed loading.
+- `"fast_start|lower"`, `"fast_start|upper"` and `"fast_start|ramp_up"`: a fast-start unit's rows in the dispatch
+  run of [`nem_dispatch_sequence`](@ref), the energy target at least the profile's lower bound, at most its upper
+  bound, and at most the minimum loading plus the ramp-up since the unit left mode 2.
 """
 struct NEMUnitConstraint <: PSI.ConstraintType end

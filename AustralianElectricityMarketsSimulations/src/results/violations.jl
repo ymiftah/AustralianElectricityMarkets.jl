@@ -42,6 +42,8 @@ _nem_unit_violation_family(::FixedLoadSurplusVariant) = ("fixed_load", "up")
 _nem_unit_violation_family(::FixedLoadDeficitVariant) = ("fixed_load", "down")
 _nem_unit_violation_family(::UnitRampUpVariant) = ("unit_ramp", "up")
 _nem_unit_violation_family(::UnitRampDownVariant) = ("unit_ramp", "down")
+_nem_unit_violation_family(::FastStartLowerVariant) = ("fast_start_profile", "down")
+_nem_unit_violation_family(::FastStartUpperVariant) = ("fast_start_profile", "up")
 
 # The family and default direction of a slack key, from its variant for `NEMUnitSlack`, `MNSPSlack`, `InterconnectorFlowSlack` and `FCASSlack`.
 _violation_kind(::Dict, ::Type{NEMUnitSlack}, meta::AbstractString) = _nem_unit_violation_family(_nem_unit_slack_variant(meta))
@@ -101,7 +103,7 @@ the slack table. A generic constraint's slack counts only at the intervals where
 Rows are sorted by `DateTime`, `family`, `name`, `variable` and `direction`.
 
 The families are `"energy_offer"`, `"energy_max_avail"`, `"energy_uigf"`, `"fixed_load"`,
-`"mnsp_max_avail"`, `"mnsp_offer"`, `"mnsp_ramp"`, `"mnsp_fixed_load"`, `"unit_ramp"`,
+`"mnsp_max_avail"`, `"mnsp_offer"`, `"mnsp_ramp"`, `"mnsp_fixed_load"`, `"unit_ramp"`, `"fast_start_profile"`,
 `"interconnector_flow"`, `"fcas_max_avail"`, `"fcas_bdu_ramping"`, `"fcas_joint_ramping"`,
 `"fcas_enablement"`, `"generic_constraint"` and `"area_balance"`. `direction` is `"up"` for a slack
 relaxing a `<=` row and `"down"` for one relaxing a `>=` row; for `"area_balance"`, an equality,

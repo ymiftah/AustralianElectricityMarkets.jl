@@ -104,6 +104,24 @@ starting state into the envelope by calling AEM's kernel, so no rule is implemen
 read, as the closed-loop update does ([0102](0102-closed-loop-replay.md)). Results, gates and checks read run 2.
 PSI's thermal unit-commitment formulations and `SemiContinuousFeedforward` are not used.
 
+As built (`nem_dispatch_sequence`, AEMSim `formulations/fast_start.jl`):
+
+- **One template, a model-level switch.** Both runs build the same template; `DecisionModel{M}(...;
+  fast_start_run = :commitment | :dispatch)` records the run in the model's `"fast_start_run"` setting, read once per
+  build as `"closed_loop"` is. New device formulations would have doubled every `AbstractNEMDispatch` method and
+  the template for a difference of a few rows.
+- **Rows reset per step, not rebuilt.** A simulation builds each model once, and the starting mode, the run-1
+  target and so the envelope change every step. The fast-start units keep their standard ramp rows; each step sets
+  their right-hand sides to the built value or relaxes them, and sets the dispatch run's `fast_start|lower`,
+  `fast_start|upper` and `fast_start|ramp_up` rows. The per-step hook is the update of a
+  `FastStartModeTimeSeriesParameter` (the starting-mode series of the fast-start units), added in both runs. A
+  relaxed row takes `FCAS_INACTIVE_LIMIT_MW`, not `Inf`: PSI's model export cannot write `Inf`.
+- **Feedforward.** Run 2's `FixValueFeedforward` from run 1's `ActivePowerVariable` has the tag
+  `FastStartCommitmentTargetParameter` as its affected value (PSI refuses an empty list). The `FixValueParameter`
+  it adds carries the targets and fixes nothing: AEMSim overrides its update (PSI's asserts a fixed variable) and
+  `add_feedforward_constraints!` for the tag. A standalone run-2 model without the feedforward reads targets of 0.
+- **Batteries** are left out of the fast-start rows; a battery offer with a profile keeps its usual rows.
+
 ### 4. Closed loop
 
 A closed-loop replay keeps AEMO's observed starting mode and time in mode, as [0102](0102-closed-loop-replay.md)
@@ -128,6 +146,36 @@ profile governs a unit on it, and dropping the fixed loading in modes 1 and 2 ca
   unit from its previous target; nempy ramps from the initial MW, and so does the replay.
 - **Commitment threshold.** A unit is committed on any run-1 target above 0.0 MW, as nempy does. An earlier draft
   used 0.005 MW; nempy has no threshold.
+
+## Departure from nempy
+
+- **Regulation joint ramping in run 2.** nempy's `set_joint_ramping_constraints_reg` with
+  `run_type="fast_start_second_run"` drops the rows of units ending in mode 0, 1 or 2 and gives a unit that left
+  mode 2 the raise row `target + raise_reg <= M + rate x time_since_end_of_mode_two`. The replay keeps the
+  starting-mode exemption of run 1 (`fcas_joint_ramping_exempt`, precomputed in the regulation ramping limits) in
+  both runs. They differ only for a unit starting in mode 0, 1 or 2 and ending in mode 3 or 4 that offers
+  regulation in that interval. Follow-up work.
+
+## Verification (2026-11-15, benchmark mode)
+
+| Interval | Published ROP | Replay before | Replay with both runs |
+| --- | --- | --- | --- |
+| 2024-12-13 07:35 | QLD 77.73, NSW 74.74 | QLD +68 | to the cent in every region |
+| 2024-12-15 16:30 | QLD 214.48, NSW 223.34 | NSW +65, VIC -55 | QLD +11.27, NSW +11.74, others to the cent |
+| 2024-12-09 14:55 | QLD 200.00, NSW 171.45 | QLD -100 | QLD -46.17, NSW -41.12, VIC/SA -0.6 |
+
+The two residuals are inputs, not rules: with the named units' profile rows set by hand, both intervals reproduce
+the published prices to the cent.
+
+- 2024-12-15 16:30: W/HOE#1 starts in mode 0, run 1 dispatches it at 205 MW, and run 2 holds it at its mode-2
+  target of 20 MW. NEMDE published 26.31 MW in `DISPATCHMODE` 0, so it did not commit the unit. W/HOE#1 runs in mode
+  0 in 142 intervals of December 2024 (W/HOE#2 178, PUMP2 124, SNAPPER1 263), which the MMS inputs do not explain.
+- 2024-12-09 14:55: CG2 and CG3 (published `DISPATCHMODETIME` 10 in mode 1 at 14:50, offered `T1 = 10`) end in mode
+  2 after 5 minutes in the replay, 62.5 MW, against NEMDE's 1 minute, 12.5 MW; URANQ14 stays in mode 1 from 14:50 to
+  15:00 with `T1 = 6`. Either NEMDE's `T1` differs from the day's `BIDDAYOFFER_D` value (an intraday offer version)
+  or NEMDE reset the units' mode time. BRAEMAR2 (143 MW) and BRAEMAR3 (33 MW) match, so the BRAEMAR2 ramp-base
+  departure above is explained by the ramp from minimum loading: 110 MW plus 11 MW/min over the 3 minutes since
+  mode 2.
 
 ## Consequences
 

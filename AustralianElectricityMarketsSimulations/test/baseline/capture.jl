@@ -81,11 +81,11 @@ function _build(db, steps::StepRange{DateTime}, template, optimizer, folder::Abs
         AEMS.replay_skipped_constraints(sys, template)
     prepare_s = time() - t
     t = time()
-    model = PSI.DecisionModel(
+    # The dispatch run is `DECISION_NAME`; with a fast-start unit, the commitment run precedes it at each step.
+    (; models, sequence, dispatch) = AEMS.nem_dispatch_sequence(
         AEMS.NEMDispatchProblem, template, sys; optimizer, initial_time = first(steps), name = DECISION_NAME,
     )
-    models = PSI.SimulationModels(; decision_models = [model])
-    sequence = PSI.SimulationSequence(; models, ini_cond_chronology = PSI.InterProblemChronology())
+    model = dispatch
     simulation = PSI.Simulation(;
         name = "capture", steps = length(steps), models, sequence, simulation_folder = folder,
         initial_time = first(steps),
@@ -93,7 +93,8 @@ function _build(db, steps::StepRange{DateTime}, template, optimizer, folder::Abs
     status = PSI.build!(simulation; store_systems_in_results = false)
     model_build_s = time() - t
     status == PSI.SimulationBuildStatus.BUILT || error("range from $(first(steps)) failed to build ($status)")
-    return (; sys, model, simulation, skipped, system_build_s, prepare_s, model_build_s)
+    n_models = length(PSI.get_decision_models(models))
+    return (; sys, model, simulation, skipped, system_build_s, prepare_s, model_build_s, n_models)
 end
 
 # Writes `table` as CSV with a header row; missing cells are empty.
@@ -160,6 +161,7 @@ function capture(; hive::AbstractString, start::DateTime, intervals::Integer, ou
             metrics = Dict{String, Any}(
                 "commit" => git.commit,
                 "n_intervals" => length(steps),
+                "n_models" => built.n_models,
                 "key_type_count" => key_types,
                 "system_build_s" => built.system_build_s,
                 "prepare_s" => built.prepare_s,

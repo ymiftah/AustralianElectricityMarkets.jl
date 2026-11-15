@@ -85,10 +85,10 @@ function _replay_chunk(
 
     on_phase(:model_build)
     t1 = time()
-    model = PSI.DecisionModel(problem, template, sys; optimizer, initial_time = first(steps), name = _DECISION_NAME)
+    (; models, sequence, dispatch) = nem_dispatch_sequence(
+        problem, template, sys; optimizer, initial_time = first(steps), name = _DECISION_NAME,
+    )
     skipped = replay_skipped_constraints(sys, template)
-    models = PSI.SimulationModels(; decision_models = [model])
-    sequence = PSI.SimulationSequence(; models, ini_cond_chronology = PSI.InterProblemChronology())
     simulation = PSI.Simulation(;
         name = _SIMULATION_NAME, steps = length(steps), models, sequence,
         simulation_folder = folder, initial_time = first(steps),
@@ -114,7 +114,7 @@ function _replay_chunk(
         error("Range from $(first(steps)) failed to execute ($status); see the simulation logs.")
     end
     results = PSI.get_decision_problem_results(PSI.SimulationResults(simulation), _DECISION_NAME)
-    _write_interval_timings!(simulation, model, results)
+    _write_interval_timings!(simulation, dispatch, results)
 
     on_phase(:compare)
     t3 = time()
@@ -174,8 +174,9 @@ end
     _replay_intervals(db, intervals::Vector{DateTime}, folder; optimizer, time_series_in_memory, on_phase = _no_phase) -> NamedTuple
 
 Replays the selected `intervals` of one trading day, which need not be consecutive. Each selected interval
-is its own chunk: one `nem_system` over that interval and one one-interval `PSI.DecisionModel` (open loop,
-from AEMO's observed state), then compared with the published outcome. Inputs between selected intervals
+is its own chunk: one `nem_system` over that interval and a one-step simulation of the
+[`nem_dispatch_sequence`](@ref) (open loop, from AEMO's observed state, with both fast-start runs when the system
+has a fast-start unit), then compared with the dispatch run's published outcome. Inputs between selected intervals
 are never read.
 
 # Arguments
@@ -202,7 +203,8 @@ function _replay_intervals(
     return _stack_chunks(outs, chunks, folders, length.(chunks))
 end
 
-# Solves each of `intervals` as a standalone model on one shared system, keeping their comparison rows.
+# Solves each of `intervals` as a one-step simulation of the replay sequence on one shared system, keeping their
+# comparison rows.
 function _replay_sampled_chunk(
         db, intervals::Vector{DateTime}, k::Integer, folder::AbstractString;
         optimizer, time_series_in_memory::Bool, on_phase,
@@ -217,25 +219,30 @@ function _replay_sampled_chunk(
     skipped = Ref(DataFrame())
     parts = map(enumerate(intervals)) do (i, t)
         t1 = time()
-        model = PSI.DecisionModel(NEMDispatchProblem, template, sys; optimizer, initial_time = t, name = _DECISION_NAME)
+        (; models, sequence) = nem_dispatch_sequence(
+            NEMDispatchProblem, template, sys; optimizer, initial_time = t, name = _DECISION_NAME,
+        )
         # The skipped-constraint report depends on the system and template only, so the first model gives it.
         i == 1 && (skipped[] = replay_skipped_constraints(sys, template))
         output_dir = mktempdir(folder)
-        status = PSI.build!(model; output_dir)
+        simulation = PSI.Simulation(;
+            name = _SIMULATION_NAME, steps = 1, models, sequence, simulation_folder = output_dir, initial_time = t,
+        )
+        status = PSI.build!(simulation; store_systems_in_results = false)
         build_s = time() - t1
-        if status != PSI.ModelBuildStatus.BUILT
+        if status != PSI.SimulationBuildStatus.BUILT
             _log_skipped_constraints(skipped[])
             error("Interval $t failed to build ($status); see the logs.")
         end
         t2 = time()
         status = try
-            PSI.solve!(model)
+            PSI.execute!(simulation; enable_progress_bar = false)
         catch
             _log_skipped_constraints(skipped[])
             rethrow()
         end
         status == PSI.RunStatus.SUCCESSFULLY_FINALIZED || error("Interval $t failed to solve ($status).")
-        results = PSI.OptimizationProblemResults(model)
+        results = PSI.get_decision_problem_results(PSI.SimulationResults(simulation), _DECISION_NAME)
         solved = read_solved_interval(results, sys)
         violations = read_constraint_violations(results, sys)
         stats = _solver_stats_table(results, [t], k)
@@ -402,7 +409,7 @@ function _interval_timing_rows(simulation, model, results)
 end
 
 """
-    _write_interval_timings!(simulation, model, results) -> String
+    _write_interval_timings!(simulation, dispatch, results) -> String
 
 Writes `interval_timings.csv` into the model's output directory, one `parameter_update` and one
 `solve_and_write` row per executed step. Fields the recorder does not provide are written as

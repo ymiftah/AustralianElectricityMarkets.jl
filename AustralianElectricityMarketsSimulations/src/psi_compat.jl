@@ -101,3 +101,8 @@ end
 # The shared generic constraint containers (`formulations/generic_constraints.jl`) call these private PSI
 # internals: `_get_time_series_name`, `_to_is_interval`, `_time_series_parameter_eltype`,
 # `_set_parameter_at!`, `_set_multiplier_at!`, `_update_parameter_values!` and `_apply_bound_targets!`.
+
+# The fast-start runs (`formulations/fast_start.jl`) call the private `_update_parameter_values!` to read the
+# commitment run's targets into the dispatch run's `FixValueParameter`, and override `update_parameter_values!` for
+# that parameter, whose stock update asserts that it fixes a variable. They also extend the interface method
+# `get_parameter_multiplier` for the `FixValueParameter` of a NEM dispatch device.

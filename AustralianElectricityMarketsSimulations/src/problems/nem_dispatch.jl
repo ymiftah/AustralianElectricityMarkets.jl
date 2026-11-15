@@ -30,7 +30,7 @@ struct NEMClosedLoopDispatchProblem <: AbstractNEMDispatchProblem end
 const _FIXED_TIME_SETTINGS = (:horizon, :interval, :resolution)
 
 """
-    PSI.DecisionModel{M}(template, sys, jump_model = nothing; name = "dispatch", market_price_cap = nothing, kwargs...) where {M <: AbstractNEMDispatchProblem} -> PSI.DecisionModel{M}
+    PSI.DecisionModel{M}(template, sys, jump_model = nothing; name = "dispatch", market_price_cap = nothing, fast_start_run = nothing, kwargs...) where {M <: AbstractNEMDispatchProblem} -> PSI.DecisionModel{M}
 
 Constructs the one-interval NEM dispatch model of `template` on `sys`. The horizon, resolution and interval
 are one dispatch interval, and the `"closed_loop"` setting records whether `M` is
@@ -43,15 +43,17 @@ are one dispatch interval, and the `"closed_loop"` setting records whether `M` i
 - `jump_model`: the `JuMP.Model` to build into, or `nothing`.
 - `name`: the name of the decision problem, used to retrieve its results.
 - `market_price_cap`: a Market Price Cap in `\$/MWh` that replaces the one dated by the initial time, or `nothing`.
+- `fast_start_run`: `:commitment` or `:dispatch` for a run of NEMDE's two-run fast-start dispatch (see
+  [`nem_dispatch_sequence`](@ref)), or `nothing` for a single run without fast-start rows.
 - `kwargs...`: keyword arguments of `PSI.Settings`. Passing `ext`, `horizon`, `interval` or `resolution` throws
   `ArgumentError`; use `market_price_cap` for the cap.
 
 # Returns
-A `PSI.DecisionModel{M}`. An invalid `market_price_cap` throws `ArgumentError`.
+A `PSI.DecisionModel{M}`. An invalid `market_price_cap` or `fast_start_run` throws `ArgumentError`.
 """
 function PSI.DecisionModel{M}(
         template::PSI.AbstractProblemTemplate, sys::PSY.System, jump_model::Union{Nothing, JuMP.Model} = nothing;
-        name = "dispatch", market_price_cap = nothing, kwargs...,
+        name = "dispatch", market_price_cap = nothing, fast_start_run::Union{Nothing, Symbol} = nothing, kwargs...,
     ) where {M <: AbstractNEMDispatchProblem}
     haskey(kwargs, :ext) &&
         throw(ArgumentError("DecisionModel{$M}: pass the Market Price Cap with `market_price_cap`, not `ext`"))
@@ -62,6 +64,12 @@ function PSI.DecisionModel{M}(
     end
     ext = Dict{String, Any}("closed_loop" => M === NEMClosedLoopDispatchProblem)
     isnothing(market_price_cap) || (ext["market_price_cap_override"] = _checked_market_price_cap(market_price_cap))
+    if !isnothing(fast_start_run)
+        run = String(fast_start_run)
+        run in _FAST_START_RUNS ||
+            throw(ArgumentError("DecisionModel{$M}: `fast_start_run` is :commitment, :dispatch or nothing, got :$run"))
+        ext["fast_start_run"] = run
+    end
     settings = PSI.Settings(
         sys; horizon = DISPATCH_INTERVAL, resolution = DISPATCH_INTERVAL, interval = DISPATCH_INTERVAL, ext = ext, kwargs...,
     )

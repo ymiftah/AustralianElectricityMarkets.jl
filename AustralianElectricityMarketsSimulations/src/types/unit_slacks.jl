@@ -10,6 +10,8 @@ container per device type and variant. The key meta is `"<family>|<variant>"`:
   above a raw or forecast availability limit.
 - fixed load (`"fixed_load|..."`): `surplus` and `deficit`, the net energy above or below a fixed loading.
 - unit ramp (`"unit_ramp|..."`): `up` and `down`, the excess over a ramp rate's base.
+- fast-start profile (`"fast_start|..."`): `lower` and `upper`, the energy target below or above a fast-start
+  unit's inflexibility profile in the dispatch run of [`nem_dispatch_sequence`](@ref).
 
 Slacks are in system-base per-unit; results read in MW.
 """
@@ -20,6 +22,7 @@ struct EnergyOfferFamily end
 struct EnergyLimitFamily end
 struct FixedLoadFamily end
 struct UnitRampFamily end
+struct FastStartFamily end
 
 struct EnergyOfferSurplusVariant end
 struct EnergyOfferDeficitVariant end
@@ -37,6 +40,9 @@ struct FixedLoadDeficitVariant end
 struct UnitRampUpVariant end
 struct UnitRampDownVariant end
 
+struct FastStartLowerVariant end
+struct FastStartUpperVariant end
+
 const _EnergyOfferVariant = Union{
     EnergyOfferSurplusVariant, EnergyOfferDeficitVariant,
     EnergyOfferDecrementalSurplusVariant, EnergyOfferDecrementalDeficitVariant,
@@ -47,6 +53,7 @@ const _EnergyLimitVariant = Union{
 }
 const _FixedLoadVariant = Union{FixedLoadSurplusVariant, FixedLoadDeficitVariant}
 const _UnitRampVariant = Union{UnitRampUpVariant, UnitRampDownVariant}
+const _FastStartVariant = Union{FastStartLowerVariant, FastStartUpperVariant}
 
 # The variants whose slacks sit on the energy offer rows, in the order their variables are built.
 const _ENERGY_OFFER_SLACK_VARIANTS = (
@@ -67,6 +74,8 @@ _nem_unit_slack_meta(::FixedLoadSurplusVariant) = "fixed_load|surplus"
 _nem_unit_slack_meta(::FixedLoadDeficitVariant) = "fixed_load|deficit"
 _nem_unit_slack_meta(::UnitRampUpVariant) = "unit_ramp|up"
 _nem_unit_slack_meta(::UnitRampDownVariant) = "unit_ramp|down"
+_nem_unit_slack_meta(::FastStartLowerVariant) = "fast_start|lower"
+_nem_unit_slack_meta(::FastStartUpperVariant) = "fast_start|upper"
 
 # The JuMP base name each variant's variables keep from the slack type they replace.
 _nem_unit_slack_label(::EnergyOfferSurplusVariant) = "EnergyOfferSurplusSlack"
@@ -81,6 +90,8 @@ _nem_unit_slack_label(::FixedLoadSurplusVariant) = "EnergyFixedLoadSurplusSlack"
 _nem_unit_slack_label(::FixedLoadDeficitVariant) = "EnergyFixedLoadDeficitSlack"
 _nem_unit_slack_label(::UnitRampUpVariant) = "UnitRampUpSlack"
 _nem_unit_slack_label(::UnitRampDownVariant) = "UnitRampDownSlack"
+_nem_unit_slack_label(::FastStartLowerVariant) = "FastStartLowerSlack"
+_nem_unit_slack_label(::FastStartUpperVariant) = "FastStartUpperSlack"
 
 # The family a unit slack meta names, from its prefix.
 function _nem_unit_slack_family(meta::AbstractString)
@@ -89,6 +100,7 @@ function _nem_unit_slack_family(meta::AbstractString)
     family == "energy_limit" && return EnergyLimitFamily()
     family == "fixed_load" && return FixedLoadFamily()
     family == "unit_ramp" && return UnitRampFamily()
+    family == "fast_start" && return FastStartFamily()
     throw(ArgumentError("a NEMUnitSlack has no variant named \"$meta\""))
 end
 
@@ -98,6 +110,7 @@ _nem_unit_slack_variant(::EnergyOfferFamily, meta::AbstractString) = _energy_off
 _nem_unit_slack_variant(::EnergyLimitFamily, meta::AbstractString) = _energy_limit_variant(meta)
 _nem_unit_slack_variant(::FixedLoadFamily, meta::AbstractString) = _fixed_load_variant(meta)
 _nem_unit_slack_variant(::UnitRampFamily, meta::AbstractString) = _unit_ramp_variant(meta)
+_nem_unit_slack_variant(::FastStartFamily, meta::AbstractString) = _fast_start_variant(meta)
 
 function _energy_offer_variant(meta::AbstractString)::_EnergyOfferVariant
     meta == "energy_offer|surplus" && return EnergyOfferSurplusVariant()
@@ -125,4 +138,10 @@ function _unit_ramp_variant(meta::AbstractString)::_UnitRampVariant
     meta == "unit_ramp|up" && return UnitRampUpVariant()
     meta == "unit_ramp|down" && return UnitRampDownVariant()
     throw(ArgumentError("a NEMUnitSlack unit ramp has no variant named \"$meta\""))
+end
+
+function _fast_start_variant(meta::AbstractString)::_FastStartVariant
+    meta == "fast_start|lower" && return FastStartLowerVariant()
+    meta == "fast_start|upper" && return FastStartUpperVariant()
+    throw(ArgumentError("a NEMUnitSlack fast-start profile has no variant named \"$meta\""))
 end
