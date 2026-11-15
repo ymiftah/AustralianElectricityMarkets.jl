@@ -77,4 +77,3 @@ for (name, (title, files)) in TEST_GROUPS
         foreach(include, files)
     end
 end
-
