@@ -206,7 +206,7 @@ function parse_options(args)
         "seed" => "20261026", "hive" => joinpath(homedir(), ".nemdb_cache"),
         "output" => "", "intervals-file" => "", "sample" => "",
         "solver-threads" => "1", "cache-size-mib" => "64",
-        "time-series-in-memory" => "false", "closed-loop" => "false", "start" => "", "intervals" => "",
+        "time-series-in-memory" => "false", "closed-loop" => "false", "fast-start" => "true", "start" => "", "intervals" => "",
     )
     iseven(length(args)) || throw(ArgumentError("options require --name value pairs; use --help"))
     for i in 1:2:length(args)
@@ -220,7 +220,7 @@ function parse_options(args)
     for key in ("solver-threads", "cache-size-mib")
         parse(Int, options[key]) > 0 || throw(ArgumentError("--$key must be positive"))
     end
-    for key in ("time-series-in-memory", "closed-loop")
+    for key in ("time-series-in-memory", "closed-loop", "fast-start")
         try
             parse(Bool, options[key])
         catch

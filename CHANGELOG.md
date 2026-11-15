@@ -141,6 +141,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The batch runner (whole-day, range, closed-loop and benchmark modes) and the replay gate capture build `nem_dispatch_sequence`; benchmark mode solves each selected interval as a one-step simulation of it, about 2.4 times the time of the single standalone model.
 
+- Fast start is optional: `nem_dispatch_sequence(...; fast_start = false)` and the batch runner's `--fast-start false` build the single model without inflexibility profiles, as a plain `DecisionModel{M}` does.
+
 - The statistics report (`scripts/simulation_statistics.jl`) adds an energy price tail section on the pooled completed days: the signed energy ROP error (mean, median, p5, p95, comparable with nempy), the same summary for the interval price (an unweighted regional mean, since regional demand is not in the comparison files), the error distribution and count by published-ROP band (above \$300/MWh, \$0 to \$300/MWh, below \$0/MWh), and a price-duration table of interval prices ranked by published price in the new `price_duration.csv`. `statistics.json` gains `price_tail`.
 
 - `scripts/replay_batch.jl` replays specific intervals instead of whole trading days: `--intervals-file PATH` (CSV, header `interval`) or `--sample N` with `--first`, `--last` and `--seed` (N distinct random five-minute intervals, trading-day aligned). Each trading day is one worker that builds one system over its selected intervals and solves each as its own one-interval open-loop model, so `scripts/simulation_statistics.jl` reports the output unchanged. `benchmarking/` holds the interval list of nempy's 2024 H2 benchmark and the command to replay it.

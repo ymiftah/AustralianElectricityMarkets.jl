@@ -141,7 +141,8 @@ per-step parameter updates but raises peak memory.
 Every mode builds its decision models with `nem_dispatch_sequence`. When the system has a unit whose energy
 offer carries a fast-start profile, each interval runs NEMDE's two dispatch runs: the commitment run
 (`fast_start_commitment`) and then the dispatch run (`dispatch`), which holds the fast-start units to their
-inflexibility profile. The outputs, comparisons and violations are the dispatch run's.
+inflexibility profile. The outputs, comparisons and violations are the dispatch run's. `--fast-start false` solves
+the single model instead, without inflexibility profiles; each day's `provenance.toml` records `fast_start`.
 
 `--closed-loop true` replays each interval after the first from the previous interval's solved output instead
 of AEMO's observed state (`NEMClosedLoopDispatchProblem`). It is a counterfactual run: its gap to NEMDE grows with

@@ -1,5 +1,5 @@
 """
-    nem_dispatch_sequence(::Type{M}, template, sys; name = "dispatch", commitment_name = FAST_START_COMMITMENT_NAME, ini_cond_chronology = PSI.InterProblemChronology(), kwargs...) where {M <: AbstractNEMDispatchProblem} -> NamedTuple
+    nem_dispatch_sequence(::Type{M}, template, sys; name = "dispatch", commitment_name = FAST_START_COMMITMENT_NAME, fast_start = true, ini_cond_chronology = PSI.InterProblemChronology(), kwargs...) where {M <: AbstractNEMDispatchProblem} -> NamedTuple
 
 The decision models of a NEM dispatch replay of `template` on `sys` and the `PSI.SimulationSequence` that runs
 them. When an available unit of a non-battery device type that `template` models under an
@@ -8,8 +8,9 @@ NEMDE's two dispatch runs at the same timestamp. The commitment run, named `comm
 ramp rows of the fast-start units starting in mode 0, 1 or 2. The dispatch run, named `name`, reads the commitment
 run's energy targets through a `PSI.FixValueFeedforward` and holds each fast-start unit to the inflexibility
 profile of its end mode, elastic at `FAST_START_CVP_FACTOR` times the Market Price Cap, with the ramp rows of that
-end mode. Prices and results are the dispatch run's. Without a fast-start unit the sequence holds one model, named
-`name`, built as [`PSI.DecisionModel{M}`](@ref) builds it.
+end mode. Prices and results are the dispatch run's. Without a fast-start unit, or with `fast_start = false`, the
+sequence holds one model, named `name`, built as [`PSI.DecisionModel{M}`](@ref) builds it, with no inflexibility
+profile.
 
 # Arguments
 - `M`: [`NEMDispatchProblem`](@ref) or [`NEMClosedLoopDispatchProblem`](@ref).
@@ -17,14 +18,15 @@ end mode. Prices and results are the dispatch run's. Without a fast-start unit t
 - `sys`: the replay system, built by `nem_system(db, NEMDEConfiguration(); date_range)`.
 - `name`: the name of the dispatch run, whose results a replay reads.
 - `commitment_name`: the name of the commitment run.
+- `fast_start`: run NEMDE's two fast-start runs when `sys` has a fast-start unit; `false` builds the single model.
 - `ini_cond_chronology`: the initial-condition chronology of the sequence.
 - `kwargs...`: keyword arguments of [`PSI.DecisionModel{M}`](@ref), e.g. `optimizer`, `initial_time` and
   `market_price_cap`, given to both models.
 
 # Returns
 A `NamedTuple` of `models` (the `PSI.SimulationModels`), `sequence` (the `PSI.SimulationSequence`), `dispatch`
-(the dispatch run's `PSI.DecisionModel{M}`) and `commitment` (the commitment run's model, or `nothing` without a
-fast-start unit).
+(the dispatch run's `PSI.DecisionModel{M}`) and `commitment` (the commitment run's model, or `nothing` for a
+single model).
 
 # Example
 ```julia
@@ -36,12 +38,12 @@ simulation = PSI.Simulation(; name = "replay", steps = length(steps), models, se
 """
 function nem_dispatch_sequence(
         ::Type{M}, template::PSI.ProblemTemplate, sys::PSY.System;
-        name = "dispatch", commitment_name = FAST_START_COMMITMENT_NAME,
+        name = "dispatch", commitment_name = FAST_START_COMMITMENT_NAME, fast_start::Bool = true,
         ini_cond_chronology = PSI.InterProblemChronology(), kwargs...,
     ) where {M <: AbstractNEMDispatchProblem}
     haskey(kwargs, :fast_start_run) &&
         throw(ArgumentError("nem_dispatch_sequence: `fast_start_run` is set by the sequence and cannot be given"))
-    types = _fast_start_device_types(template, sys)
+    types = fast_start ? _fast_start_device_types(template, sys) : DataType[]
     if isempty(types)
         dispatch = PSI.DecisionModel{M}(template, sys; name, kwargs...)
         models = PSI.SimulationModels(; decision_models = [dispatch])

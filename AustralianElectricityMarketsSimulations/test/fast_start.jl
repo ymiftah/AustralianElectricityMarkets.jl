@@ -46,8 +46,8 @@ function fs_price(results)
 end
 
 # Runs `steps` of the replay sequence of `sys`; returns the sequence and the results of both runs.
-function fs_replay(sys; steps = 1, problem = NEMDispatchProblem)
-    built = nem_dispatch_sequence(problem, replay_template(sys), sys; optimizer = FS_OPTIMIZER, initial_time = TOY_START)
+function fs_replay(sys; steps = 1, problem = NEMDispatchProblem, fast_start = true)
+    built = nem_dispatch_sequence(problem, replay_template(sys), sys; optimizer = FS_OPTIMIZER, initial_time = TOY_START, fast_start)
     simulation = PSI.Simulation(;
         name = "fast_start", steps, models = built.models, sequence = built.sequence,
         simulation_folder = mktempdir(), initial_time = TOY_START,
@@ -80,6 +80,14 @@ const FS_POWER = "ActivePowerVariable__ThermalStandard"
     solved = read_solved_interval(out.dispatch_results, PSI.get_system(out.dispatch))
     @test only(solved.prices.ROP) ≈ 50.0 atol = TOY_TOLERANCE
     @test isempty(subset(read_constraint_violations(out.dispatch_results, PSI.get_system(out.dispatch)), :family => ByRow(==("fast_start_profile"))))
+end
+
+@testset "fast_start = false replays one model without inflexibility profiles" begin
+    out = fs_replay(fast_start_system(); fast_start = false)
+    @test isnothing(out.commitment)
+    @test length(PSI.get_decision_models(out.models)) == 1
+    @test fs_values(out.dispatch_results, FS_POWER)[TOY_CHEAP] ≈ 250.0 atol = TOY_TOLERANCE
+    @test fs_price(out.dispatch_results) ≈ 10.0 atol = TOY_TOLERANCE
 end
 
 @testset "a unit ending in mode 2 is fixed at M t / T2" begin

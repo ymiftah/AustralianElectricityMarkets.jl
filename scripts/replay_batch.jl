@@ -27,6 +27,8 @@ function main(args = ARGS)
               --time-series-in-memory B  hold time series in memory (false)
               --closed-loop B       start each interval from the previous solve, not AEMO's state (false);
                                     not allowed with --sample or --intervals-file
+              --fast-start B        run NEMDE's two fast-start runs when the system has a fast-start unit (true);
+                                    false solves the single model, without inflexibility profiles
 
             HiGHS mip_rel_gap=1e-8, mip_abs_gap=1e-10.
             See scripts/README.md for outputs and overnight launch commands.

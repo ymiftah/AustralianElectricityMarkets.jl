@@ -76,6 +76,7 @@ end
 function _replay_chunk(
         db, steps::StepRange{DateTime}, k::Integer, folder::AbstractString;
         optimizer, time_series_in_memory::Bool, cache_size_mib::Integer, on_phase, problem = NEMDispatchProblem,
+        fast_start::Bool = true,
     )
     template = template_nemde()
     on_phase(:system_build)
@@ -86,7 +87,7 @@ function _replay_chunk(
     on_phase(:model_build)
     t1 = time()
     (; models, sequence, dispatch) = nem_dispatch_sequence(
-        problem, template, sys; optimizer, initial_time = first(steps), name = _DECISION_NAME,
+        problem, template, sys; optimizer, initial_time = first(steps), name = _DECISION_NAME, fast_start,
     )
     skipped = replay_skipped_constraints(sys, template)
     simulation = PSI.Simulation(;
@@ -150,6 +151,7 @@ chunk.
 - `cache_size_mib`: the PSI results write cache in MiB.
 - `on_phase`: optional callback receiving the phase names.
 - `problem`: the NEM dispatch problem type, `NEMDispatchProblem` or `NEMClosedLoopDispatchProblem`.
+- `fast_start`: run NEMDE's two fast-start runs when the system has a fast-start unit; `false` solves the single model.
 
 # Returns
 A `NamedTuple` of `chunks` (`chunk`, `start`, `stop`, `n_steps`, `folder`, `system_build_s`,
@@ -159,12 +161,13 @@ A `NamedTuple` of `chunks` (`chunk`, `start`, `stop`, `n_steps`, `folder`, `syst
 function _replay_day(
         db, steps::StepRange{DateTime}, folder::AbstractString;
         optimizer, time_series_in_memory::Bool, cache_size_mib::Integer, on_phase = _no_phase, problem = NEMDispatchProblem,
+        fast_start::Bool = true,
     )
     chunks = replay_chunks(steps)
     folders = [joinpath(folder, "chunk_$k") for k in eachindex(chunks)]
     outs = map(eachindex(chunks)) do k
         _replay_chunk(
-            db, chunks[k], k, mkpath(folders[k]); optimizer, time_series_in_memory, cache_size_mib, on_phase, problem,
+            db, chunks[k], k, mkpath(folders[k]); optimizer, time_series_in_memory, cache_size_mib, on_phase, problem, fast_start,
         )
     end
     return _stack_chunks(outs, chunks, folders, length.(chunks))
@@ -193,12 +196,12 @@ The `NamedTuple` of [`_replay_day`](@ref), where `chunks` counts the selected in
 """
 function _replay_intervals(
         db, intervals::Vector{DateTime}, folder::AbstractString;
-        optimizer, time_series_in_memory::Bool, on_phase = _no_phase,
+        optimizer, time_series_in_memory::Bool, on_phase = _no_phase, fast_start::Bool = true,
     )
     chunks = [[t] for t in intervals]
     folders = [joinpath(folder, "chunk_$k") for k in eachindex(chunks)]
     outs = map(eachindex(chunks)) do k
-        _replay_sampled_chunk(db, chunks[k], k, mkpath(folders[k]); optimizer, time_series_in_memory, on_phase)
+        _replay_sampled_chunk(db, chunks[k], k, mkpath(folders[k]); optimizer, time_series_in_memory, on_phase, fast_start)
     end
     return _stack_chunks(outs, chunks, folders, length.(chunks))
 end
@@ -207,7 +210,7 @@ end
 # comparison rows.
 function _replay_sampled_chunk(
         db, intervals::Vector{DateTime}, k::Integer, folder::AbstractString;
-        optimizer, time_series_in_memory::Bool, on_phase,
+        optimizer, time_series_in_memory::Bool, on_phase, fast_start::Bool = true,
     )
     template = template_nemde()
     on_phase(:system_build)
@@ -220,7 +223,7 @@ function _replay_sampled_chunk(
     parts = map(enumerate(intervals)) do (i, t)
         t1 = time()
         (; models, sequence) = nem_dispatch_sequence(
-            NEMDispatchProblem, template, sys; optimizer, initial_time = t, name = _DECISION_NAME,
+            NEMDispatchProblem, template, sys; optimizer, initial_time = t, name = _DECISION_NAME, fast_start,
         )
         # The skipped-constraint report depends on the system and template only, so the first model gives it.
         i == 1 && (skipped[] = replay_skipped_constraints(sys, template))
@@ -453,6 +456,7 @@ function main(folder, day::Date)
     package_hashes = ReplayBatchSupport.snapshot_package_sources(package_root, joinpath(day_folder, "package_source"))
     time_series_in_memory = parse(Bool, config["time-series-in-memory"])
     closed_loop = parse(Bool, get(config, "closed-loop", "false"))
+    fast_start = parse(Bool, get(config, "fast-start", "true"))
     sampled = !isempty(config["sample"]) || !isempty(config["intervals-file"])
     day_intervals = sampled ? get(
             ReplayBatchSupport.intervals_by_day(ReplayBatchSupport.read_intervals_file(joinpath(folder, "selected_intervals.csv"))),
@@ -467,7 +471,7 @@ function main(folder, day::Date)
             "day_intervals" => length(day_intervals),
         ),
         "revision" => actual_revision, "supervisor_revision" => config["git_revision"],
-        "time_series_in_memory" => time_series_in_memory, "closed_loop" => closed_loop,
+        "time_series_in_memory" => time_series_in_memory, "closed_loop" => closed_loop, "fast_start" => fast_start,
         "checkout_status" => checkout_status, "package_source_hashes" => package_hashes, "optimization_level" => Int(Base.JLOptions().opt_level),
         "julia" => string(VERSION), "psi" => string(Base.pkgversion(PSI)),
         "highs_package" => string(Base.pkgversion(HiGHS)),
@@ -512,12 +516,12 @@ function main(folder, day::Date)
         db = aem_connect(HiveConfiguration(hive_location = config["hive"]))
         try
             result = if sampled
-                _replay_intervals(db, day_intervals, day_folder; optimizer, time_series_in_memory, on_phase)
+                _replay_intervals(db, day_intervals, day_folder; optimizer, time_series_in_memory, on_phase, fast_start)
             else
                 _replay_day(
                     db, ReplayBatchSupport.batch_steps(config, day), day_folder;
                     optimizer, time_series_in_memory, cache_size_mib = parse(Int, config["cache-size-mib"]), on_phase,
-                    problem = closed_loop ? NEMClosedLoopDispatchProblem : NEMDispatchProblem,
+                    problem = closed_loop ? NEMClosedLoopDispatchProblem : NEMDispatchProblem, fast_start,
                 )
             end
             on_phase(:export)
