@@ -35,9 +35,13 @@ and still reported by the dropped-terms check.
 
 ## nempy comparison
 
-nempy (`historical_inputs/constraints.py`) drops constraint unit terms for units not in the dispatch
-and keeps the constraint; a constraint that loses all its terms stays as a row with an empty
-left-hand side. Its `0 sense RHS` is then fed to the LP like any other row. A satisfiable empty row is
+nempy keeps every constraint and drops the unit terms of units without bid variables.
+`SpotMarket.set_generic_constraints` (`markets.py`) adds a row with type and RHS for every constraint
+set, made elastic when a `violation_cost` is given (its benchmark passes one). The unit terms are then
+joined to the unit bid variables with an inner `pd.merge` in `create_unit_level_generic_constraint_lhs`
+(`spot_market_backend/solver_interface.py`), so a term with no variable disappears without error. A
+constraint that loses all its terms stays as a row with an empty left-hand side, and its `0 sense RHS`
+is fed to the LP like any other row. A satisfiable empty row is
 inactive and has no effect on dispatch or prices; a violated one is resolved by its constraint
 violation variable. This decision reproduces the first case by omission and refuses the second.
 
