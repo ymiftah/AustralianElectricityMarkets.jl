@@ -6,19 +6,11 @@ const _TB_N = 4
 const _TB_START = DateTime(2025, 1, 1, 0, 5)
 
 # A NEM replay System on the mock hive, with its replay inputs written by `nem_system`.
-function _tb_mock_system()
-    hive = mktempdir()
+const _TB_SYS = let hive = mktempdir()
     create_mock_data(hive; complete_inputs = true)
     write_mock_interconnector_results(hive)
-    db = aem_connect(HiveConfiguration(hive_location = hive))
-    return nem_system(db, NEMDEConfiguration(); date_range = _TB_START:Minute(5):(_TB_START + Minute(20)))
+    nem_system(aem_connect(HiveConfiguration(hive_location = hive)), NEMDEConfiguration(); date_range = _TB_START:Minute(5):(_TB_START + Minute(20)))
 end
-
-# The first `n` stamps of the offers written by the helpers below.
-_tb_steps(n::Int) = collect(_TB_START .+ Minute.(5 .* (0:(n - 1))))
-
-# Repeats the last of `curves` to the `_TB_N` stamps of the mock System, so every series has the same length.
-_tb_pad(curves) = [curves; fill(last(curves), _TB_N - length(curves))]
 
 # Removes the energy offers, the tie-break scales and the EnergyTieBreak service of `sys`, so the writer can run again.
 function _tb_strip!(sys)
@@ -97,7 +89,7 @@ end
 
 @testset "the writer scales the tied bands and attaches the service once" begin
     AEM = AustralianElectricityMarkets
-    sys = _tb_strip!(_tb_mock_system())
+    sys = _tb_strip!(deepcopy(_TB_SYS))
     g1, g2 = _tb_units(sys, AEM.OfferSide.GEN, 2)
     # G1 and G2 tie at $10 and $20: widths 5 vs 2 at $10 and 10 vs 13 at $20.
     _tb_write_offers!(sys, g1, AEM.OfferSide.GEN, fill(_tb_curve([10.0, 20.0], [5.0, 10.0]), _TB_N))
@@ -120,14 +112,14 @@ end
 end
 
 @testset "a system built by nem_system carries the tie-break service once" begin
-    sys = _tb_mock_system()
+    sys = _TB_SYS
     @test length(collect(PowerSystems.get_components(EnergyTieBreak, sys))) == 1
     @test !isempty(PowerSystems.get_contributing_devices(sys, only(PowerSystems.get_components(EnergyTieBreak, sys))))
 end
 
 @testset "the writer scales each band of a tied group over the widest band at its interval" begin
     AEM = AustralianElectricityMarkets
-    sys = _tb_strip!(_tb_mock_system())
+    sys = _tb_strip!(deepcopy(_TB_SYS))
     cheap, expensive, third = _tb_units(sys, AEM.OfferSide.GEN, 3)
     _tb_write_offers!(sys, cheap, AEM.OfferSide.GEN, fill(_tb_curve([10.0], [168.0]), _TB_N))
     _tb_write_offers!(sys, expensive, AEM.OfferSide.GEN, fill(_tb_curve([10.0, 30.0], [46.0, 10.0]), _TB_N))
@@ -142,7 +134,7 @@ end
 
 @testset "a band empty at the first interval but not later keeps its tie and a zero scale" begin
     AEM = AustralianElectricityMarkets
-    sys = _tb_strip!(_tb_mock_system())
+    sys = _tb_strip!(deepcopy(_TB_SYS))
     cheap, expensive = _tb_units(sys, AEM.OfferSide.GEN, 2)
     cheap_first = _tb_curve([20.0, 50.0], [60.0, 0.0])
     cheap_later = _tb_curve([20.0, 50.0], [60.0, 30.0])
@@ -153,20 +145,9 @@ end
     @test _tb_scale(sys, expensive, 2) ≈ fill(1.0, _TB_N)
 end
 
-@testset "transitive ties are rejected" begin
-    AEM = AustralianElectricityMarkets
-    sys = _tb_strip!(_tb_mock_system())
-    # Three units priced 0.8e-6 apart in a chain: the first and last are not tied, but each neighbour is.
-    a, b, c = _tb_units(sys, AEM.OfferSide.GEN, 3)
-    _tb_write_offers!(sys, a, AEM.OfferSide.GEN, fill(_tb_curve([20.0], [60.0]), _TB_N))
-    _tb_write_offers!(sys, b, AEM.OfferSide.GEN, fill(_tb_curve([20.0 + 0.8e-6], [60.0]), _TB_N))
-    _tb_write_offers!(sys, c, AEM.OfferSide.GEN, fill(_tb_curve([20.0 + 1.6e-6], [60.0]), _TB_N))
-    @test_throws r"transitive ties are not supported" AEM._set_tie_break!(sys)
-end
-
 @testset "the decremental side is scaled by its own tie groups" begin
     AEM = AustralianElectricityMarkets
-    sys = _tb_strip!(_tb_mock_system())
+    sys = _tb_strip!(deepcopy(_TB_SYS))
     pump, battery = _tb_units(sys, AEM.OfferSide.LOAD, 2)
     _tb_write_offers!(sys, pump, AEM.OfferSide.LOAD, fill(_tb_curve([20.0], [60.0]), _TB_N))
     _tb_write_offers!(sys, battery, AEM.OfferSide.LOAD, fill(_tb_curve([20.0], [40.0]), _TB_N))

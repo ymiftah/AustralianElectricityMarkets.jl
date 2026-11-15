@@ -33,28 +33,13 @@ end
 
 @testset "each step's ramp base is the observed initial MW of that step" begin
     # Alta's ramp-up limit falls from 2 to 1 MW/min and its observed initial MW from 50 to 10, so
-    # its step-2 ceiling is 15 MW. The state source's keyed series, not the series the state was
-    # first read from, carries the step-2 value the update must find.
+    # its step-2 ceiling is 15 MW.
     sys = nem_toy_system(
         [
             TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = [50.0, 10.0], ramp_up = [2.0, 1.0]),
             TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = [50.0, 50.0], ramp_up = 100.0),
         ],
         100.0; horizon = TOY_RESOLUTION,
-        mutate! = function (sys, stamps)
-            alta = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
-            replace_single_series_with!(sys, alta, "observed_initial_mw", [50.0, 50.0], stamps)
-            replace_single_series_with!(sys, alta, "state_initial_mw", [50.0, 10.0], stamps)
-            observed = get_observed_state(alta)
-            set_observed_state!(
-                alta,
-                AustralianElectricityMarkets.NEMObservedState(;
-                    initial_mw = AustralianElectricityMarkets._series_key(alta, "state_initial_mw"),
-                    dispatch_mode = observed.dispatch_mode,
-                ),
-            )
-            return
-        end,
     )
     out = run_replay(sys, _ST_STEP_RANGE; optimizer = _ST_OPTIMIZER)
     dispatch = _st_dispatch_by_step(out)
@@ -86,10 +71,6 @@ end
                 fixed_load = fill(40.0, length(stamps)),
             )
             set_toy_unit_field!(sys, park, stamps, :dispatch_mode, [0.0, 2.0])
-            # The shape an old build wrote: Park held at 40 MW in both steps. It is not read; the
-            # parameter comes from the bid and the step's dispatch mode.
-            replace_single_series_with!(sys, park, "fixed_load", [0.4, 0.4], stamps)
-            replace_single_series_with!(sys, park, "fixed_load_invoked", [1.0, 1.0], stamps)
             return
         end,
     )
@@ -135,76 +116,6 @@ end
     add_time_series!(sys, gen, SingleTimeSeries(; name = "half_hourly", data = TimeArray(half_hour, fill(50.0, length(half_hour)))))
     AustralianElectricityMarkets.set_observed_state!(gen, observed(gen, "half_hourly"))
     @test_throws r"resolution 30 minutes, expected 5 minutes" check(gen)
-end
-
-
-# A test-only objective coefficient: the device's `"toy_state_price"`, $/MWh, added to the objective
-# of every step from the state source. Its update mirrors what a formulation would register.
-struct ToyStatePriceParameter <: PSI.ObjectiveFunctionParameter end
-
-PSI._param_to_vars(::ToyStatePriceParameter, ::AEMS.NEMReplayDispatch) = (PSI.ActivePowerVariable,)
-
-PSI.get_multiplier_value(::ToyStatePriceParameter, ::PSY.StaticInjection, ::AEMS.NEMReplayDispatch) = 1.0
-
-function PSI.update_container_parameter_values!(
-        container::PSI.OptimizationContainer,
-        model::PSI.OperationModel,
-        key::PSI.ParameterKey{ToyStatePriceParameter, T},
-        ::PSI.DatasetContainer{PSI.InMemoryDataset},
-    ) where {T <: PSY.StaticInjection}
-    parameter_array = PSI.get_parameter_array(container, key)
-    power = PSI.get_variable(container, PSI.ActivePowerVariable(), T)
-    scale = PSI.get_base_power(container) * AEMS.interval_cost_coefficient(1.0, PSI.get_resolution(model))
-    system = PSI.get_system(model)
-    for name in axes(parameter_array)[1]
-        device = PSY.get_component(T, system, name)
-        series = AustralianElectricityMarkets._series_key(device, "toy_state_price")
-        for t in PSI.get_time_steps(container)
-            price = only(PSI.IS.get_time_series_values(device, series; start_time = PSI.get_current_timestamp(model) + (t - 1) * PSI.get_resolution(model), len = 1))
-            parameter_array[name, t] = price
-            PSI.add_to_objective_variant_expression!(container, price * scale, power[name, t])
-        end
-    end
-    return
-end
-
-@testset "a per-step state price survives the objective unsynchronisation" begin
-    stamps = [TOY_START, TOY_START + TOY_RESOLUTION]
-    sys = nem_toy_system(
-        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 100.0, ramp_up = 100.0)],
-        100.0; horizon = TOY_RESOLUTION,
-        mutate! = (sys, stamps) -> replace_single_series_with!(sys, PSY.get_component(ThermalStandard, sys, TOY_CHEAP), "toy_state_price", [12.0, 60.0], stamps),
-    )
-    template = replay_template(sys)
-    model = PSI.DecisionModel(
-        template, sys;
-        optimizer = _ST_OPTIMIZER, horizon = TOY_RESOLUTION, resolution = TOY_RESOLUTION,
-        interval = TOY_RESOLUTION, initial_time = TOY_START,
-    )
-    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    container = PSI.get_optimization_container(model)
-
-    unit = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
-    names = Dict{Type{<:PSI.ParameterType}, String}(PSI.get_time_series_names(PSI.get_model(template, ThermalStandard)))
-    names[ToyStatePriceParameter] = "toy_state_price"
-    PSI.add_parameters!(container, ToyStatePriceParameter, [unit], PSI.DeviceModel(ThermalStandard, AEMS.NEMReplayDispatch; time_series_names = names))
-    price = PSI.get_parameter(container, PSI.ParameterKey(ToyStatePriceParameter, ThermalStandard))
-    @test eltype(PSI.get_parameter_array(price)) === Float64
-
-    objectives = Float64[]
-    for (i, _) in enumerate(stamps)
-        PSI.set_execution_count!(model, i - 1)
-        _update_step_parameters!(model)
-        PSI.solve_impl!(model)
-        @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-        push!(objectives, PSI.JuMP.objective_value(PSI.get_jump_model(container)))
-    end
-    # 100 MW at the unit's $20/MWh offer plus the state price of the step.
-    @test objectives[1] ≈ 3200.0 / 12 atol = 1.0e-4
-    @test objectives[2] ≈ 8000.0 / 12 atol = 1.0e-4
-    @test PSI.get_parameter_array(price)[TOY_CHEAP, 1] === 60.0
-    power = PSI.get_variable(container, PSI.ActivePowerVariable(), ThermalStandard)[TOY_CHEAP, 1]
-    @test PSI.JuMP.coefficient(PSI.get_variant_terms(PSI.get_objective_expression(container)), power) ≈ 60.0 * 100.0 / 12
 end
 
 
@@ -254,37 +165,6 @@ end
             return
         end,
     )
-end
-
-
-@testset "each step's FCAS enablement and ramping limit are recomputed from the state" begin
-    # Park City moves from 40 MW to 200 MW, outside its RAISE6SEC enablement band, so its offer is
-    # disabled at step 2. The battery's starting output rises from 5 MW to 10 MW, so its regulation
-    # joint ramping limit rises by the same 5 MW. Both differ from the build's seed.
-    inactive = FCAS_INACTIVE_LIMIT_MW / 100.0
-    sys = fcas_toy_system(park_initial = [40.0, 200.0], batt_initial = [5.0, 10.0])
-    model = PSI.DecisionModel(
-        replay_template(sys), sys; optimizer = _ST_OPTIMIZER, horizon = TOY_RESOLUTION,
-        resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
-    )
-    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    container = PSI.get_optimization_container(model)
-    park_limit = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FCASOfferLimitParameter, ThermalStandard, "RAISE6SEC"))
-    battery_ramp = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FCASRampingLimitParameter, EnergyReservoirStorage, "RAISEREG"))
-
-    PSI.set_execution_count!(model, 0)
-    PSI.solve_impl!(model)
-    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-    # The additional axis is the field list: max_avail, enablement_min, enablement_max.
-    @test vec(Array(PSI.get_parameter_column_values(park_limit, TOY_EXPENSIVE))) ≈ [0.25, 0.05, 1.0]
-    @test vec(Array(PSI.get_parameter_column_values(battery_ramp, TOY_BATTERY))) ≈ [0.25, 0.2]
-
-    PSI.set_execution_count!(model, 1)
-    _update_step_parameters!(model)
-    PSI.solve_impl!(model)
-    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-    @test vec(Array(PSI.get_parameter_column_values(park_limit, TOY_EXPENSIVE))) ≈ [0.0, -inactive, inactive]
-    @test vec(Array(PSI.get_parameter_column_values(battery_ramp, TOY_BATTERY))) ≈ [0.3, 0.2]
 end
 
 

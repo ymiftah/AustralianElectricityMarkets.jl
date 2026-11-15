@@ -162,8 +162,6 @@ end
     share = 0.4
     sys = _loss_test_system(; from_region_loss_share = share)
     model, res = _solve_loss(sys)
-
-    res = PSI.OptimizationProblemResults(model)
     flow_df = PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange")
     loss_df = PSI.read_variable(res, "InterconnectorLossVariable__AreaInterchange")
     t1 = minimum(flow_df.DateTime)
@@ -221,15 +219,6 @@ end
         priced_supply_only = true,
     )
     model, res = _solve_loss(sys)
-
-    container = PSI.get_optimization_container(model)
-    gaps = read_interconnector_loss_gaps(PSI.OptimizationProblemResults(model), sys)
-    @test !isempty(gaps)
-    # Positive marginal cost everywhere in this toy system, so the LP has no incentive to
-    # over-dissipate - the solved loss must land exactly on the curve at the solved flow.
-    @test all(abs(gap) < 1.0e-6 for gap in gaps.gap_mw)
-
-    res = PSI.OptimizationProblemResults(model)
     flow_df = PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange")
     loss_df = PSI.read_variable(res, "InterconnectorLossVariable__AreaInterchange")
     comparison = innerjoin(
@@ -331,8 +320,6 @@ end
     ic1 = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
     PSY.set_flow_limits!(ic1, (from_to = -10.0, to_from = 5.0))
     model, res = _solve_loss(sys)
-
-    res = PSI.OptimizationProblemResults(model)
     surplus = PSI.read_variable(res, PSI.VariableKey(AEMS.InterconnectorFlowSlack, PSY.AreaInterchange, "surplus"))
     deficit = PSI.read_variable(res, PSI.VariableKey(AEMS.InterconnectorFlowSlack, PSY.AreaInterchange, "deficit"))
     @test all(isapprox.(surplus.value .+ deficit.value, 5.0; atol = 1.0e-6))
@@ -395,9 +382,7 @@ end
         demand_coefficients = Dict("1" => 1.0e-4, "2" => -2.0e-4), pin_multiplier = true,
     )
     model, res = _solve_loss(sys)
-
-    container = PSI.get_optimization_container(model)
-    gaps = read_interconnector_loss_gaps(PSI.OptimizationProblemResults(model), sys)
+    gaps = read_interconnector_loss_gaps(res, sys)
     @test !isempty(gaps)
     @test all(abs(gap) < 1.0e-6 for gap in gaps.gap_mw)
 end
@@ -492,7 +477,6 @@ end
     container = PSI.get_optimization_container(model)
     @test !PSI.has_container_key(container, AEMS.InterconnectorLossVariable, PSY.AreaInterchange)
 end
-
 
 # Operating-input helper for MNSP regressions; values use the setter's natural MW/MW-min units. Replaces the
 # operating keys of the link bids and the observed flow of an interchange that already has offers.
@@ -657,10 +641,6 @@ end
     model = _decision_model(_loss_template(sys), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
-    @test !isdefined(AEMS, :MNSPBandPriceParameter)
-    @test all(k -> nameof(PSI.IS.Optimization.get_entry_type(k)) != :MNSPBandPriceParameter, keys(PSI.get_parameters(container)))
-    cost_types = [PSI.IS.Optimization.get_entry_type(k) for k in keys(PSI.get_parameters(container))]
-    @test !any(T -> T <: PSI.TimeSeriesCostParameter, cost_types)
     @test !PSI.get_objective_expression(container).has_variant_contributors
     scale = PSI.get_base_power(container) * AEMS.interval_hours(PSI.get_resolution(container))
     invariant = PSI.get_invariant_terms(PSI.get_objective_expression(container))
@@ -726,6 +706,7 @@ end
         out = _solve_mnsp(sys)
         @test out.flow ≈ load2 atol = 1.0e-6
         @test min(out.forward, out.reverse) ≈ 0.0 atol = 1.0e-6
+        @test isfinite(out.dual1) && isfinite(out.dual2)
     end
     @testset "link loss factors scale the delivered MW and the dispatch condition holds" begin
         sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
@@ -774,13 +755,6 @@ end
         out = _solve_mnsp(sys; zero_flow = true)
         @test out.forward ≈ 0.0 atol = 1.0e-6
         @test out.reverse ≈ 0.0 atol = 1.0e-6
-    end
-
-    @testset "negative offers on both links still give finite balance duals" begin
-        sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
-        _attach_mnsp_offers!(sys; forward = (500.0, [(500.0, -50.0)]), reverse = (500.0, [(500.0, -50.0)]))
-        out = _solve_mnsp(sys)
-        @test isfinite(out.dual1) && isfinite(out.dual2)
     end
 end
 

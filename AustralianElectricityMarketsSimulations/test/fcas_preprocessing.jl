@@ -40,12 +40,9 @@ end
     function upper_joint(sys)
         return PSY.get_time_series_values(PSY.SingleTimeSeries, PSY.get_component(ThermalStandard, sys, TOY_CHEAP), "fcas_ramping_limits_RAISEREG")[1][1]
     end
-    sys = fcas_toy_system(; alta_fast_start = profile, alta_mode = 1)
-    inactive = FCAS_INACTIVE_LIMIT_MW / PSY.get_base_power(sys)
-    @test upper_joint(sys) == inactive
     for mode in (0, 1, 2)
         exempt = fcas_toy_system(; alta_fast_start = profile, alta_mode = mode)
-        @test upper_joint(exempt) == inactive
+        @test upper_joint(exempt) == FCAS_INACTIVE_LIMIT_MW / PSY.get_base_power(exempt)
     end
     for mode in (3, 4)
         held = fcas_toy_system(; alta_fast_start = profile, alta_mode = mode)

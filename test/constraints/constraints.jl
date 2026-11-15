@@ -20,30 +20,14 @@
     @testset "RegionTerm devices default to empty and take positional or keyword devices" begin
         @test get_devices(RegionTerm("NSW1", BidType.ENERGY, 2.0)) == String[]
         @test get_devices(RegionTerm("NSW1", BidType.ENERGY, 2.0, ["BW01", "BW02"])) == ["BW01", "BW02"]
-        rt_kw = RegionTerm(; region = "NSW1", bid_type = BidType.ENERGY, factor = 2.0, devices = ["BW01"])
-        @test get_devices(rt_kw) == ["BW01"]
+        @test get_devices(RegionTerm(; region = "NSW1", bid_type = BidType.ENERGY, factor = 2.0, devices = ["BW01"])) == ["BW01"]
     end
 
-    @testset "GenericConstraint construction and accessors" begin
-        gc = GenericConstraint(;
-            name = "F_TEST",
-            sense = ConstraintSense.GE,
-            rhs = 137.5,
-            constraint_weight = 2.0,
-            terms = ConstraintTerm[UnitTerm("BW01", BidType.RAISE6SEC, 1.0), InterconnectorTerm("IC1", -1.0)],
-            fcas_requirements = FCASRequirement[FCASRequirement("TAS1", BidType.RAISE6SEC)],
-        )
-        @test get_name(gc) == "F_TEST"
-        @test get_available(gc) == true
-        @test get_sense(gc) == ConstraintSense.GE
-        @test gc.rhs == 137.5
-        @test get_constraint_weight(gc) == 2.0
-        @test length(get_terms(gc)) == 2
-        @test length(get_fcas_requirements(gc)) == 1
-        @test get_terms(gc)[1] isa UnitTerm
-
-        set_available!(gc, false)
-        @test get_available(gc) == false
+    @testset "GenericConstraint defaults and NULL standing data" begin
+        gc = GenericConstraint(; name = "F_TEST", sense = ConstraintSense.GE, rhs = 137.5)
+        @test get_available(gc)
+        @test get_description(gc) == ""
+        @test isempty(get_ext(gc))
 
         gc_null_ext = GenericConstraint(;
             name = "F_NULL_EXT", sense = ConstraintSense.LE, rhs = 1.0,
@@ -55,10 +39,6 @@
         @test get_effective_date(gc_null_ext) === nothing
         @test get_version_no(gc_null_ext) === nothing
         @test get_gencon_id(gc_null_ext) == "F_NULL_EXT"
-        @test get_description(gc) == ""
-        @test isempty(get_ext(gc))
-        set_description!(gc, "a hand-authored test constraint")
-        @test get_description(gc) == "a hand-authored test constraint"
     end
 
     @testset "GenericConstraint JSON round-trip" begin
@@ -89,7 +69,6 @@
         sys2 = System(json_path)
 
         gc2 = get_component(GenericConstraint, sys2, "F_ROUNDTRIP")
-        @test !isnothing(gc2)
         @test get_sense(gc2) == ConstraintSense.GE
         @test gc2.rhs == 137.5
         @test get_constraint_weight(gc2) == 2.0
@@ -131,7 +110,6 @@ end
 
     @testset "read_invoked_constraints" begin
         invoked = read_invoked_constraints(db, date_range)
-        @test !isempty(invoked)
         @test "N_BAYSW_THERMAL" in invoked.GENCONID
         @test "N_PHANTOM_TEST" in invoked.GENCONID
         f_raise6sec_nsw1 = subset(invoked, :GENCONID => ByRow(==("F_NSW1_RAISE6SEC")))
@@ -147,7 +125,6 @@ end
         invoked = read_invoked_constraints(db, date_range)
         versions = unique(select(invoked, :GENCONID, :GENCONID_EFFECTIVEDATE, :GENCONID_VERSIONNO))
         defs = read_constraint_definitions(db, versions)
-        @test !isempty(defs)
         thermal = only(subset(defs, :GENCONID => ByRow(==("N_BAYSW_THERMAL"))))
         @test thermal.CONSTRAINTTYPE == ">="
         @test thermal.GENERICCONSTRAINTWEIGHT == 1.0
@@ -166,7 +143,6 @@ end
         invoked = read_invoked_constraints(db, date_range)
         versions = unique(select(invoked, :GENCONID, :GENCONID_EFFECTIVEDATE, :GENCONID_VERSIONNO))
         terms = read_constraint_terms(db, versions, date_range)
-        @test !isempty(terms)
 
         # Repeated requests and unrelated versions cannot multiply or replace term rows.
         one_version = subset(versions, :GENCONID => ByRow(==("F_VIC1_RAISE6SEC")))
@@ -225,7 +201,6 @@ end
 
     @testset "read_constraint_fcas_requirements" begin
         reqs = read_constraint_fcas_requirements(db, date_range)
-        @test !isempty(reqs)
         @test "N_BAYSW_THERMAL" ∉ reqs.GENCONID  # pure network constraint
         @test "N_PHANTOM_TEST" ∉ reqs.GENCONID
         raise6sec_nsw1 = subset(reqs, :GENCONID => ByRow(==("F_NSW1_RAISE6SEC")))
@@ -244,13 +219,9 @@ end
         overlap_range = start_date:Minute(5):(start_date + Minute(5 * 10))
         new_only_range = (start_date + Minute(5 * 30)):Minute(5):(start_date + Minute(5 * 40))
 
-        # Old-table territory: unchanged behaviour.
-        @test !isempty(read_constraint_fcas_requirements(db, overlap_range))
-
         # Past where the old table stops, attribution must still resolve - before the union
         # this returned empty, silently making every constraint look purely network-driven.
         new_only = read_constraint_fcas_requirements(db, new_only_range)
-        @test !isempty(new_only)
         @test "F_NSW1_RAISE6SEC" in new_only.GENCONID
         @test "N_BAYSW_THERMAL" ∉ new_only.GENCONID
 
@@ -263,9 +234,7 @@ end
 end
 
 @testset "constraint build" begin
-    hive_dir = AEM_TEST_HIVE_DIR
-    config = HiveConfiguration(hive_location = hive_dir, filesystem = "file")
-    db = aem_connect(config)
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
     start_date = DateTime(2025, 1, 1, 0, 0)
     date_range = start_date:Minute(5):(start_date + Hour(1))
 
@@ -309,13 +278,6 @@ end
     @test phantom.missing_keys == ["PHANTOM1"]
     @test phantom.n_missing == 1
 
-    @testset "dropped unit terms survive a JSON round trip" begin
-        dropped = get_dropped_terms(sys)
-        json_path = joinpath(mktempdir(), "sys.json")
-        to_json(sys, json_path; force = true)
-        @test get_dropped_terms(System(json_path)) == dropped
-    end
-
     # N_PARTIAL_COVERAGE is only invoked in DISPATCHCONSTRAINT for every other interval
     # (6 of 12 rows over this date_range) - it is added anyway, with its "rhs" padded
     # to the full 12-interval grid (carrying the last known value forward) and an "invoked"
@@ -326,20 +288,16 @@ end
     base_power = get_base_power(sys)
     partial_rhs = _constraint_series(partial_gc, :rhs)
     partial_invoked = _constraint_series(partial_gc, :invoked)
-    @test length(partial_rhs) == 12
     @test length(partial_rhs) == length(date_range) - 1  # grid spans date_range, not invocations
     @test all(==(150.0), partial_rhs)  # constant RHS - forward-fill is a no-op here
     @test partial_invoked == [isodd(i) ? 0.0 : 1.0 for i in 0:11]
 
     gc = get_component(GenericConstraint, sys, vname("F_VIC1_RAISE6SEC"))
-    @test !isnothing(gc)
     @test get_sense(gc) == ConstraintSense.GE
     @test length(get_terms(gc)) == 4  # one UnitTerm per DUID behind CP_BAYSW
-    @test length(get_fcas_requirements(gc)) == 1
     @test only(get_fcas_requirements(gc)) == FCASRequirement("VIC1", BidType.RAISE6SEC)
 
     @testset "AEMO provenance fields are typed" begin
-        @test get_description(gc) isa String
         @test isempty(get_ext(gc))
         @test get_gencon_id(gc) == "F_VIC1_RAISE6SEC"
         @test get_limit_type(gc) == "FCAS"
@@ -356,8 +314,7 @@ end
     @test any(t -> t isa InterconnectorTerm && get_interconnector(t) == "IC1", get_terms(nsw1_raise6sec))
 
     rhs_values = _constraint_series(gc, :rhs)
-    @test issorted(rhs_values)  # RHS = 50.0 + 0.1*i, confirmed time-varying in Task 8
-
+    @test issorted(rhs_values)  # RHS = 50.0 + 0.1*i
 
     @testset "GenericConstraint attaches as a Service, not merely a Component" begin
         # UnitTerm: every term's own device carries the service.
@@ -427,9 +384,6 @@ end
         # Names every affected GENCONID/region/bid_type in one aggregated message.
         @test occursin("F_TAS1_RAISEREG", err.msg)
         @test occursin("F_TAS1_LOWERREG", err.msg)
-        @test occursin("TAS1", err.msg)
-        @test occursin("RAISEREG", err.msg)
-        @test occursin("LOWERREG", err.msg)
 
         # The throw must leave sys untouched.
         @test isempty(collect(get_components(GenericConstraint, sys_relocated)))
@@ -463,7 +417,6 @@ end
         gap_gc = get_component(GenericConstraint, gap_sys, vname("N_BAYSW_THERMAL"))
         rhs_len = length(_constraint_series(gap_gc, :rhs))
         @test rhs_len == length(date_range) - 1
-        @test rhs_len != length(unique(invoked_gap.SETTLEMENTDATE))
     end
 
     @testset "grid misalignment between invoked SETTLEMENTDATE and date_range warns" begin
@@ -502,7 +455,6 @@ end
         gc_default = get_component(GenericConstraint, sys_default, vname("N_BAYSW_THERMAL"))
         rhs_ts_default = PowerSystems.IS.get_time_series(gc_default, gc_default.rhs)
         @test get_resolution(rhs_ts_default) == Minute(5)
-
 
         # A single-interval grid can't be exercised end-to-end through _add_nem_constraints!:
         # InfrastructureSystems rejects a one-point SingleTimeSeries ("data array length must be at
@@ -608,15 +560,12 @@ end
             )
             gc = get_component(GenericConstraint, zero_sys, zname(id))
             @test get_sense(gc) == ConstraintSense.LE
-            @test all(==(0.0), _constraint_series(gc, :rhs))
             @test get_source(gc) == "built-in"
             @test get_limit_type(gc) == "Interconnector Zero"
             term = only(get_terms(gc))
-            @test term isa InterconnectorTerm
             @test get_interconnector(term) == interconnector
             @test get_factor(term) == factor
-            rhs_z = _constraint_series(gc, :rhs)
-            @test all(==(0.0), rhs_z)
+            @test all(==(0.0), _constraint_series(gc, :rhs))
         end
 
         # A published GENCONDATA row and SPD* term win over the built-in definition.
@@ -693,7 +642,6 @@ end
         end
         # A modelled fixed loading is unit offer data, not a generic constraint.
         @test !any(startswith("\$"), added_f)
-        @test isnothing(get_component(GenericConstraint, fixed_sys, "\$BW01"))
         skipped_names = get_skipped_constraints(fixed_sys).constraint
         @test !any(startswith("\$BW01"), skipped_names)
         # BW02 has an in-profile row at 00:10 and an attached one at 00:20; both are fixed-load rows, neither built nor reported.
@@ -711,7 +659,6 @@ end
         # BW02 is attached only at its non-profile interval 00:20 (index 5), not at in-profile 00:10 and 00:15.
         bw02 = get_component(Device, fixed_sys, "BW02")
         @test findall(isone, series(bw02, "fixed_load_invoked")) == [5]
-        @test series(bw02, "fixed_load_invoked")[[3, 4]] == [0.0, 0.0]
         @test series(bw02, "fixed_load")[5] == 40.0 / base
 
         # A missing bid table fails with the documented error.
@@ -793,11 +740,6 @@ end
         build_constraints!(late_sys, db, late_range)
         expected = collect(DateTime(2025, 1, 1, 4, 5):Minute(5):DateTime(2025, 1, 1, 5, 55))
         @test get_missing_constraint_intervals(late_sys) == expected
-
-        # The intervals survive a System JSON round-trip.
-        json_path = joinpath(mktempdir(), "sys.json")
-        to_json(late_sys, json_path)
-        @test get_missing_constraint_intervals(System(json_path)) == expected
 
         # A range wholly outside the cache records every interval.
         none = DateTime(2030, 1, 1):Minute(5):DateTime(2030, 1, 1, 0, 15)

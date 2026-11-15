@@ -1,8 +1,5 @@
 @testset "RegionModel common" begin
-
-    hive_dir = AEM_TEST_HIVE_DIR
-    config = HiveConfiguration(hive_location = hive_dir, filesystem = "file")
-    db = aem_connect(config)
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
 
     @testset "get_bus_dataframe" begin
         df = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db)
@@ -76,7 +73,6 @@
 
     @testset "nem_system" begin
         system = nem_system(db, RegionalNetworkConfiguration())
-        @test system isa System
 
         areas = get_components(Area, system) |> collect .|> get_name |> sort!
         @test areas == ["NSW1", "QLD1", "SA1", "SNOWY1", "TAS1", "VIC1"]
@@ -111,7 +107,6 @@
 
         # The scheduled load PUMP1 is a controllable load with a market bid slot, in NSW1.
         pump = get_component(InterruptiblePowerLoad, system, "PUMP1")
-        @test !isnothing(pump)
         @test get_name(get_area(get_bus(pump))) == "NSW1"
         @test get_operation_cost(pump) isa LoadCost
         @test length(get_components(InterruptiblePowerLoad, system)) == 5
@@ -122,7 +117,6 @@
         # A load with a GENUNITS row is not also a generator: its DUID names exactly one Device.
         @test get_component(Device, system, "PUMP1") isa InterruptiblePowerLoad
         @test !has_nem_unit_data(get_component(Device, system, "PUMP1"))
-        @test isnothing(get_component(HydroDispatch, system, "PUMP1"))
 
         # Interconnectors/Interfaces
         @test length(get_components(AreaInterchange, system)) == 6

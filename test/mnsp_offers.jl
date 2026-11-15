@@ -27,8 +27,7 @@ _key_values(ic, key; start = DateTime(2025, 1, 1, 11, 55), n = 2) = PowerSystems
     using PowerSystems
     using Dates
 
-    config = HiveConfiguration(hive_location = AEM_TEST_MNSP_HIVE_DIR, filesystem = "file")
-    db = aem_connect(config)
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_MNSP_HIVE_DIR, filesystem = "file"))
     sys = nem_system(db, RegionalNetworkConfiguration())
     range = DateTime(2025, 1, 1, 11, 55):Minute(5):DateTime(2025, 1, 1, 12, 5)
 
@@ -171,7 +170,6 @@ end
     avail = [10.0, 0.0, 30.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     row = (; (Symbol("BANDAVAIL$i") => avail[i] for i in 1:10)..., (Symbol("PRICEBAND$i") => 100.0 * i for i in 1:10)...)
     curve = AEM._mnsp_offer_curve(row)
-    @test length(PowerSystems.get_y_coords(curve)) == 10
     @test diff(PowerSystems.get_x_coords(curve)) == avail
     @test PowerSystems.get_y_coords(curve) == [100.0 * i for i in 1:10]
     empty_row = (; (Symbol("BANDAVAIL$i") => 0.0 for i in 1:10)..., (Symbol("PRICEBAND$i") => 5.0 for i in 1:10)...)

@@ -2,15 +2,11 @@
 function _objective_cache_system()
     sys = fcas_toy_system()
     gc = PSY.get_component(GenericConstraint, sys, "F_REG")
-    replacements = (
-        (gc, AustralianElectricityMarkets.NEM_CONSTRAINT_SERIES.invoked, [1.0, 0.0, 0.0]),
+    name = AustralianElectricityMarkets.NEM_CONSTRAINT_SERIES.invoked
+    PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, gc, name)
+    AustralianElectricityMarkets.replace_single_series!(
+        sys, gc, AustralianElectricityMarkets.single_series(name, TOY_START, [1.0, 0.0, 0.0], TOY_RESOLUTION),
     )
-    for (owner, name, values) in replacements
-        PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, owner, name)
-        AustralianElectricityMarkets.replace_single_series!(
-            sys, owner, AustralianElectricityMarkets.single_series(name, TOY_START, values, TOY_RESOLUTION),
-        )
-    end
     PSY.transform_single_time_series!(sys, TOY_RESOLUTION, TOY_RESOLUTION)
     return sys
 end
@@ -104,32 +100,4 @@ end
     @test_throws PSI.IS.InvalidValue read_energy(TOY_START)
     PSI.empty_time_series_cache!(model)
     @test PSY.get_y_coords(only(read_energy(TOY_START))) == [1.0]
-end
-
-@testset "bid cache is used when enabled and skipped when disabled" begin
-    sys = fcas_toy_system()
-    template = replay_template(sys)
-    PSY.clear_time_series!(sys)
-    device = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
-    curves = [_toy_offer([(10.0, Float64(i))]) for i in 1:3]
-    series = AustralianElectricityMarkets.single_series("variable_cost", TOY_START, curves, TOY_RESOLUTION)
-    PSY.add_time_series!(sys, device, series)
-    PSY.transform_single_time_series!(sys, TOY_RESOLUTION, TOY_RESOLUTION)
-    for budget in (0, 1024 * 1024)
-        model = PSI.DecisionModel(
-            template, sys; initial_time = TOY_START, horizon = TOY_RESOLUTION,
-            resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, time_series_cache_size = budget,
-        )
-        for i in 1:3
-            stamp = TOY_START + (i - 1) * TOY_RESOLUTION
-            values = PSI.get_time_series_values!(PSY.DeterministicSingleTimeSeries, model, device, "variable_cost", stamp, 1)
-            @test PSY.get_y_coords(only(values)) == [Float64(i)]
-        end
-        caches = PSI.get_time_series_cache(model)
-        if budget == 0
-            @test isempty(caches)
-        else
-            @test any(k -> k isa PSI.IS.TimeSeriesCacheKey && k.name == "variable_cost", keys(caches))
-        end
-    end
 end

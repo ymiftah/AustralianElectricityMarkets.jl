@@ -93,8 +93,7 @@ end
 
 @testset "a battery charges when its load bid is above the marginal generator's price" begin
     # Alta's $20/MWh offer covers the 40 MW load plus the battery's full 30 MW charge, since
-    # the battery's $50/MWh load bid values that charge above Alta's cost. Charging lowers the
-    # objective by (50 - 20) * 30 = 900 $ relative to the no-battery baseline of 40 * 20 = 800 $.
+    # the battery's $50/MWh load bid values that charge above Alta's cost.
     sys = nem_toy_system(
         [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)],
         40.0;
@@ -110,8 +109,6 @@ end
     @test out.battery_out_mw[TOY_BATTERY] ≈ 0.0 atol = TOY_TOLERANCE
     @test out.dispatch_mw[TOY_CHEAP] ≈ 70.0 atol = TOY_TOLERANCE
     @test out.price ≈ 20.0 atol = TOY_TOLERANCE
-    baseline_objective = 40.0 * 20.0 * interval_hours(DISPATCH_INTERVAL)
-    @test out.objective ≈ baseline_objective - (50.0 - 20.0) * 30.0 * interval_hours(DISPATCH_INTERVAL) atol = TOY_TOLERANCE
     @test out.objective ≈ (70.0 * 20.0 - 30.0 * 50.0) * interval_hours(DISPATCH_INTERVAL) atol = TOY_TOLERANCE
 end
 
@@ -306,6 +303,9 @@ end
     @test out.ramp_slack_mw.up ≈ 1.0 atol = TOY_TOLERANCE
     @test out.ramp_slack_mw.down ≈ 0.0 atol = TOY_TOLERANCE
     @test out.objective ≈ AustralianElectricityMarkets.UNIT_RAMP_CVP_FACTOR * mpc * interval_hours(DISPATCH_INTERVAL) rtol = 1.0e-8
+    violations = read_constraint_violations(out.results, sys)
+    @test violations.family == ["unit_ramp"]
+    @test only(violations.MW) ≈ 1.0 atol = TOY_TOLERANCE
 end
 
 @testset "a scheduled load adds to the balance and clears when its bid is above the price" begin
@@ -320,7 +320,6 @@ end
         40.0;
         loads = ["PUMP" => toy_load(30.0, 50.0; initial = 30.0, ramp_up = 100.0)],
     )
-    @test PSY.get_max_active_power(PSY.get_component(InterruptiblePowerLoad, sys, "PUMP")) > 0
     out = solve_toy(sys)
 
     @test out.load_mw["PUMP"] ≈ 30.0 atol = TOY_TOLERANCE
@@ -461,20 +460,6 @@ end
         @test only(violations.MW) ≈ 95.0 atol = TOY_TOLERANCE
         @test out.objective ≈
             (5.0 * 20.0 + 95.0 * AustralianElectricityMarkets.AREA_BALANCE_CVP_FACTOR * mpc) * interval_hours(DISPATCH_INTERVAL) rtol = 1.0e-8
-    end
-
-    @testset "the unit ramp (1155) is reported when it is the only relaxation" begin
-        # The ramp row is infeasible against the zero bound (INITIALMW -1, zero rate) with no load:
-        # the ramp slack is the only relaxation, and it is reported.
-        sys = nem_toy_system(
-            [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = -1.0, ramp_up = 0.0)],
-            0.0,
-        )
-        out = solve_toy(sys)
-        violations = read_constraint_violations(out.results, sys)
-
-        @test violations.family == ["unit_ramp"]
-        @test only(violations.MW) ≈ 1.0 atol = TOY_TOLERANCE
     end
 
     @testset "an ordinary interval reports no violation" begin

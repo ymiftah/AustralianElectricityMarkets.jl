@@ -1,6 +1,10 @@
-import PowerSimulations as PSI
-import PowerSystems as PSY
-const AEMS = AustralianElectricityMarketsSimulations
+# A NEM dispatch template without tie-breaks, for the energy offer guards.
+function _guard_template(sys)
+    template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
+    set_nem_dispatch_models!(template, sys; tie_breaks = false)
+    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+    return template
+end
 
 @testset "per-step update methods only for the closed-loop model" begin
     # An open-loop replay keeps PowerSimulations' own per-step updates; only a closed-loop model recomputes state inputs.
@@ -35,12 +39,7 @@ end
     @test occursin("AreaBalancePowerModel", string(m2.sig))
 end
 
-@testset "the area-balance slack objective is PSI's own, so a plain model keeps its default slack cost" begin
-    m = which(
-        PSI.objective_function!,
-        Tuple{PSI.OptimizationContainer, PSY.System, PSI.NetworkModel{PSI.AreaBalancePowerModel}},
-    )
-    @test m.module === PSI
+@testset "the area PTDF slack objective is PSI's own" begin
     m_ptdf = which(
         PSI.objective_function!,
         Tuple{PSI.OptimizationContainer, PSY.System, PSI.NetworkModel{PSI.AreaPTDFPowerModel}},
@@ -49,12 +48,6 @@ end
 end
 
 @testset "energy offer guards: FCAS-only units have no energy bands, one-sided storage offers throw" begin
-    template_for(sys) = begin
-        template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
-        set_nem_dispatch_models!(template, sys; tie_breaks = false)
-        PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
-        return template
-    end
     # Removes the named device's energy offers on `sides` (their series and bids) before the fixture
     # transforms its series. The removed bid's MAXAVAIL series stays attached but is no longer read.
     without(device_type, name, sides) = (sys, _) -> begin
@@ -81,7 +74,7 @@ end
 
     # (a) A battery with no energy offers builds, has no energy bands, and its discharge carries no energy cost.
     sys = toy(; mutate! = without(EnergyReservoirStorage, TOY_BATTERY, (OfferSide.GEN, OfferSide.LOAD)))
-    model = toy_model(sys; template = template_for(sys))
+    model = toy_model(sys; template = _guard_template(sys))
     status, log = _toy_build_log(model)
     @test status == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
@@ -92,7 +85,7 @@ end
 
     # (b) A battery with a GEN offer and no LOAD offer fails the build instead of charging for free.
     sys = toy(; mutate! = without(EnergyReservoirStorage, TOY_BATTERY, (OfferSide.LOAD,)))
-    status, log = _toy_build_log(toy_model(sys; template = template_for(sys)))
+    status, log = _toy_build_log(toy_model(sys; template = _guard_template(sys)))
     @test status == PSI.ModelBuildStatus.FAILED
     @test occursin("$TOY_BATTERY: the device has an energy offer on the other side but no LOAD energy offer series", log)
 
@@ -101,7 +94,7 @@ end
         loads = [TOY_LOAD_SERVICE_ONLY => toy_load(50.0, 30.0; initial = 0.0, ramp_up = 100.0)],
         mutate! = without(InterruptiblePowerLoad, TOY_LOAD_SERVICE_ONLY, (OfferSide.LOAD,)),
     )
-    model = toy_model(sys; template = template_for(sys))
+    model = toy_model(sys; template = _guard_template(sys))
     status, _ = _toy_build_log(model)
     @test status == PSI.ModelBuildStatus.BUILT
     @test TOY_LOAD_SERVICE_ONLY ∉ band_devices(PSI.get_optimization_container(model), "load")
@@ -117,7 +110,6 @@ end
         130.0,
     )
     out = solve_toy(sys)
-    @test out.dispatch_mw[TOY_CHEAP] ≈ 100.0 atol = 1.0e-6
     @test out.dispatch_mw[TOY_EXPENSIVE] ≈ 30.0 atol = 1.0e-6
     bands = PSI.get_variable(out.container, EnergyOfferBandVariable(), ThermalStandard, "gen")
     @test axes(bands, 2) == ["1", "2", "3"]
@@ -139,12 +131,6 @@ end
 end
 
 @testset "an energy offer on a side the device type does not bid fails the build" begin
-    template_for(sys) = begin
-        template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
-        set_nem_dispatch_models!(template, sys; tie_breaks = false)
-        PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
-        return template
-    end
     offer = (sys, stamps) -> PSY.PiecewiseStepData([0.0, 10.0], [5.0])
     function stray(device_type, name, side, series)
         return (sys, stamps) -> begin
@@ -161,12 +147,12 @@ end
         loads = [TOY_LOAD_SERVICE_ONLY => toy_load(50.0, 30.0; initial = 0.0, ramp_up = 100.0)], mutate!,
     )
     sys = toy(stray(ThermalStandard, TOY_CHEAP, OfferSide.LOAD, "energy_offer_decremental"))
-    status, log = _toy_build_log(toy_model(sys; template = template_for(sys)))
+    status, log = _toy_build_log(toy_model(sys; template = _guard_template(sys)))
     @test status == PSI.ModelBuildStatus.FAILED
     @test occursin("$TOY_CHEAP: the device carries an unpriced LOAD energy offer series", log)
 
     sys = toy(stray(InterruptiblePowerLoad, TOY_LOAD_SERVICE_ONLY, OfferSide.GEN, "energy_offer"))
-    status, log = _toy_build_log(toy_model(sys; template = template_for(sys)))
+    status, log = _toy_build_log(toy_model(sys; template = _guard_template(sys)))
     @test status == PSI.ModelBuildStatus.FAILED
     @test occursin("$TOY_LOAD_SERVICE_ONLY: the device carries an unpriced GEN energy offer series", log)
 end

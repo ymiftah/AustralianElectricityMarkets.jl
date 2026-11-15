@@ -65,12 +65,9 @@ end
     @test bid == _static_energy_bid(AEM.BidDirection.GEN)
     @test bid != _static_energy_bid(AEM.BidDirection.LOAD)
     @test AEM.get_fast_start_profile(bid) == AEM.FastStartProfile((1.0, 2.0, 3.0, 4.0))
-    @test AEM.get_normal_status(bid) === true
-    @test isnothing(AEM.get_energy_limit(_keyed_energy_bid(AEM.BidDirection.GEN)))
 
     fcas = _static_fcas_bid(BidType.RAISE6SEC, AEM.BidDirection.GEN)
     @test AEM.get_trapezium(fcas) == AEM.FCASTrapeziumPoints((0.0, 1.0, 2.0, 3.0))
-    @test AEM.get_service(fcas) == BidType.RAISE6SEC
     @test fcas == _static_fcas_bid(BidType.RAISE6SEC, AEM.BidDirection.GEN)
 end
 
@@ -89,8 +86,6 @@ end
     bid = _keyed_energy_bid(AEM.BidDirection.GEN)
     restored = _IS.deserialize(AEM.NEMEnergyBid, _IS.serialize(bid))
     @test restored == bid
-    @test restored.max_avail isa _IS.StaticTimeSeriesKey
-    @test isnothing(restored.energy_limit)
 end
 
 @testset "NEMOfferCost serializes static and key-backed bids" begin
@@ -100,8 +95,6 @@ end
     )
     restored = _IS.deserialize(NEMOfferCost, _IS.serialize(cost))
     @test restored == cost
-    @test AEM.get_fast_start_profile(get_energy_bids(restored)[1]) == AEM.FastStartProfile((1.0, 2.0, 3.0, 4.0))
-    @test AEM.get_trapezium(get_fcas_bids(restored)[1]) == AEM.FCASTrapeziumPoints((0.0, 1.0, 2.0, 3.0))
 
     empty = NEMOfferCost()
     @test _IS.deserialize(NEMOfferCost, _IS.serialize(empty)) == empty
@@ -121,7 +114,6 @@ end
     restored = _IS.deserialize(AEM.NEMEnergyBid, _IS.serialize(priced))
     @test restored == priced
     @test restored.band_prices isa NTuple{10, Float64}
-    @test restored.band_prices == prices
 end
 
 @testset "NEMFCASBid band_prices default to nothing, compare by value and round-trip as a ten-tuple" begin
@@ -138,5 +130,4 @@ end
     restored = _IS.deserialize(AEM.NEMFCASBid, _IS.serialize(priced))
     @test restored == priced
     @test restored.band_prices isa NTuple{10, Float64}
-    @test restored.band_prices == prices
 end

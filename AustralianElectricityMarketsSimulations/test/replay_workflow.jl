@@ -20,7 +20,6 @@ function replay_steps(
     solved = read_solved_interval(replay.results, sys)
     comparison = compare_intervals(read_published_interval(db, steps; intervention), solved)
     violations = read_constraint_violations(replay.results, sys)
-    ramp = select(filter(:family => ==("unit_ramp"), violations), :name => :DUID, :DateTime, :MW, :direction)
     stats = PSI.read_optimizer_stats(replay.results)
     solver_stats = DataFrame(
         SETTLEMENTDATE = collect(steps), objective_value = stats.objective_value,
@@ -28,7 +27,7 @@ function replay_steps(
     )
     return (;
         sys, results = replay.results, skipped = replay.skipped_constraints, comparison,
-        violations, ramp, solver_stats,
+        violations, solver_stats,
     )
 end
 
@@ -77,81 +76,32 @@ PSI.list_variable_keys(::FlowWithoutLossResults) = [PSI.VariableKey(PSI.FlowActi
     @test_throws ArgumentError read_solved_interval(FlowWithoutLossResults(), PSY.System(100.0))
 end
 
-@testset "Replication pipeline" begin
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
-    t = DateTime(2025, 1, 1, 0, 5, 0)
-
-    @testset "a replay over the mock cache solves and compares" begin
-        result = replay_steps(db, t:DISPATCH_INTERVAL:t)
-        @test result.results isa PSI.SimulationProblemResults
-        @test names(result.skipped) == ["constraint", "reason", "n_missing"]
-        @test all(in((:no_available_device, :never_invoked)), result.skipped.reason)
-        comparison = result.comparison
-        published = read_published_interval(db, t)
-
-        # One row per published key, so nothing is dropped silently.
-        @test all(==(t), comparison.prices.SETTLEMENTDATE)
-        @test nrow(comparison.prices) == nrow(published.prices)
-        @test nrow(comparison.dispatch) == nrow(published.dispatch)
-        @test nrow(comparison.interconnectors) == nrow(published.interconnectors)
-        @test nrow(comparison.fcas_prices) == nrow(published.fcas_prices)
-        @test all(==(t), comparison.fcas_prices.SETTLEMENTDATE)
-
-        @test issubset(Set(["NSW1", "QLD1", "SA1", "TAS1", "VIC1"]), Set(comparison.prices.REGIONID))
-        @test all(isfinite, skipmissing(comparison.prices.ROP_solved))
-        @test any(!ismissing, comparison.prices.ROP_solved)
-        @test any(!ismissing, comparison.dispatch.TOTALCLEARED_solved)
-        @test any(!ismissing, comparison.interconnectors.MWFLOW_solved)
-        @test all(isfinite, skipmissing(comparison.interconnectors.MWLOSSES_solved))
-        @test any(!ismissing, comparison.fcas_prices.ROP_solved)
-        # The scheduled load PUMP1 is solved, as a non-negative consumed MW.
-        pump = only(filter(:DUID => ==("PUMP1"), comparison.dispatch))
-        @test !ismissing(pump.TOTALCLEARED_solved)
-        @test pump.TOTALCLEARED_solved >= 0
-        # The 1-second markets are published, modelled and compared like the other FCAS markets.
-        for bid_type in (BidType.RAISE1SEC, BidType.LOWER1SEC)
-            rows = filter(:BIDTYPE => ==(bid_type), comparison.fcas_prices)
-            @test !isempty(rows)
-            @test any(!ismissing, rows.ROP_solved)
-        end
-        # The unavailable IC6 has no solved flow.
-        @test ismissing(only(filter(:INTERCONNECTORID => ==("IC6"), comparison.interconnectors)).MWFLOW_solved)
-    end
-
-    @testset "MNSP offers reach the replay model" begin
-        # The mock offers Basslink-like links on IC2 (300 MW available) for the intervals up to 04:00.
-        sys = nem_system(db, NEMDEConfiguration(); date_range = t:Minute(5):(t + Minute(10)))
-        ic2 = get_component(AreaInterchange, sys, "IC2")
-        @test !isempty(get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPBid, ic2))
-        result = replay_steps(db, t:DISPATCH_INTERVAL:t; interval_flow_limits = true)
-        @test any(
-            k -> PSI.IS.Optimization.get_entry_type(k) === MNSPLinkFlowVariable,
-            PSI.list_variable_keys(result.results),
-        )
-        flow = only(filter(:INTERCONNECTORID => ==("IC2"), result.comparison.interconnectors)).MWFLOW_solved
-        @test abs(flow) <= 300.0 + 1.0e-6
-    end
-end
-
 @testset "a replay of a range over the mock cache" begin
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
     t1, t2 = DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 10)
     result = replay_steps(db, t1:DISPATCH_INTERVAL:t2)
-    @test length(replay_chunks(t1:DISPATCH_INTERVAL:t2)) == 1
+    # The mock system leaves no constraint out under the full template.
+    @test isempty(result.skipped)
     c = result.comparison
-    for table in (:prices, :dispatch, :interconnectors)
+    # One row per published key, so nothing is dropped silently.
+    for table in (:prices, :dispatch, :interconnectors, :fcas_prices)
         @test first(names(c[table])) == "SETTLEMENTDATE" && Set(c[table].SETTLEMENTDATE) == Set([t1, t2])
         @test nrow(c[table]) == sum(nrow(read_published_interval(db, t)[table]) for t in (t1, t2))
     end
+    @test issubset(Set(["NSW1", "QLD1", "SA1", "TAS1", "VIC1"]), Set(c.prices.REGIONID))
     @test all(isfinite, skipmissing(c.prices.ROP_solved)) && any(!ismissing, c.prices.ROP_solved)
     @test any(!ismissing, c.dispatch.TOTALCLEARED_solved)
-    # Interchanges are modeled (the unavailable IC6 is not), and so is FCAS.
+    # The scheduled load PUMP1 is solved, as a non-negative consumed MW.
+    @test all(mw -> !ismissing(mw) && mw >= 0, filter(:DUID => ==("PUMP1"), c.dispatch).TOTALCLEARED_solved)
+    # Interchanges are modeled (the unavailable IC6 is not), and so is FCAS, the 1-second markets included.
     @test any(!ismissing, c.interconnectors.MWFLOW_solved)
     @test all(isfinite, skipmissing(c.interconnectors.MWLOSSES_solved))
     @test all(ismissing, filter(:INTERCONNECTORID => ==("IC6"), c.interconnectors).MWFLOW_solved)
-    @test any(!ismissing, c.fcas_prices.ROP_solved) && all(isfinite, skipmissing(c.fcas_prices.ROP_solved))
+    @test all(isfinite, skipmissing(c.fcas_prices.ROP_solved))
+    for bid_type in (BidType.RAISE1SEC, BidType.LOWER1SEC)
+        @test any(!ismissing, filter(:BIDTYPE => ==(bid_type), c.fcas_prices).ROP_solved)
+    end
     # Invoked at 00:10 only over BW01-BW04: modeled now that batteries are, and masked at 00:05.
-    @test !any(startswith("N_PARTIAL_COVERAGE"), result.skipped.constraint)
     duals = stock_gc_duals(result.results)
     partial = only(k for k in keys(duals) if startswith(k, "N_PARTIAL_COVERAGE"))
     @test duals[partial][t1] == 0.0
@@ -159,11 +109,8 @@ end
     # The MNSP IC2 is modeled with its link offers in both steps.
     links = only(values(PSI.read_realized_variables(result.results, ["MNSPLinkFlowVariable__AreaInterchange"])))
     @test Set(links.DateTime) == Set([t1, t2]) && all(>=(-1.0e-9), links.value)
-    @test names(result.ramp) == ["DUID", "DateTime", "MW", "direction"]
     @test issubset(Set(result.violations.DateTime), Set([t1, t2]))
-
-    # Every family is modeled by default: no unmodeled skips, FCAS, interchange losses and storage variables.
-    @test !any(in(("unmodeled_fcas_service", "unmodeled_device_type")), string.(result.skipped.reason))
+    # Every family is modeled by default: FCAS, interchange losses and storage variables.
     var_keys = PSI.list_variable_keys(result.results)
     entry_and_component(k) = (PSI.IS.Optimization.get_entry_type(k), PSI.IS.Optimization.get_component_type(k))
     @test any(k -> entry_and_component(k)[1] === FCASCapacityVariable, var_keys)
@@ -171,10 +118,18 @@ end
     @test any(k -> entry_and_component(k) == (ActivePowerOutVariable, EnergyReservoirStorage), var_keys)
 end
 
+@testset "MNSP offers bound the replayed flow under interval flow limits" begin
+    # The mock offers Basslink-like links on IC2 (300 MW available) for the intervals up to 04:00.
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
+    t = DateTime(2025, 1, 1, 0, 5, 0)
+    result = replay_steps(db, t:DISPATCH_INTERVAL:t; interval_flow_limits = true)
+    flow = only(filter(:INTERCONNECTORID => ==("IC2"), result.comparison.interconnectors)).MWFLOW_solved
+    @test abs(flow) <= 300.0 + 1.0e-6
+end
+
 @testset "replay_chunks splits a replay into simulations" begin
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
     t1, t2 = DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 20)
-    @test_throws ArgumentError replay_chunks(t1:DISPATCH_INTERVAL:t2; chunk = Minute(7))
     # Chunks are a partition of the range; two chunks solve the same intervals as one.
     one = replay_chunked(db, t1:DISPATCH_INTERVAL:t2)
     two = replay_chunked(db, t1:DISPATCH_INTERVAL:t2; chunk = Minute(10))
@@ -236,18 +191,4 @@ end
     @test all(ismissing, result.comparison.fcas_prices.ROP_solved)
     @test any(in((:unmodeled_fcas_service, :unmodeled_device_type)), result.skipped.reason)
     @test any(!ismissing, result.comparison.dispatch.TOTALCLEARED_solved)
-end
-
-@testset "the skipped-constraints report of the mock replay system" begin
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
-    t = DateTime(2025, 1, 1, 0, 5, 0)
-    sys = nem_system(db, NEMDEConfiguration(); date_range = t:DISPATCH_INTERVAL:(t + 3DISPATCH_INTERVAL))
-    template = template_nemde()
-    rows = replay_skipped_constraints(sys, template)
-    # The mock system leaves no constraint out under the full template.
-    @test names(rows) == ["constraint", "reason", "n_missing"]
-    @test nrow(rows) == 0
-    @test replay_skipped_constraints(sys, template) == rows
-    @test !isdefined(AEMS, :prepare_replay!)
-    @test !isdefined(AEMS, :exclude_unmodeled_services!)
 end

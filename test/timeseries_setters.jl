@@ -6,36 +6,10 @@
     using Statistics
     import TimeSeries
 
-    hive_dir = AEM_TEST_HIVE_DIR
-    @test isdir(hive_dir)
-
-    config = HiveConfiguration(hive_location = hive_dir, filesystem = "file")
-    db = aem_connect(config)
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
 
     # Base system for testing
     sys_base, _ = nem_network(db)
-
-    # Writes a DISPATCHLOAD hive whose row (interval i of grid, duid) takes the values `cell(duid, i)`.
-    function dispatchload_db(cell, grid, duids)
-        rows = DataFrame(
-            SETTLEMENTDATE = DateTime[], DUID = String[], INTERVENTION = Int[],
-            INITIALMW = Union{Float64, Missing}[], RAMPUPRATE = Union{Float64, Missing}[],
-            RAMPDOWNRATE = Union{Float64, Missing}[], AVAILABILITY = Union{Float64, Missing}[],
-        )
-        for (i, t) in enumerate(grid), duid in duids
-            push!(rows, (; SETTLEMENTDATE = t, DUID = duid, INTERVENTION = 0, cell(duid, i)...))
-        end
-        rows[!, :archive_month] = fill("2025-01", nrow(rows))
-        hive = mktempdir()
-        conn = DuckDB.connect(DuckDB.DB())
-        DuckDB.execute(conn, "SET preserve_identifier_case=true")
-        DuckDB.register_data_frame(conn, rows, "tmp_table")
-        table_dir = joinpath(hive, "DISPATCHLOAD")
-        mkpath(table_dir)
-        DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
-        DuckDB.unregister_table(conn, "tmp_table")
-        return aem_connect(HiveConfiguration(hive_location = hive, filesystem = "file"))
-    end
 
     @testset "demand build rejects incomplete regional demand" begin
         # The mock hive holds demand to 04:00; a window running to 06:00 has no rows for the last two hours.
@@ -114,7 +88,6 @@
                             gen = get_time_series_values(SingleTimeSeries, bat, "bid_energy_max_avail_gen"; start_time = first(date_range), len = horizon),
                             load = get_time_series_values(SingleTimeSeries, bat, "bid_energy_max_avail_load"; start_time = first(date_range), len = horizon),
                         )
-                        @test length(avail.gen) == horizon
                         @test avail.gen ≈ avail.load
                         @test all(x -> 100.0 <= x <= 149.0, avail.gen)
                         @test avail.gen[end] > avail.gen[1]
@@ -161,38 +134,6 @@
                 @test get_time_series_timestamps(SingleTimeSeries, device, name)[1] == second_range[1]
             end
         end
-    end
-
-    @testset "Absolute value correctness (regression: 100x demand/hydro scaling bug)" begin
-        sys = deepcopy(sys_base)
-        set_units_base_system!(sys, "NATURAL_UNITS")
-
-        resolution = Minute(5)
-        start_date = DateTime(2025, 1, 1, 0, 0)
-        horizon = Hour(2)
-        date_range = start_date:resolution:(start_date + horizon)
-
-        attach_demand!(sys, db, date_range; resolution = resolution)
-
-        demand_df = read_demand(db; resolution = resolution)
-        subset!(demand_df, :SETTLEMENTDATE => ByRow(x -> first(date_range) <= x < last(date_range)))
-
-        @testset "demand build matches true TOTALDEMAND and LOSSDEMAND (NATURAL_UNITS)" begin
-            for load in get_components(PowerLoad, sys)
-                region_id = replace(get_name(load), " Load" => "")
-                region_demand = @chain demand_df begin
-                    subset(:REGIONID => ByRow(==(region_id)))
-                    sort(:SETTLEMENTDATE)
-                end
-                isempty(region_demand) && continue
-                reconstructed = get_time_series_values(SingleTimeSeries, load, "max_active_power")
-                @test isapprox(reconstructed, region_demand.TOTALDEMAND; atol = 1.0e-6)
-                reconstructed = get_time_series_values(SingleTimeSeries, load, "loss_demand")
-                @test isapprox(reconstructed, region_demand.LOSSDEMAND; atol = 1.0e-6)
-                @test !isapprox(reconstructed, region_demand.TOTALDEMAND; atol = 1.0e-6)
-            end
-        end
-
     end
 
     @testset "read_uigf" begin
@@ -243,7 +184,6 @@
             @test_logs (:warn, r"UIGF column") match_mode = :any begin
                 result = read_uigf(no_uigf_db, date_range; resolution = resolution)
             end
-            @test result isa DataFrame
             @test isempty(result)
             @test Set(names(result)) == Set(["SETTLEMENTDATE", "DUID", "UIGF"])
         end
@@ -375,9 +315,8 @@
         end
     end
 
-    @testset "Setters are independent of the units base at write time" begin
-        # nem_system leaves the System in SYSTEM_BASE (what every docs page uses);
-        # solve_interval switches to NATURAL_UNITS first. Both must store the same series.
+    @testset "Demand matches TOTALDEMAND and LOSSDEMAND whatever the units base at write time" begin
+        # Regression: a 100x demand scaling bug. Both write modes must store the same MW series.
         resolution = Minute(5)
         start_date = DateTime(2025, 1, 1, 0, 0)
         date_range = start_date:resolution:(start_date + Hour(2))
@@ -405,6 +344,9 @@
                     isempty(truth) && continue
                     got = get_time_series_values(SingleTimeSeries, load, "max_active_power")
                     @test isapprox(got, truth.TOTALDEMAND; atol = 1.0e-6)
+                    loss = get_time_series_values(SingleTimeSeries, load, "loss_demand")
+                    @test isapprox(loss, truth.LOSSDEMAND; atol = 1.0e-6)
+                    @test !isapprox(loss, truth.TOTALDEMAND; atol = 1.0e-6)
                 end
             end
         end
@@ -866,7 +808,6 @@ end
             device = get_component(name == "BW02" ? HydroDispatch : RenewableDispatch, sys, name)
             ta = get_time_series_array(SingleTimeSeries, device, "max_active_power")
             @test TimeSeries.timestamp(ta) == stamps
-            @test length(ta) == length(stamps)
         end
         # A Date range is read by its first and last days, half-hourly across the first day.
         sys_days = regional_system()

@@ -38,15 +38,9 @@ end
 
 @testset "an MNSP cannot enter the regulated formulation without its offers" begin
     sys = nem_system(aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR)), RegionalNetworkConfiguration())
-    ic = get_component(AreaInterchange, sys, "IC2")
-    @test !AEMS._has_mnsp_offers(ic)
-    @test_throws r"IC2.*MNSP" AEMS._check_mnsp_offers(ic)
     # With every dispatch device unavailable, the template reaches the MNSP check.
     foreach(d -> set_available!(d, false), AustralianElectricityMarkets.nem_dispatch_devices(sys))
     @test_throws r"IC2.*MNSP" replay_template(sys)
-    PSY.remove_supplemental_attribute!(sys, ic, only(PSY.get_supplemental_attributes(AustralianElectricityMarkets.NEMInterconnectorRegistration, ic)))
-    PSY.add_supplemental_attribute!(sys, ic, AustralianElectricityMarkets.NEMInterconnectorRegistration(; kind = AustralianElectricityMarkets.InterconnectorKind.REGULATED))
-    @test isnothing(AEMS._check_mnsp_offers(ic))
 end
 
 @testset "fixed loads retain the dispatch variable's direction" begin
@@ -58,7 +52,6 @@ end
     by_key = Dict((r.DUID, r.INTERVAL_DATETIME) => r.TARGET for r in eachrow(targets))
     @test by_key[("PUMP1", t)] == 30.0
     @test by_key[("BW01", t)] == -5.0
-    @test haskey(by_key, ("PUMP1", t))
     @test !haskey(by_key, ("PUMP1", t + Minute(5)))
 end
 

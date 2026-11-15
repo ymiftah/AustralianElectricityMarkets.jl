@@ -4,9 +4,7 @@
     using Dates
     using DataFrames
 
-    hive_dir = AEM_TEST_HIVE_DIR
-    config = HiveConfiguration(hive_location = hive_dir, filesystem = "file")
-    db = aem_connect(config)
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
 
     start_date = DateTime(2025, 1, 1, 0, 0)
     date_range = start_date:Minute(5):(start_date + Hour(1))
@@ -46,8 +44,6 @@
             enablement_max = 100.0, max_avail = 10.0,
         )
         nt = Tuple(no_ramps)
-        @test isnan(nt[6])
-        @test isnan(nt[7])
         @test isequal(nt, (20.0, 30.0, 90.0, 100.0, 10.0, NaN, NaN))
         @test isequal(FCASTrapezium(nt), no_ramps)
     end
@@ -113,7 +109,6 @@
 
     @testset "read_fcas_bids" begin
         bids = read_fcas_bids(db, date_range, BidType.RAISE6SEC)
-        @test !isempty(bids)
         # ASLOAD1, a non-scheduled load, bids the point trapezium (0, 0, 0, 0).
         asload = bids.DUID .== "ASLOAD1"
         @test any(asload)
@@ -127,7 +122,6 @@
         @test all(ismissing, reg_bids.ROCUP)
 
         both = read_fcas_bids(db, date_range, [BidType.RAISE6SEC, BidType.RAISEREG])
-        @test all(b -> b isa BidType, both.BIDTYPE)
         @test isequal(select(subset(both, :BIDTYPE => ByRow(==(BidType.RAISE6SEC))), Not(:BIDTYPE)), bids)
         @test isequal(select(subset(both, :BIDTYPE => ByRow(==(BidType.RAISEREG))), Not(:BIDTYPE)), reg_bids)
     end
@@ -171,12 +165,11 @@
 
     @testset "read_fcas_requirements" begin
         req = read_fcas_requirements(db, date_range)
-        @test !isempty(req)
         @test Set(["SETTLEMENTDATE", "REGIONID", "BIDTYPE", "GENCONID", "REQUIREMENT", "LHS", "MARGINALVALUE", "DESCRIPTION", "CONSTRAINTTYPE"]) ⊆ Set(names(req))
-        @test BidType.RAISEREG in req.BIDTYPE
         # DISPATCHCONSTRAINT.RHS varies per interval as requirement_mw(bid_type) + 0.1*i
         # (mock_data.jl step 14) - check the exact per-interval series, not a flat value.
         raisereg_nsw = sort(subset(req, :REGIONID => ByRow(==("NSW1")), :BIDTYPE => ByRow(==(BidType.RAISEREG))), :SETTLEMENTDATE)
+        @test !isempty(raisereg_nsw)
         @test raisereg_nsw.REQUIREMENT ≈ [30.0 + 0.1 * i for i in 0:(nrow(raisereg_nsw) - 1)]
         @test all(==(2.25), raisereg_nsw.MARGINALVALUE)
         raise6sec_nsw = sort(subset(req, :REGIONID => ByRow(==("NSW1")), :BIDTYPE => ByRow(==(BidType.RAISE6SEC))), :SETTLEMENTDATE)
@@ -198,8 +191,6 @@
         raise1sec = subset(dispatch, :BIDTYPE => ByRow(==(BidType.RAISE1SEC)))
         @test !isempty(raise1sec)
         @test all(==(5.0), raise1sec.ACTUALAVAILABILITY)
-        bids = read_fcas_bids(db, date_range, BidType.RAISE1SEC)
-        @test !isempty(bids)
         sys = first(nem_network(db))
         set_market_bids!(sys, db, date_range)
         @test any(
@@ -212,7 +203,6 @@
         # Past interval 24 only DISPATCH_FCAS_REQ_CONSTRAINT has rows (mock_data.jl step 13).
         new_only_range = (start_date + Minute(5 * 30)):Minute(5):(start_date + Minute(5 * 40))
         req = read_fcas_requirements(db, new_only_range)
-        @test !isempty(req)
         @test BidType.RAISEREG in req.BIDTYPE
         # One row per (SETTLEMENTDATE, REGIONID, BIDTYPE, GENCONID) - the QUALIFY in the
         # union must not fan out against GENCONDATA's version rows.
@@ -244,7 +234,6 @@
 
     @testset "read_fcas_prices" begin
         prices = read_fcas_prices(db, date_range)
-        @test !isempty(prices)
         @test Set(["SETTLEMENTDATE", "REGIONID", "BIDTYPE", "RRP", "ROP", "APCFLAG"]) == Set(names(prices))
         @test BidType.RAISEREG in prices.BIDTYPE
         raisereg_nsw = subset(prices, :REGIONID => ByRow(==("NSW1")), :BIDTYPE => ByRow(==(BidType.RAISEREG)))

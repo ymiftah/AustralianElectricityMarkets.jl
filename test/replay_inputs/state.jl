@@ -52,7 +52,6 @@ _rs_raw(device, value, stamps) = fill(Float64(value), length(stamps))
     mw = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0]
     _, gen = _rs_observed_unit("keyed"; mw, modes = [0.0, 1.0, 2.0, 3.0, 4.0, 0.0, 1.0])
     states = AustralianElectricityMarkets.observed_unit_states(gen, _RS_STAMPS)
-    @test all(s -> s isa AustralianElectricityMarkets.NEMUnitState, states)
     @test [s.initial_mw for s in states] == mw
     @test [s.dispatch_mode for s in states] == [0, 1, 2, 3, 4, 0, 1]
 end
@@ -75,12 +74,7 @@ end
     sys = System(100.0)
     bus = _rs_bus()
     add_component!(sys, bus)
-    stock = ThermalStandard(;
-        name = "stock_unit", available = true, status = true, bus = bus, active_power = 50.0,
-        reactive_power = 0.0, rating = 120.0, active_power_limits = (min = 10.0, max = 100.0),
-        reactive_power_limits = nothing, ramp_limits = nothing, operation_cost = ThermalGenerationCost(nothing),
-        base_power = 100.0,
-    )
+    stock = _rs_thermal("stock_unit", bus)
     add_component!(sys, stock)
     @test_throws ArgumentError AustralianElectricityMarkets.observed_unit_states(stock, _RS_STAMPS[1:1])
 

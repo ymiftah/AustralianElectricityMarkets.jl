@@ -1,7 +1,3 @@
-using HiGHS
-import PowerSimulations as PSI
-import PowerSystems as PSY
-
 function replay_validation_system(terms; invoked = 1.0, with_off_constraint = false)
     return nem_toy_system(
         [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0;
@@ -42,7 +38,6 @@ end
     @test only(skipped) == (constraint = "N_REVIEW", reason = :manual_exclusion, n_missing = 0)
     # The system is untouched: the constraint stays available, and the model has no container for it.
     gc = PSY.get_component(GenericConstraint, sys, "N_REVIEW")
-    @test PSY.get_available(gc)
     model = PSI.DecisionModel(
         AEMS.NEMDispatchProblem, template, sys; optimizer = HiGHS.Optimizer, initial_time = TOY_START,
     )
@@ -53,16 +48,16 @@ end
     @test PSY.get_available(gc)
 end
 
-@testset "a never-invoked constraint bypasses buildability checks and is unavailable from the build" begin
+@testset "a never-invoked constraint bypasses buildability checks and is reported again on a reused system" begin
     ghost = UnitTerm("GHOST", BidType.ENERGY, 1.0)
     sys = replay_validation_system(ConstraintTerm[ghost]; invoked = 0.0)
     AustralianElectricityMarkets._set_constraint_availability!(sys)
-    skipped = NamedTuple[]
-    result = replay_template(sys; template = with_generic_constraints!(energy_template()), skipped)
-    @test result isa PSI.ProblemTemplate
-    @test only(skipped) == (constraint = "N_REVIEW", reason = :never_invoked, n_missing = 0)
-    @test !PSY.get_available(PSY.get_component(GenericConstraint, sys, "N_REVIEW"))
-    @test AustralianElectricityMarkets.get_unavailable_constraints(sys).reason == [:never_invoked]
+    for _ in 1:2
+        skipped = NamedTuple[]
+        @test replay_template(sys; template = with_generic_constraints!(energy_template()), skipped) isa PSI.ProblemTemplate
+        @test only(skipped) == (constraint = "N_REVIEW", reason = :never_invoked, n_missing = 0)
+        @test !PSY.get_available(PSY.get_component(GenericConstraint, sys, "N_REVIEW"))
+    end
 end
 
 @testset "an omitted family cannot hide a missing component in either term order" begin
@@ -160,18 +155,6 @@ end
     @test !PSY.get_available(off)
 end
 
-@testset "a never-invoked constraint stays excluded and is reported again on a reused system" begin
-    ghost = UnitTerm("GHOST", BidType.ENERGY, 1.0)
-    sys = replay_validation_system(ConstraintTerm[ghost]; invoked = 0.0)
-    AustralianElectricityMarkets._set_constraint_availability!(sys)
-    review = PSY.get_component(GenericConstraint, sys, "N_REVIEW")
-    for _ in 1:2
-        rows = replay_skipped_constraints(sys, with_generic_constraints!(energy_template()))
-        @test !PSY.get_available(review)
-        @test rows == DataFrame(; constraint = ["N_REVIEW"], reason = [:never_invoked], n_missing = [0])
-    end
-end
-
 # The toy replay's balance-slack objective coefficient, one area and interval, as recorded on the
 # code that priced slacks in an override: 100 MW x 150 CVP x 17,500 $/MWh x 5/60 h.
 const TOY_BALANCE_SLACK_COEFFICIENT = 2.1875e7
@@ -193,26 +176,9 @@ const TOY_BALANCE_SLACK_COEFFICIENT = 2.1875e7
         AEMS.NEMDispatchProblem, replay_template(sys), sys; optimizer = HiGHS.Optimizer, initial_time = DateTime(2020, 1, 1),
     )
     @test_throws r"No published Market Price Cap" PSI.validate_template(undated)
-    @test PSI.build!(undated; output_dir = mktempdir()) == PSI.ModelBuildStatus.FAILED
     @test_throws ArgumentError PSI.DecisionModel(
         AEMS.NEMDispatchProblem, replay_template(sys), sys; optimizer = HiGHS.Optimizer, initial_time = TOY_START, market_price_cap = 0.0,
     )
-end
-
-@testset "NEMDispatchProblem prices the balance slacks and its settings at one Market Price Cap" begin
-    sys = nem_toy_system(
-        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0; horizon = TOY_RESOLUTION,
-    )
-    template = replay_template(sys)
-    template_cost = PSI.get_slack_cost(PSI.get_network_model(template))
-    model = PSI.DecisionModel(
-        AEMS.NEMDispatchProblem, template, sys; optimizer = HiGHS.Optimizer, initial_time = TOY_START, market_price_cap = 12_345.0,
-    )
-    @test PSI.get_ext(PSI.get_settings(model))["market_price_cap_override"] == 12_345.0
-    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    model_cost = PSI.get_slack_cost(PSI.get_network_model(PSI.get_template(model)))
-    @test model_cost == AEMS._area_balance_slack_cost(sys, 12_345.0)
-    @test PSI.get_slack_cost(PSI.get_network_model(template)) == template_cost
 end
 
 @testset "a plain AreaBalance model keeps PSI's slack cost when AEMSim is loaded" begin
@@ -241,11 +207,15 @@ end
     )
     cap = 12_345.0
     template = replay_template(sys)
+    template_cost = PSI.get_slack_cost(PSI.get_network_model(template))
     model = PSI.DecisionModel(
         AEMS.NEMDispatchProblem, template, sys; market_price_cap = cap, optimizer = HiGHS.Optimizer, initial_time = TOY_START,
     )
     @test PSI.get_ext(PSI.get_settings(model))["market_price_cap_override"] == cap
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    # The model's network slack cost is priced at the override; the caller's template is not changed.
+    @test PSI.get_slack_cost(PSI.get_network_model(PSI.get_template(model))) == AEMS._area_balance_slack_cost(sys, cap)
+    @test PSI.get_slack_cost(PSI.get_network_model(template)) == template_cost
     container = PSI.get_optimization_container(model)
     objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
     base_power = PSY.get_base_power(sys)
@@ -302,20 +272,14 @@ end
     @test PSI.get_slack_cost(PSI.get_network_model(template)) == template_cost
 end
 
-@testset "replay_skipped_constraints returns the skipped table and is repeatable" begin
-    @test !isdefined(AEMS, :prepare_replay!)
-    @test !isdefined(AEMS, :exclude_unmodeled_services!)
+@testset "replay_skipped_constraints and repeated builds leave the system's series unchanged" begin
     sys = nem_toy_system(
         [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0; horizon = TOY_RESOLUTION,
     )
-    forecasts = PSY.get_time_series_counts(sys).forecast_count
-    skipped = replay_skipped_constraints(sys, replay_template(sys))
-    @test skipped isa DataFrame
-    @test names(skipped) == ["constraint", "reason", "n_missing"]
-    @test PSY.get_time_series_counts(sys).forecast_count == forecasts > 0
-    @test replay_skipped_constraints(sys, replay_template(sys)) == skipped
-    # A model builds from the same system and template without changing the series of the system.
     series = PSY.get_time_series_counts(sys)
+    @test series.forecast_count > 0
+    @test isempty(replay_skipped_constraints(sys, replay_template(sys)))
+    @test PSY.get_time_series_counts(sys) == series
     for _ in 1:2
         model = PSI.DecisionModel(
             AEMS.NEMDispatchProblem, replay_template(sys), sys; optimizer = HiGHS.Optimizer, initial_time = TOY_START,

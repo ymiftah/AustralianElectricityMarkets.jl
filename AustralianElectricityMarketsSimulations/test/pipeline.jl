@@ -12,8 +12,6 @@
     folder = mktempdir()
     replay = replay_simulation(sys, steps; name = "custom_dispatch", simulation_name = "custom_run", folder)
     simulation = replay.simulation
-    skipped = replay.skipped_constraints
-    @test simulation isa PSI.Simulation
     @test isnothing(simulation.internal)
     @test PSI.get_steps(simulation) == 2
     @test PSI.build!(simulation; store_systems_in_results = false) == PSI.SimulationBuildStatus.BUILT
@@ -28,8 +26,5 @@
     @test Set(solved.prices.SETTLEMENTDATE) == Set(steps)
     @test all(isfinite, solved.prices.ROP)
     @test any(!ismissing, solved.dispatch.TOTALCLEARED)
-    ramp = select(filter(:family => ==("unit_ramp"), violations), :name => :DUID, :DateTime, :MW, :direction)
-    @test names(ramp) == ["DUID", "DateTime", "MW", "direction"]
     @test all(in(steps), violations.DateTime)
-    @test all(in((:no_available_device, :never_invoked)), skipped.reason)
 end

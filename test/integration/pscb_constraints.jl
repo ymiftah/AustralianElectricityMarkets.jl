@@ -1,26 +1,16 @@
 @testset "PSCB constraints and FCAS" begin
-    using AustralianElectricityMarkets
-    using PowerSystems
-    using Dates
-    using DataFrames
-
-    config = HiveConfiguration(hive_location = AEM_TEST_PSCB_HIVE_DIR, filesystem = "file")
-    db = aem_connect(config)
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_PSCB_HIVE_DIR, filesystem = "file"))
     start_date = DateTime(2025, 1, 1, 0, 0)
-    # `read_invoked_constraints` filters SETTLEMENTDATE < last(date_range) (exclusive), so the
-    # range must extend past 02:00 to keep the i=24 (02:00) interval in the full grid.
+    # `read_invoked_constraints` excludes last(date_range), so the range runs past 02:00 to keep that interval.
     date_range = start_date:Minute(5):(start_date + Hour(2) + Minute(5))
-
-    # Every constraint in this fixture except N_VERSIONED_LIMIT has exactly one invoked
-    # GENCONDATA/SPD* version, always EFFECTIVEDATE=2025-01-01, VERSIONNO=1 - see
-    # create_pscb_nemweb_data. _add_nem_constraints! names components by the full versioned
-    # triple, so tests look components up by
-    # this name rather than the bare GENCONID.
+    # Components are named by the versioned triple; every fixture version is effective 2025-01-01.
     vname(gencon_id, version = 1) = "$gencon_id@2025-01-01#$version"
+    unit_duids(gc) = Set(get_duid.(filter(t -> t isa UnitTerm, get_terms(gc))))
 
     @testset "constraint build" begin
         sys = nem_pscb_system()
         added, skipped = build_constraints!(sys, db, date_range)
+        constraint(name, version = 1) = get_component(GenericConstraint, sys, vname(name, version))
 
         @test isempty(skipped)
         @test Set(added) == Set(
@@ -31,149 +21,82 @@
             ]
         )
 
-        @testset "UnitTerm 1:many connection-point expansion" begin
-            gc = get_component(GenericConstraint, sys, vname("F_R1_RAISE6SEC"))
-            unit_terms = filter(t -> t isa UnitTerm, get_terms(gc))
-            @test Set(get_duid.(unit_terms)) == Set(["Alta", "Brighton"])
-            @test all(==(BidType.RAISE6SEC), get_bid_type.(unit_terms))
+        @testset "terms: connection-point expansion, region and interconnector terms" begin
+            f_r1 = constraint("F_R1_RAISE6SEC")
+            @test unit_duids(f_r1) == Set(["Alta", "Brighton"])
+            @test all(==(BidType.RAISE6SEC), get_bid_type.(filter(t -> t isa UnitTerm, get_terms(f_r1))))
+            region_term = only(filter(t -> t isa RegionTerm, get_terms(f_r1)))
+            @test (get_region(region_term), get_bid_type(region_term), get_factor(region_term)) == ("1", BidType.RAISE6SEC, 1.0)
 
-            region_term = only(filter(t -> t isa RegionTerm, get_terms(gc)))
-            @test get_region(region_term) == "1"
-            @test get_bid_type(region_term) == BidType.RAISE6SEC
+            f_r2 = constraint("F_R2_LOWERREG")
+            @test unit_duids(f_r2) == Set(["Solitude"])
+            @test get_region(only(filter(t -> t isa RegionTerm, get_terms(f_r2)))) == "2"
+
+            n_ic1 = constraint("N_IC1_LIMIT")
+            ic_term = only(filter(t -> t isa InterconnectorTerm, get_terms(n_ic1)))
+            @test (get_interconnector(ic_term), get_factor(ic_term)) == ("IC1", -1.0)
+            @test unit_duids(n_ic1) == Set(["Park City", "Sundance"])
+            @test all(==(BidType.ENERGY), get_bid_type.(filter(t -> t isa UnitTerm, get_terms(n_ic1))))
+
+            @test unit_duids(constraint("N_HYDRO_LIMIT")) == Set(["HydroDispatch1", "HydroDispatch2", "HydroDispatch3"])
+            @test unit_duids(constraint("N_PARTIAL")) == Set(["SOLAR1"])
         end
 
-        @testset "InterconnectorTerm resolves" begin
-            gc = get_component(GenericConstraint, sys, vname("N_IC1_LIMIT"))
-            ic_term = only(filter(t -> t isa InterconnectorTerm, get_terms(gc)))
-            @test get_interconnector(ic_term) == "IC1"
-            @test get_factor(ic_term) == -1.0
-            unit_terms = filter(t -> t isa UnitTerm, get_terms(gc))
-            @test Set(get_duid.(unit_terms)) == Set(["Park City", "Sundance"])
-        end
-
-        @testset "FCAS requirements attach only where they should" begin
-            f_r1 = get_component(GenericConstraint, sys, vname("F_R1_RAISE6SEC"))
-            @test only(get_fcas_requirements(f_r1)) == FCASRequirement("1", BidType.RAISE6SEC)
-            f_r2 = get_component(GenericConstraint, sys, vname("F_R2_LOWERREG"))
-            @test only(get_fcas_requirements(f_r2)) == FCASRequirement("2", BidType.LOWERREG)
-
-            for name in (vname("N_IC1_LIMIT"), vname("N_HYDRO_LIMIT"), vname("N_PARTIAL"))
-                gc = get_component(GenericConstraint, sys, name)
-                @test isempty(get_fcas_requirements(gc))
+        @testset "FCAS requirements and senses" begin
+            @test only(get_fcas_requirements(constraint("F_R1_RAISE6SEC"))) == FCASRequirement("1", BidType.RAISE6SEC)
+            @test only(get_fcas_requirements(constraint("F_R2_LOWERREG"))) == FCASRequirement("2", BidType.LOWERREG)
+            for name in ("F_R1_RAISE6SEC", "F_R2_LOWERREG")
+                @test get_sense(constraint(name)) == ConstraintSense.GE
+            end
+            for name in ("N_IC1_LIMIT", "N_HYDRO_LIMIT", "N_PARTIAL")
+                @test isempty(get_fcas_requirements(constraint(name)))
+                @test get_sense(constraint(name)) == ConstraintSense.LE
             end
         end
 
-        @testset "sense mapping" begin
-            for name in (vname("F_R1_RAISE6SEC"), vname("F_R2_LOWERREG"))
-                @test get_sense(get_component(GenericConstraint, sys, name)) == ConstraintSense.GE
-            end
-            for name in (vname("N_IC1_LIMIT"), vname("N_HYDRO_LIMIT"), vname("N_PARTIAL"))
-                @test get_sense(get_component(GenericConstraint, sys, name)) == ConstraintSense.LE
-            end
+        @testset "rhs and invoked series: full coverage and N_PARTIAL padding" begin
+            @test _constraint_series(constraint("F_R1_RAISE6SEC"), :rhs) ≈ [30.0 + 0.1 * i for i in 0:24]
+            invoked = _constraint_series(constraint("N_PARTIAL"), :invoked)
+            rhs = _constraint_series(constraint("N_PARTIAL"), :rhs)
+            @test invoked == [fill(0.0, 10); fill(1.0, 15)]
+            # rhs is carried back before interval 10 and real thereafter, in MW.
+            @test all(==(rhs[10]), rhs[1:10])
+            @test rhs[11:25] ≈ [40.0 + 0.1 * i for i in 10:24]
         end
 
-        @testset "N_PARTIAL padding" begin
-            gc = get_component(GenericConstraint, sys, vname("N_PARTIAL"))
-            invoked_series = _constraint_series(gc, :invoked)
-            rhs_series = _constraint_series(gc, :rhs)
-
-            @test length(invoked_series) == length(rhs_series) == 25  # full 0:24 grid
-            @test invoked_series[1:10] == fill(0.0, 10)   # intervals 0..9: not yet invoked
-            @test invoked_series[11:25] == fill(1.0, 15)  # intervals 10..24: invoked
-
-            # rhs is carried forward before interval 10 and real thereafter, in MW.
-            @test all(==(rhs_series[10]), rhs_series[1:10])
-            @test rhs_series[11:25] ≈ [40.0 + 0.1 * i for i in 10:24]
-        end
-
-        @testset "rhs varies across intervals for a fully-covered constraint" begin
-            gc = get_component(GenericConstraint, sys, vname("F_R1_RAISE6SEC"))
-            rhs_series = _constraint_series(gc, :rhs)
-            @test length(rhs_series) == 25
-            @test rhs_series ≈ [30.0 + 0.1 * i for i in 0:24]
-            @test issorted(rhs_series)  # confirms it isn't flat
-        end
-
-        @testset "N_VERSIONED_LIMIT: mid-horizon version switch produces two complementary services" begin
-            gc_v1 = get_component(GenericConstraint, sys, vname("N_VERSIONED_LIMIT", 1))
-            gc_v2 = get_component(GenericConstraint, sys, vname("N_VERSIONED_LIMIT", 2))
-            @test !isnothing(gc_v1)
-            @test !isnothing(gc_v2)
-
-            # Both versions report the same bare GENCONID despite being different components.
-            @test get_gencon_id(gc_v1) == "N_VERSIONED_LIMIT"
-            @test get_gencon_id(gc_v2) == "N_VERSIONED_LIMIT"
-            @test get_name(gc_v1) != get_name(gc_v2)
-
-            # The changed sense and term coefficient actually differ between the two versions.
-            @test get_sense(gc_v1) == ConstraintSense.LE
-            @test get_sense(gc_v2) == ConstraintSense.GE
-            term_v1 = only(get_terms(gc_v1))
-            term_v2 = only(get_terms(gc_v2))
-            @test get_duid(term_v1) == get_duid(term_v2) == "BAT1"
-            @test get_factor(term_v1) == 1.0
-            @test get_factor(term_v2) == 2.0
-
-            # "invoked" series are complementary: exactly one version is 1.0 at every interval,
-            # switching at PSCB_VERSION_SWITCH_FROM, never both at once.
-            invoked_v1 = _constraint_series(gc_v1, :invoked)
-            invoked_v2 = _constraint_series(gc_v2, :invoked)
-            @test length(invoked_v1) == length(invoked_v2) == 25
-            @test all(==(1.0), invoked_v1 .+ invoked_v2)  # exactly one is 1.0 at every interval
-            @test invoked_v1 == [i < PSCB_VERSION_SWITCH_FROM ? 1.0 : 0.0 for i in 0:24]
-            @test invoked_v2 == [i < PSCB_VERSION_SWITCH_FROM ? 0.0 : 1.0 for i in 0:24]
-        end
-
-        @testset "single-version constraint takes the same code path, no special-casing" begin
-            # F_R1_RAISE6SEC has exactly one invoked version and produces exactly one service -
-            # the version-triple loop degenerates to the old one-constraint-per-GENCONID
-            # behaviour when there is only ever one version, with no separate branch for it.
-            matches = filter(
-                gc -> get_gencon_id(gc) == "F_R1_RAISE6SEC", collect(get_components(GenericConstraint, sys)),
-            )
-            @test length(matches) == 1
-            @test get_name(only(matches)) == vname("F_R1_RAISE6SEC")
+        @testset "N_VERSIONED_LIMIT: a mid-horizon version switch produces two complementary services" begin
+            v1, v2 = constraint("N_VERSIONED_LIMIT", 1), constraint("N_VERSIONED_LIMIT", 2)
+            @test get_gencon_id(v1) == get_gencon_id(v2) == "N_VERSIONED_LIMIT"
+            @test (get_version_no(v1), get_version_no(v2)) == (1, 2)
+            @test get_effective_date(v1) == get_effective_date(v2) == DateTime(2025, 1, 1)
+            @test get_limit_type(v1) == get_limit_type(v2) == "THERMAL"
+            @test get_source(v1) == get_source(v2) == "pscb"
+            @test isempty(get_ext(v1)) && isempty(get_ext(v2))
+            @test (get_sense(v1), get_sense(v2)) == (ConstraintSense.LE, ConstraintSense.GE)
+            @test get_duid(only(get_terms(v1))) == get_duid(only(get_terms(v2))) == "BAT1"
+            @test (get_factor(only(get_terms(v1))), get_factor(only(get_terms(v2)))) == (1.0, 2.0)
+            @test _constraint_series(v1, :invoked) == [i < PSCB_VERSION_SWITCH_FROM ? 1.0 : 0.0 for i in 0:24]
+            @test _constraint_series(v2, :invoked) == [i < PSCB_VERSION_SWITCH_FROM ? 0.0 : 1.0 for i in 0:24]
         end
     end
 
-    @testset "set_market_bids!" begin
+    @testset "set_market_bids! records FCAS bids with their series on the modelled sides only" begin
         sys = nem_pscb_system()
         set_market_bids!(sys, db, date_range)
-        fcas_bid_names(device, service, direction) = [
-            AustralianElectricityMarkets.bid_series_name(service, :offer_curves, direction),
-            AustralianElectricityMarkets.bid_series_name(service, :trapezium, direction),
-        ]
-        bid_for(device, service, direction) = only(
-            b for b in AustralianElectricityMarkets.get_fcas_bids(AustralianElectricityMarkets._nem_offer_cost(device))
-                if b.service == service && b.direction == direction
-        )
-
-        @testset "thermal unit records a generation-side bid with its series" begin
-            gen = get_component(ThermalStandard, sys, "Alta")
-            bid = bid_for(gen, BidType.RAISE6SEC, AustralianElectricityMarkets.BidDirection.GEN)
-            @test has_time_series(gen, SingleTimeSeries, bid.offer_curves.name)
-            @test has_time_series(gen, SingleTimeSeries, bid.trapezium.name)
+        AEM = AustralianElectricityMarkets
+        bids(device) = AEM.get_fcas_bids(AEM._nem_offer_cost(device))
+        for (type, name, service, direction) in (
+                (ThermalStandard, "Alta", BidType.RAISE6SEC, AEM.BidDirection.GEN),
+                (RenewableDispatch, "SOLAR1", BidType.RAISE6SEC, AEM.BidDirection.GEN),
+                (EnergyReservoirStorage, "BAT1", BidType.RAISEREG, AEM.BidDirection.GEN),
+                (EnergyReservoirStorage, "BAT1", BidType.RAISEREG, AEM.BidDirection.LOAD),
+            )
+            device = get_component(type, sys, name)
+            bid = only(b for b in bids(device) if b.service == service && b.direction == direction)
+            @test has_time_series(device, SingleTimeSeries, bid.offer_curves.name)
+            @test has_time_series(device, SingleTimeSeries, bid.trapezium.name)
         end
-
-        @testset "SOLAR1 (RenewableDispatch, zero cost) records a generation-side bid" begin
-            solar = get_component(RenewableDispatch, sys, "SOLAR1")
-            bid = bid_for(solar, BidType.RAISE6SEC, AustralianElectricityMarkets.BidDirection.GEN)
-            @test has_time_series(solar, SingleTimeSeries, bid.offer_curves.name)
-            @test has_time_series(solar, SingleTimeSeries, bid.trapezium.name)
-        end
-
-        @testset "BAT1 records both incremental and decremental bids" begin
-            bat = get_component(EnergyReservoirStorage, sys, "BAT1")
-            for direction in (AustralianElectricityMarkets.BidDirection.GEN, AustralianElectricityMarkets.BidDirection.LOAD)
-                bid = bid_for(bat, BidType.RAISEREG, direction)
-                @test has_time_series(bat, SingleTimeSeries, bid.offer_curves.name)
-                @test has_time_series(bat, SingleTimeSeries, bid.trapezium.name)
-            end
-        end
-
-        @testset "decremental bid is storage-only, a generator's load bid is not modelled" begin
-            gen = get_component(ThermalStandard, sys, "Alta")
-            @test !any(b -> b.direction == AustralianElectricityMarkets.BidDirection.LOAD, AustralianElectricityMarkets.get_fcas_bids(AustralianElectricityMarkets._nem_offer_cost(gen)))
-        end
+        # A generator's load-side bid is not modelled.
+        @test !any(b -> b.direction == AEM.BidDirection.LOAD, bids(get_component(ThermalStandard, sys, "Alta")))
     end
 end

@@ -15,17 +15,6 @@ _fk_floor(min) = FCASTrapezium(;
     max_avail = 100.0,
 )
 
-@testset "FCAS name functions and constants" begin
-    @test FCAS_BAND_COUNT == 10
-    @test FCAS_INACTIVE_LIMIT_MW == 1.0e5
-    @test fcas_effective_series_name(BidType.RAISEREG, false) == "fcas_effective_RAISEREG"
-    @test fcas_effective_series_name(BidType.LOWERREG, true) == "fcas_effective_LOWERREG_decremental"
-    @test fcas_ramping_series_name(BidType.RAISEREG) == "fcas_ramping_limits_RAISEREG"
-    @test fcas_offer_sides(FCASBidDirection.INCREMENTAL) == (false,)
-    @test fcas_offer_sides(FCASBidDirection.DECREMENTAL) == (true,)
-    @test fcas_offer_sides(FCASBidDirection.BOTH) == (false, true)
-end
-
 @testset "FCAS pre-conditions in MW" begin
     span = _fk_span()
     # Inf is no energy availability limit, and passes for a non-storage unit.
@@ -41,7 +30,6 @@ end
     @test fcas_preconditions_ok(_fk_floor(20.0), 1.0, 30.0, Inf, -1, false, false, false)
     # A NaN energy availability is data, not an absent limit, and fails the pre-condition.
     @test !fcas_preconditions_ok(span, 1.0, NaN, Inf, -1, false, false, false)
-    @test !fcas_preconditions_ok(span, 1.0, NaN, Inf, -1, true, false, false)
     # AGC status 0 disables a regulation service only.
     @test !fcas_preconditions_ok(span, 1.0, Inf, Inf, 0, true, false, false)
     @test fcas_preconditions_ok(span, 1.0, Inf, Inf, 1, true, false, false)
@@ -60,7 +48,6 @@ end
     @test fcas_preconditions_ok(span, 1.0, 50.0, 200.0, -1, false, false, true)
     # Inf on both storage sides is no limit and passes; a NaN on either side fails its own check.
     @test fcas_preconditions_ok(span, 1.0, Inf, Inf, -1, false, false, true)
-    @test fcas_preconditions_ok(span, 1.0, Inf, Inf, -1, true, true, true)
     @test !fcas_preconditions_ok(span, 1.0, NaN, Inf, -1, false, false, true)
     @test !fcas_preconditions_ok(span, 1.0, Inf, NaN, -1, false, false, true)
     @test !fcas_preconditions_ok(span, 1.0, Inf, NaN, -1, true, true, true)

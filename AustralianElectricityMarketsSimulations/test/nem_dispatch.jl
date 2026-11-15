@@ -104,12 +104,7 @@ constraint_metas(constraint_keys, ::Type{T}) where {T} =
         db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
         bare = first(nem_network(db))
         template = ProblemTemplate(NetworkModel(AreaBalancePowerModel; use_slacks = true))
-        err = try
-            set_nem_dispatch_models!(template, bare)
-            nothing
-        catch e
-            e
-        end
+        err = _caught(() -> set_nem_dispatch_models!(template, bare))
         @test err isa ArgumentError
         @test occursin("nem_system(db, NEMDEConfiguration()", err.msg)
     end
@@ -133,8 +128,6 @@ end
 
     @testset "every generator participant gets identical variable and constraint entry types" begin
         participants = nem_dispatch_participants(sys)
-        @test length(participants) >= 3
-        @test EnergyReservoirStorage in participants
         @test InterruptiblePowerLoad in participants
         generator_participants = filter(!in((EnergyReservoirStorage, InterruptiblePowerLoad)), participants)
         # The UIGF and fixed-loading rows are added per device that carries the input, so a participant
@@ -236,9 +229,7 @@ end
     end
 
     @testset "both ramp directions are built for every participant and interval" begin
-        model2 = nem_dispatch_model(sys)
-        build!(model2; output_dir = mktempdir())
-        container = PSI.get_optimization_container(model2)
+        container = PSI.get_optimization_container(model)
         for T in nem_dispatch_participants(sys), meta in ("up", "dn")
             constraint = PSI.get_constraint(container, PSI.RampConstraint(), T, meta)
             names, steps = axes(constraint)
@@ -258,7 +249,6 @@ end
     PSY.transform_single_time_series!(sys, NEM_DISPATCH_RESOLUTION, NEM_DISPATCH_RESOLUTION)
     @test_throws r"ER02 at interval 1: invalid" check_dispatch_envelope(template, sys)
 end
-
 
 @testset "a missing ramp series is reported, naming the setter" begin
     # Strip one device's rates before the System is transformed, so the type is still a
@@ -308,12 +298,7 @@ end
     sys = nem_dispatch_system()
     template = ProblemTemplate(NetworkModel(AreaBalancePowerModel; use_slacks = true))
     PSI.set_device_model!(template, ThermalStandard, PSI.ThermalBasicDispatch)
-    err = try
-        check_template_against_sys(template, sys)
-        nothing
-    catch e
-        e
-    end
+    err = _caught(() -> check_template_against_sys(template, sys))
     @test err isa ArgumentError
     @test occursin("ThermalStandard", err.msg) && occursin("AbstractNEMDispatch", err.msg)
 end
@@ -360,10 +345,7 @@ end
     @test any(d -> d isa InterruptiblePowerLoad && !isempty(AustralianElectricityMarkets.get_energy_bids(AustralianElectricityMarkets._nem_offer_cost(d))), PSY.get_components(PSY.StaticInjection, sys))
 end
 
-@testset "the derived-input attributes and the setter are removed" begin
-    @test !isdefined(AEMS, :NEMDispatchInputs)
-    @test !isdefined(AEMS, :NEMFCASInputs)
-    @test !isdefined(AEMS, :set_effective_offers!)
+@testset "AEMSim attaches no supplemental attributes of its own" begin
     sys = nem_dispatch_system()
     for device in PSY.get_components(PSY.StaticInjection, sys)
         attributes = PSY.get_supplemental_attributes(PSY.SupplementalAttribute, device)

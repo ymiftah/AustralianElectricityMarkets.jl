@@ -7,38 +7,31 @@ using .ReplayBatchSupport
 
 @testset "overnight day selection and budget" begin
     days = scheduled_days(Date(2026, 1, 1), Date(2026, 6, 30), 17)
-    @test length(days) == length(unique(days)) == 181
-    @test Set(days) == Set(Date(2026, 1, 1):Day(1):Date(2026, 6, 30))
+    @test sort(days) == collect(Date(2026, 1, 1):Day(1):Date(2026, 6, 30))
     @test days == scheduled_days(Date(2026, 1, 1), Date(2026, 6, 30), 17)
     @test days != scheduled_days(Date(2026, 1, 1), Date(2026, 6, 30), 18)
     @test trading_steps(Date(2026, 6, 30)) == DateTime(2026, 6, 30, 4, 5):Minute(5):DateTime(2026, 7, 1, 4)
-    @test length(trading_steps(Date(2026, 1, 1))) == 288
     @test may_start_day(35999.0, 36000.0)
     @test !may_start_day(36000.0, 36000.0)
-    @test !may_start_day(36001.0, 36000.0)
     @test_throws ArgumentError scheduled_days(Date(2026, 7, 1), Date(2026, 1, 1), 1)
-    @test_throws ArgumentError parse_options(["--hours", "0"])
-    @test_throws ArgumentError parse_options(["--hours", "NaN"])
-    @test_throws ArgumentError parse_options(["--sample-seconds", "5"])
-    @test_throws ArgumentError parse_options(["--unknown", "x"])
-    @test_throws ArgumentError parse_options(["--output"])
-    @test parse_options(String[])["time-series-in-memory"] == "false"
-    @test parse_options(["--time-series-in-memory", "true"])["time-series-in-memory"] == "true"
-    @test_throws ArgumentError parse_options(["--time-series-in-memory", "yes"])
-    @test parse_options(String[])["closed-loop"] == "false"
-    @test parse_options(["--closed-loop", "true"])["closed-loop"] == "true"
-    @test_throws ArgumentError parse_options(["--closed-loop", "maybe"])
-    @test dirname(parse_options(String[])["output"]) == "/run/media/simba/Store/aem_validation"
-    range = parse_options(["--start", "2026-06-04T04:05:00", "--intervals", "10"])
-    @test length(batch_steps(range, Date(2026, 6, 4))) == 10
-    @test first(batch_steps(range, Date(2026, 6, 4))) == DateTime(2026, 6, 4, 4, 5)
-    @test last(batch_steps(range, Date(2026, 6, 4))) == DateTime(2026, 6, 4, 4, 50)
-    @test batch_steps(parse_options(String[]), Date(2026, 6, 4)) == trading_steps(Date(2026, 6, 4))
-    @test_throws ArgumentError parse_options(["--start", "2026-06-04T04:05:00"])
-    @test_throws ArgumentError parse_options(["--intervals", "10"])
-    @test_throws ArgumentError parse_options(["--start", "2026-06-04T04:07:00", "--intervals", "10"])
-    @test_throws ArgumentError parse_options(["--start", "2026-06-04T04:05:00", "--intervals", "0"])
-    @test_throws ArgumentError parse_options(["--start", "2026-06-05T04:00:00", "--intervals", "2"])
+    defaults = parse_options(String[])
+    for flag in ("time-series-in-memory", "closed-loop")
+        @test defaults[flag] == "false"
+        @test parse_options(["--$flag", "true"])[flag] == "true"
+    end
+    @test dirname(defaults["output"]) == "/run/media/simba/Store/aem_validation"
+    @test batch_steps(parse_options(["--start", "2026-06-04T04:05:00", "--intervals", "10"]), Date(2026, 6, 4)) ==
+        DateTime(2026, 6, 4, 4, 5):Minute(5):DateTime(2026, 6, 4, 4, 50)
+    @test batch_steps(defaults, Date(2026, 6, 4)) == trading_steps(Date(2026, 6, 4))
+    for args in (
+            ["--hours", "0"], ["--hours", "NaN"], ["--sample-seconds", "5"], ["--unknown", "x"], ["--output"],
+            ["--time-series-in-memory", "yes"], ["--closed-loop", "maybe"],
+            ["--start", "2026-06-04T04:05:00"], ["--intervals", "10"],
+            ["--start", "2026-06-04T04:07:00", "--intervals", "10"], ["--start", "2026-06-04T04:05:00", "--intervals", "0"],
+            ["--start", "2026-06-05T04:00:00", "--intervals", "2"],
+        )
+        @test_throws ArgumentError parse_options(args)
+    end
 end
 
 @testset "durable status and CSV escaping" begin

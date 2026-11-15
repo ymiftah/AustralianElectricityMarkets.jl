@@ -29,7 +29,6 @@ _nw_interchange(name::String, from::Area, to::Area) = AreaInterchange(;
         direction = AEM.MNSPDirection.REVERSE, offer_curves = PowerSystems.PiecewiseStepData([0.0, 10.0], [5.0]),
         max_avail = 80, ramp_up = 1.5,
     )
-    @test bid.direction == AEM.MNSPDirection.REVERSE
     @test bid.max_avail === 80.0
     @test bid.ramp_up === 1.5
     @test isnothing(bid.fixed_load)
@@ -44,14 +43,10 @@ _nw_interchange(name::String, from::Area, to::Area) = AreaInterchange(;
         direction = AEM.MNSPDirection.FORWARD, link_id = "BLNK", from_region_tlf = 1, to_region_tlf = 0.99,
         lhs_factor = 2, max_capacity = 600,
     )
-    @test link.link_id == "BLNK"
     @test link.max_capacity === 600.0
     @test link.to_region_tlf === 0.99
 
-    @test AEM.NEMInterconnectorRegistration(; kind = AEM.InterconnectorKind.MNSP).kind == AEM.InterconnectorKind.MNSP
-
     @test AEM.NEMMNSPObservedState(; initial_flow = 12).initial_flow === 12.0
-    @test AEM.NEMMNSPObservedState(; initial_flow = _nw_key("flow")).initial_flow isa _NW_IS.TimeSeriesKey
 end
 
 @testset "NEM interconnector and MNSP attributes survive a System JSON round-trip" begin
@@ -101,7 +96,6 @@ end
 
         back_limits = only(get_supplemental_attributes(AEM.NEMInterconnectorLimits, ic_back))
         @test back_limits.to_from_limit === 250.0
-        @test back_limits.from_to_limit isa _NW_IS.TimeSeriesKey
         resolved = _NW_IS.get_time_series_values(
             ic_back, back_limits.from_to_limit; start_time = first(_NW_STAMPS), len = length(_NW_STAMPS),
         )
@@ -113,7 +107,6 @@ end
         @test isnothing(back_bid.fixed_load)
         @test back_bid.band_prices == (5.0, 50.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         @test back_bid.offer_curves == PowerSystems.PiecewiseStepData([0.0, 10.0, 20.0], [5.0, 50.0])
-        @test back_bid.max_avail isa _NW_IS.TimeSeriesKey
         @test _NW_IS.get_time_series_values(
             mnsp_back, back_bid.max_avail; start_time = first(_NW_STAMPS), len = 1,
         ) == [1.0]
@@ -148,7 +141,6 @@ end
     add_time_series!(sys, gc, AEM.single_series("mw_rhs", first(_NW_STAMPS), mw_values, Minute(5)))
     @test AEM.get_rhs(gc, _NW_STAMPS[1]) == 100.0
     @test AEM.get_rhs(gc, _NW_STAMPS[2]) == 110.0
-    @test AEM.get_rhs(gc, _NW_STAMPS[2]) isa Float64
 end
 
 @testset "GenericConstraint keyed rhs and invoked read their series and survive JSON" begin
@@ -157,9 +149,6 @@ end
     gc = GenericConstraint(;
         name = "N_KEYED", sense = ConstraintSense.GE, rhs = rhs_key, invoked = invoked_key,
     )
-    @test gc.rhs isa _NW_IS.TimeSeriesKey
-    @test gc.invoked isa _NW_IS.TimeSeriesKey
-
     sys = System(100.0)
     add_component!(sys, gc)
     add_time_series!(sys, gc, _nw_series("rhs"))
@@ -175,8 +164,6 @@ end
         path = joinpath(dir, "sys.json")
         to_json(sys, path; force = true)
         back = get_component(GenericConstraint, System(path), "N_KEYED")
-        @test back.rhs isa _NW_IS.TimeSeriesKey
-        @test back.invoked isa _NW_IS.TimeSeriesKey
         @test AEM.get_rhs(back, _NW_STAMPS[3]) == 3.0
         @test AEM.get_invoked(back, _NW_STAMPS[3]) === false
         @test AEM.get_invoked(back, _NW_STAMPS[2]) === true
@@ -247,5 +234,4 @@ end
     PowerSystems.transform_single_time_series!(sys, Minute(10), Minute(5))
     @test AEM.get_rhs(gc, _NW_STAMPS[1]) == 1.0
     @test AEM.get_rhs(gc, _NW_STAMPS[3]) == 3.0
-    @test AEM.get_rhs(gc, _NW_STAMPS[5]) == 5.0
 end

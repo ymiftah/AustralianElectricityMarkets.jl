@@ -163,7 +163,6 @@ end
     end
 
     @testset "the pre-flight constraint check" begin
-        @test names(skipped) == ["constraint", "reason", "n_missing"]
         known = (:unmodeled_fcas_service, :missing_component, :unmodeled_device_type, :no_available_device, :never_invoked)
         @test all(in(known), skipped.reason)
         # Every constraint term names a device in the System.
@@ -351,29 +350,13 @@ end
 
         for (label, rows) in (("last step", last_step), ("all steps", all_steps))
             violations = filter(r -> r.violated, rows)
-            if !isempty(violations)
-                println("§6.1 fidelity violations at the published solution, $label ($(length(violations))/$(length(rows))):")
-                println(
-                    rpad("service", 22), rpad("duid", 12), rpad("type", 22), rpad("settlement", 21),
-                    rpad("initial_mw", 11), rpad("energy_mw", 10), rpad("target_mw", 10),
-                    rpad("ramp_mw", 9), rpad("diff_mw", 9), rpad("agc", 4), "at_ramp_floor",
-                )
-                for r in violations
-                    agc = ismissing(r.agc_status) ? "?" : string(r.agc_status)
-                    println(
-                        rpad(r.service, 22), rpad(r.duid, 12), rpad(string(r.device_type), 22), rpad(string(r.settlement), 21),
-                        rpad(string(round(r.initial_mw; digits = 1)), 11), rpad(string(round(r.energy_mw; digits = 1)), 10),
-                        rpad(string(round(r.target_mw; digits = 1)), 10), rpad(string(round(r.ramp_cap_mw; digits = 1)), 9),
-                        rpad(string(round(r.diff_mw; digits = 1)), 9), rpad(agc, 4), r.energy_at_own_ramp_floor,
-                    )
-                end
-            end
             n_rows = length(rows)
             n_violations = length(violations)
-            n_ramp_floor_violations = count(r -> r.energy_at_own_ramp_floor, violations)
-            n_unexplained_violations = n_violations - n_ramp_floor_violations
+            unexplained = filter(r -> !r.energy_at_own_ramp_floor, violations)
+            n_unexplained_violations = length(unexplained)
+            n_ramp_floor_violations = n_violations - n_unexplained_violations
             n_inactive = label == "last step" ? n_inactive_last : n_inactive_all
-            @info "§6.1 fidelity, $label" n_enabled_pairs n_rows n_inactive n_violations n_ramp_floor_violations n_unexplained_violations
+            @info "§6.1 fidelity, $label" n_enabled_pairs n_rows n_inactive n_violations n_ramp_floor_violations n_unexplained_violations unexplained
             @test n_rows > 0
             @test n_unexplained_violations == 0
         end

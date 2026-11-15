@@ -68,8 +68,6 @@ end
     sys = _mnsp_fixed_load_system(db)
     counts = _check_mnsp_fixed_loads(sys)
     @test counts[:null] == 2
-    ic = PowerSystems.get_component(PowerSystems.AreaInterchange, sys, "IC2")
-    @test PowerSystems.get_time_series_values(PowerSystems.SingleTimeSeries, ic, "forward_fixed_load_value"; ignore_scaling_factors = true) == [0.0, 0.0]
 end
 
 @testset "the writer maps a published fixed loading to its value and invocation flag" begin
@@ -80,8 +78,8 @@ end
     @test counts[:published] == 2
     ic = PowerSystems.get_component(PowerSystems.AreaInterchange, sys, "IC2")
     written(name) = PowerSystems.get_time_series_values(PowerSystems.SingleTimeSeries, ic, name; ignore_scaling_factors = true)
-    @test written("forward_fixed_load_value") == [4.0, 0.0]
-    @test written("forward_fixed_load_invoked_flag") == [1.0, 0.0]
-    @test written("reverse_fixed_load_value") == [4.0, 0.0]
-    @test written("reverse_fixed_load_invoked_flag") == [1.0, 0.0]
+    for dir in ("forward", "reverse")
+        @test written("$(dir)_fixed_load_value") == [4.0, 0.0]
+        @test written("$(dir)_fixed_load_invoked_flag") == [1.0, 0.0]
+    end
 end

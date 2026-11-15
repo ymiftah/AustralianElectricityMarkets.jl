@@ -1,13 +1,11 @@
 # The effective FCAS offers and regulation ramping limits that nem_system writes, read back against the
 # raw bid, telemetry and observed series of the mock replay hive. AEMSim is not loaded here.
 
-function _fw_system()
-    hive = mktempdir()
+const _FW_SYS = let hive = mktempdir()
     create_mock_data(hive; complete_inputs = true)
     write_mock_interconnector_results(hive)
-    db = aem_connect(HiveConfiguration(hive_location = hive))
     t = DateTime(2025, 1, 1, 0, 5)
-    return nem_system(db, NEMDEConfiguration(); date_range = t:Minute(5):(t + Minute(30)))
+    nem_system(aem_connect(HiveConfiguration(hive_location = hive)), NEMDEConfiguration(); date_range = t:Minute(5):(t + Minute(30)))
 end
 
 # The raw FCAS bid of `device` for `service` on `side`.
@@ -29,7 +27,7 @@ end
 
 @testset "nem_system writes the effective FCAS offers of contingency markets" begin
     AEM = AustralianElectricityMarkets
-    sys = _fw_system()
+    sys = _FW_SYS
     base = get_base_power(sys)
     inactive = FCAS_INACTIVE_LIMIT_MW / base
     checked = 0
@@ -74,7 +72,7 @@ end
 
 @testset "the written joint ramping limit equals the §6.1 rule on the observed state" begin
     AEM = AustralianElectricityMarkets
-    sys = _fw_system()
+    sys = _FW_SYS
     base = get_base_power(sys)
     inactive = FCAS_INACTIVE_LIMIT_MW / base
     active_rows = 0
@@ -110,7 +108,7 @@ end
 
 @testset "the written FCAS enablement equals the §5 pre-conditions and the stranded rule on the observed state" begin
     AEM = AustralianElectricityMarkets
-    sys = _fw_system()
+    sys = _FW_SYS
     # The §5 pre-conditions of one side other than the stranded one, per interval of `window`.
     function preconditions(window, device, service, decremental)
         side = AEM._fcas_side(window, device, service, decremental)
@@ -165,7 +163,7 @@ end
 
 @testset "the FCAS writer refuses a missing bid, a static bid field and a device without telemetry" begin
     AEM = AustralianElectricityMarkets
-    sys = _fw_system()
+    sys = _FW_SYS
     # A generator bids its generation side only, so it has no load-side bid.
     generator = first(
         d for d in AEM._bidding_devices(sys)

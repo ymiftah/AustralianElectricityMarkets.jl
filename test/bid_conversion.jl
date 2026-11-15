@@ -46,21 +46,16 @@
         @test occursin("EXAMPLE ($direction) at 2026-01-22T04:05:00", error.msg)
         @test occursin("LowBreakpoint = 40.0", error.msg)
     end
-    for direction in ("GEN", "LOAD"), widths in (Float64[], [0.0, 0.0])
-        row = (DIRECTION = direction, PRICEBANDARRAY = zeros(length(widths)), BANDAVAILARRAY = widths)
-        if isempty(widths)
-            @test_throws ArgumentError original_curve(row; keep_empty_bands = true)
-        else
-            expected = original_curve(row; keep_empty_bands = true)
-            actual = AEM._extract_power_bids(row; keep_empty_bands = true)
-            @test get_x_coords(actual) == get_x_coords(expected)
-            @test get_y_coords(actual) == get_y_coords(expected)
+    for direction in ("GEN", "LOAD")
+        row = (DIRECTION = direction, PRICEBANDARRAY = zeros(2), BANDAVAILARRAY = [0.0, 0.0])
+        expected = original_curve(row; keep_empty_bands = true)
+        actual = AEM._extract_power_bids(row; keep_empty_bands = true)
+        @test get_x_coords(actual) == get_x_coords(expected)
+        @test get_y_coords(actual) == get_y_coords(expected)
+        mismatched = (DIRECTION = direction, PRICEBANDARRAY = [10.0], BANDAVAILARRAY = [0.0, 5.0])
+        for keep in (false, true)
+            @test_throws BoundsError AEM._extract_power_bids(mismatched; keep_empty_bands = keep)
         end
-    end
-    for direction in ("GEN", "LOAD"), keep in (false, true)
-        row = (DIRECTION = direction, PRICEBANDARRAY = [10.0], BANDAVAILARRAY = [0.0, 5.0])
-        @test_throws BoundsError original_curve(row; keep_empty_bands = keep)
-        @test_throws BoundsError AEM._extract_power_bids(row; keep_empty_bands = keep)
     end
 end
 

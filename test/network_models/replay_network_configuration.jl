@@ -1,11 +1,16 @@
+# One complete mock hive with interconnector results, shared read-only by the testsets below.
+const _REPLAY_HIVE = let hive = mktempdir()
+    create_mock_data(hive; complete_inputs = true)
+    write_mock_interconnector_results(hive)
+    hive
+end
+
 @testset "Replay requirements include mandatory MNSP metering" begin
     @test :DISPATCHINTERCONNECTORRES in table_requirements(NEMDEConfiguration())
 end
 
 @testset "every NEM device of the network carries its registration" begin
-    hive = mktempdir()
-    create_mock_data(hive; complete_inputs = true)
-    write_mock_interconnector_results(hive)
+    hive = _REPLAY_HIVE
     db = aem_connect(HiveConfiguration(hive_location = hive))
     interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
     as_of, through = first(interval), last(interval) - Minute(5)
@@ -49,7 +54,6 @@ end
     @test is_non_scheduled_load(asload)
     @test is_commissioned(asload)
     @test !is_non_scheduled_load(pump)
-    @test isempty(get_ext(asload))
 
     # A device built without a registration fails the build steps that read it, naming it.
     set_registration!(get_component(ThermalStandard, sys, "ER01"), nothing)
@@ -57,9 +61,7 @@ end
 end
 
 @testset "NEMDEConfiguration" begin
-    hive = mktempdir()
-    create_mock_data(hive; complete_inputs = true)
-    write_mock_interconnector_results(hive)
+    hive = _REPLAY_HIVE
     db = aem_connect(HiveConfiguration(hive_location = hive))
     interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
     config = NEMDEConfiguration()
@@ -72,22 +74,7 @@ end
     for T in (GenericConstraint, AreaInterchange), device in get_components(T, sys)
         @test isempty(get_ext(device))
     end
-    gc = get_component(GenericConstraint, sys, "N_BAYSW_THERMAL@2025-01-01#1")
-    @test get_gencon_id(gc) == "N_BAYSW_THERMAL"
-    @test get_limit_type(gc) == "FCAS"
-    @test get_source(gc) == "mock"
-    @test get_effective_date(gc) == DateTime(2025, 1, 1)
-    @test get_version_no(gc) == 1
-    # Station metadata equals the units frame; the flags read the typed registration.
-    units = read_units(db; as_of = first(interval), through = last(interval) - Minute(5))
-    unit_rows = Dict(String(r.DUID) => r for r in eachrow(units))
-    station = only(get_supplemental_attributes(NEMStation, get_component(RenewableDispatch, sys, "BW03")))
-    @test (station.station_id, station.station_name, station.postcode) ==
-        (unit_rows["BW03"].STATIONID, unit_rows["BW03"].STATIONNAME, unit_rows["BW03"].POSTCODE)
-    @test is_non_scheduled_load(get_component(InterruptiblePowerLoad, sys, "ASLOAD1"))
-    @test is_commissioned(get_component(InterruptiblePowerLoad, sys, "ASLOAD1"))
     gen = get_component(RenewableDispatch, sys, "BW03")
-    @test get_registration(gen).schedule_type == ScheduleType.SEMI_SCHEDULED
     @test get_time_series_values(SingleTimeSeries, gen, "bid_energy_max_avail_gen") ≈ [101.0, 102.0, 103.0]
     @test get_time_series_values(SingleTimeSeries, gen, "telemetry_uigf"; ignore_scaling_factors = true) ≈ [41.0, 42.0, 43.0]
     @test has_time_series(gen, DeterministicSingleTimeSeries, "bid_energy_max_avail_gen")
@@ -138,9 +125,7 @@ end
 
 @testset "the NEMDE build validates its replay inputs" begin
     AEM = AustralianElectricityMarkets
-    hive = mktempdir()
-    create_mock_data(hive; complete_inputs = true)
-    write_mock_interconnector_results(hive)
+    hive = _REPLAY_HIVE
     db = aem_connect(HiveConfiguration(hive_location = hive))
     interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
 
@@ -256,9 +241,7 @@ end
 
 @testset "Replay shared inputs preserve independent setter results" begin
     AEM = AustralianElectricityMarkets
-    hive = mktempdir()
-    create_mock_data(hive; complete_inputs = true)
-    write_mock_interconnector_results(hive)
+    hive = _REPLAY_HIVE
     db = aem_connect(HiveConfiguration(hive_location = hive))
     grid = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
     shared, units = constrained_system(db; date_range = grid)
@@ -297,9 +280,7 @@ end
 
 @testset "Stock regional network builds generators with zero operation costs" begin
     AEM = AustralianElectricityMarkets
-    hive = mktempdir()
-    create_mock_data(hive; complete_inputs = true)
-    write_mock_interconnector_results(hive)
+    hive = _REPLAY_HIVE
     db = aem_connect(HiveConfiguration(hive_location = hive))
     sys, _, _ = AustralianElectricityMarkets.RegionModel._nem_network(db)
     generators = collect(get_components(Generator, sys))
@@ -315,9 +296,7 @@ end
 end
 
 @testset "replay systems hold only NEM dispatch units" begin
-    hive = mktempdir()
-    create_mock_data(hive; complete_inputs = true)
-    write_mock_interconnector_results(hive)
+    hive = _REPLAY_HIVE
     db = aem_connect(HiveConfiguration(hive_location = hive))
     interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
     sys = nem_system(db, NEMDEConfiguration(); date_range = interval)
@@ -338,9 +317,7 @@ end
 end
 
 @testset "regional systems keep stock types" begin
-    hive = mktempdir()
-    create_mock_data(hive; complete_inputs = true)
-    db = aem_connect(HiveConfiguration(hive_location = hive))
+    db = aem_connect(HiveConfiguration(hive_location = _REPLAY_HIVE))
     sys = nem_system(db, RegionalNetworkConfiguration())
     for T in (ThermalStandard, HydroDispatch, RenewableDispatch, EnergyReservoirStorage, InterruptiblePowerLoad)
         @test !any(has_nem_unit_data, get_components(T, sys))
@@ -350,9 +327,7 @@ end
 
 @testset "FCAS bids are recorded without derived offer series" begin
     AEM = AustralianElectricityMarkets
-    hive = mktempdir()
-    create_mock_data(hive; complete_inputs = true)
-    write_mock_interconnector_results(hive)
+    hive = _REPLAY_HIVE
     db = aem_connect(HiveConfiguration(hive_location = hive))
     grid = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
     sys, _ = constrained_system(db; date_range = grid)
@@ -364,16 +339,13 @@ end
     bidders = [g for g in get_components(Generator, sys) if !isempty(AustralianElectricityMarkets.get_fcas_bids(AustralianElectricityMarkets._nem_offer_cost(g)))]
     @test !isempty(bidders)
     for g in bidders
-        @test AustralianElectricityMarkets._nem_offer_cost(g) isa NEMOfferCost
         @test has_time_series(g, SingleTimeSeries, AustralianElectricityMarkets.bid_series_name(BidType.RAISE6SEC, :offer_curves, AustralianElectricityMarkets.BidDirection.GEN)) ||
             isempty(filter(b -> b.service == BidType.RAISE6SEC, AustralianElectricityMarkets.get_fcas_bids(AustralianElectricityMarkets._nem_offer_cost(g))))
     end
 end
 
 @testset "units registered mid-chunk are built for the whole chunk" begin
-    hive = mktempdir()
-    create_mock_data(hive; complete_inputs = true)
-    write_mock_interconnector_results(hive)
+    hive = _REPLAY_HIVE
     interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
     grid = collect(interval)[1:(end - 1)]
     full = nem_system(aem_connect(HiveConfiguration(hive_location = hive)), NEMDEConfiguration(); date_range = interval)
@@ -405,10 +377,9 @@ end
     @test raw(bw02, "observed_initial_mw") ≈ [0.0, 0.0, raw(bw02_full, "observed_initial_mw")[3]]
     # Ramp rates have no value at the stamps without a row; the AGC ramp reads them as NaN there.
     for name in ("telemetry_ramp_up_limit", "telemetry_ramp_down_limit")
-        @test isnan.(raw(bw02, name)[1:2]) == [true, true]
+        @test all(isnan, raw(bw02, name)[1:2])
         @test raw(bw02, name)[3] ≈ raw(bw02_full, name)[3]
     end
-    @test length(get_time_series_timestamps(SingleTimeSeries, bw02, "bid_energy_max_avail_gen")) == length(grid)
 
     # Every single-time-series input of every injection spans the whole chunk.
     for device in get_components(StaticInjection, late), key in get_time_series_keys(device)

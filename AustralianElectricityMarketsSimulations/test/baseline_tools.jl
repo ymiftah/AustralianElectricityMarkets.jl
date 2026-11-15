@@ -8,11 +8,6 @@ include(joinpath(@__DIR__, "baseline", "compare.jl"))
 const BT_T1 = DateTime(2025, 1, 1, 0, 5)
 const BT_T2 = DateTime(2025, 1, 1, 0, 10)
 
-@testset "identical snapshots have no mismatch" begin
-    a = Dict("variable/x" => DataFrame(DateTime = [BT_T1, BT_T2], u = [1.0, 2.0]))
-    @test isempty(compare_snapshots(a, deepcopy(a)))
-end
-
 @testset "variable differences gate at 1e-9" begin
     a = Dict("variable/x" => DataFrame(DateTime = [BT_T1, BT_T2], u = [1.0, 2.0]))
     b = deepcopy(a)

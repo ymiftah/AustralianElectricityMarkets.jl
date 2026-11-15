@@ -1,9 +1,5 @@
 let
-    hive_dir = AEM_TEST_HIVE_DIR
-    @test isdir(hive_dir)
-
-    config = HiveConfiguration(hive_location = hive_dir, filesystem = "file")
-    db = aem_connect(config)
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
 
     @testset "_table_is_cached" begin
         # A glob matching zero files is a legitimate false, not an error - confirmed directly

@@ -1,11 +1,13 @@
-# With the observed starting output, the closed-loop inputs of an interval are the series nem_system wrote.
-@testset "closed-loop inputs equal the written series for the observed state" begin
-    hive = mktempdir()
+const _CL_SYS = let hive = mktempdir()
     create_mock_data(hive; complete_inputs = true)
     write_mock_interconnector_results(hive)
-    db = aem_connect(HiveConfiguration(hive_location = hive))
     t0 = DateTime(2025, 1, 1, 0, 5)
-    sys = nem_system(db, NEMDEConfiguration(); date_range = t0:Minute(5):(t0 + Minute(20)))
+    nem_system(aem_connect(HiveConfiguration(hive_location = hive)), NEMDEConfiguration(); date_range = t0:Minute(5):(t0 + Minute(20)))
+end
+
+# With the observed starting output, the closed-loop inputs of an interval are the series nem_system wrote.
+@testset "closed-loop inputs equal the written series for the observed state" begin
+    sys = _CL_SYS
     AEM_ = AustralianElectricityMarkets
     base = PowerSystems.get_base_power(sys)
     checked = Dict{Symbol, Int}()
@@ -30,16 +32,10 @@
     @test get(checked, :fcas_offer, 0) > 0
     @test get(checked, :fcas_ramping, 0) > 0
     @test get(checked, :ramp, 0) > 0
-    @info "closed-loop inputs checked" checked
 end
 
 @testset "a different starting output changes a storage ramp rate and an FCAS ramping limit" begin
-    hive = mktempdir()
-    create_mock_data(hive; complete_inputs = true)
-    write_mock_interconnector_results(hive)
-    db = aem_connect(HiveConfiguration(hive_location = hive))
-    t0 = DateTime(2025, 1, 1, 0, 5)
-    sys = nem_system(db, NEMDEConfiguration(); date_range = t0:Minute(5):(t0 + Minute(20)))
+    sys = _CL_SYS
     AEM_ = AustralianElectricityMarkets
     base = PowerSystems.get_base_power(sys)
     t = first(replay_intervals(sys))

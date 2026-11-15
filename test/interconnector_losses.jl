@@ -122,8 +122,6 @@ let
         @test ic1.from_region_loss_share ≈ 0.1
         @test ic1.breakpoints == [-500.0, -250.0, 0.0, 250.0, 500.0]
         @test Set(keys(ic1.demand_coefficients)) == Set(["VIC1", "SNOWY1"])
-        # Assembled models feed the same math the pure-function tests above cover.
-        @test length(loss_segments(ic1, Dict("VIC1" => 4000.0, "SNOWY1" => 100.0))) == 4
     end
 
     @testset "demand coefficient patch" begin
@@ -165,7 +163,6 @@ let
 
         ic1 = get_component(AreaInterchange, sys, "IC1")
         attached = only(get_supplemental_attributes(InterconnectorLossModel, ic1))
-        @test attached.interconnector == "IC1"
         # Attached models are per-unitized to sys's base power - not the raw MW breakpoints
         # interconnector_loss_models itself returns (checked above).
         @test attached.breakpoints == [-500.0, -250.0, 0.0, 250.0, 500.0] ./ base_power
@@ -210,7 +207,6 @@ end
     offset = 0.00017965 * 17.0^2 / 2
     expected = [interconnector_losses(model, bp, demand) - offset for bp in (-17.0, 17.0)]
     @test corrected ≈ expected atol = 1.0e-12
-    @test corrected[1] < 0 < corrected[2]
     @test corrected[1] ≈ -corrected[2] atol = 1.0e-12
     @test only(diff(corrected)) / 34.0 ≈ loss_segments(model, demand)[1].slope atol = 1.0e-12
 

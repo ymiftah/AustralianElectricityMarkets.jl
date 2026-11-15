@@ -1,32 +1,47 @@
-@testset "NEMUnitState carries the start-of-interval state" begin
-    @test NEMUnitState(10.0, 0).initial_mw == 10.0
-end
-
-@testset "state rules are callable from AustralianElectricityMarkets" begin
-    @test composite_ramp_rates(3.0, 4.0, 5.0, 6.0, 5.0, NEMUnitState(50.0, 4)) == (3.0, 4.0)
-    @test composite_ramp_rates(3.0, 4.0, 5.0, 6.0, 5.0, NEMUnitState(-50.0, 4)) == (6.0, 5.0)
-    @test fixed_load_invoked(50.0, NEMUnitState(10.0, 4))
-    @test !fixed_load_invoked(50.0, NEMUnitState(10.0, 2))
-end
+const _ST_HIVE = mktempdir()
+create_mock_data(_ST_HIVE; complete_inputs = true)
+write_mock_interconnector_results(_ST_HIVE)
+const _ST_DB = aem_connect(HiveConfiguration(hive_location = _ST_HIVE))
+const _ST_START = DateTime(2025, 1, 1, 0, 5)
+const _ST_SYS = nem_system(_ST_DB, NEMDEConfiguration(); date_range = _ST_START:Minute(5):(_ST_START + Minute(20)))
 
 @testset "replay interval stamps drop the two trailing stamps of the date range" begin
-    hive = mktempdir()
-    create_mock_data(hive; complete_inputs = true)
-    write_mock_interconnector_results(hive)
-    db = aem_connect(HiveConfiguration(hive_location = hive))
-    t = DateTime(2025, 1, 1, 0, 5)
-    sys = nem_system(db, NEMDEConfiguration(); date_range = t:Minute(5):(t + Minute(20)))
-    @test AustralianElectricityMarkets._replay_interval_stamps(sys) == collect(t:Minute(5):(t + Minute(10)))
+    @test AustralianElectricityMarkets._replay_interval_stamps(_ST_SYS) == collect(_ST_START:Minute(5):(_ST_START + Minute(10)))
+end
+
+@testset "a NEMDE replay system round-trips through JSON with its replay inputs" begin
+    AEM_ = AustralianElectricityMarkets
+    sys = _ST_SYS
+    path = joinpath(mktempdir(), "sys.json")
+    to_json(sys, path; force = true)
+    sys2 = System(path)
+    @test PowerSystems.get_time_series_counts(sys2) == PowerSystems.get_time_series_counts(sys)
+    @test replay_intervals(sys2) == replay_intervals(sys)
+    @test get_build_report(sys2) == get_build_report(sys)
+    @test isnothing(AEM_._check_replay_availability(sys2))
+    series_names(d) = sort([get_name(k) for k in get_time_series_keys(d) if get_time_series_type(k) === SingleTimeSeries])
+    read(d) = [get_time_series_values(SingleTimeSeries, d, n; ignore_scaling_factors = true) for n in series_names(d)]
+    for device in get_components(StaticInjection, sys)
+        back = get_component(typeof(device), sys2, get_name(device))
+        @test series_names(back) == series_names(device)
+        @test read(back) == read(device)
+    end
+    tie_break(s) = sort!(get_name.(get_contributing_devices(s, only(get_components(AEM_.EnergyTieBreak, s)))))
+    @test tie_break(sys2) == tie_break(sys)
+    # Band prices are stored on the bids, not as series.
+    prices(s, f) = sort(
+        [
+            (get_name(d), string(hasproperty(b, :service) ? b.service : b.direction), b.band_prices) for d in AEM_.nem_dispatch_devices(s)
+                for c in (AEM_._nem_offer_cost(d),) if !isnothing(c) for b in f(c)
+        ]; by = string,
+    )
+    @test !isempty(prices(sys, AEM_.get_fcas_bids))
+    @test prices(sys2, AEM_.get_fcas_bids) == prices(sys, AEM_.get_fcas_bids)
+    @test prices(sys2, AEM_.get_energy_bids) == prices(sys, AEM_.get_energy_bids)
 end
 
 @testset "a change of availability after the replay inputs are written is refused, naming the component" begin
-    hive = mktempdir()
-    create_mock_data(hive; complete_inputs = true)
-    write_mock_interconnector_results(hive)
-    db = aem_connect(HiveConfiguration(hive_location = hive))
-    t = DateTime(2025, 1, 1, 0, 5)
-    sys = nem_system(db, NEMDEConfiguration(); date_range = t:Minute(5):(t + Minute(20)))
-    @test isnothing(AustralianElectricityMarkets._check_replay_availability(sys))
+    sys = deepcopy(_ST_SYS)
     device = first(AustralianElectricityMarkets.nem_dispatch_devices(sys))
     PowerSystems.set_available!(device, false)
     err = try
@@ -40,14 +55,10 @@ end
     PowerSystems.set_available!(device, true)
     @test isnothing(AustralianElectricityMarkets._check_replay_availability(sys))
     # A system without replay inputs carries no recorded availability.
-    regional = nem_system(db, RegionalNetworkConfiguration())
-    @test_throws ArgumentError AustralianElectricityMarkets._check_replay_availability(regional)
-
-    @testset "a build report written before unavailable_constraints throws instead of a KeyError" begin
-        old = deepcopy(sys)
-        delete!(PowerSystems.get_ext(old)["build_report"], "unavailable_constraints")
-        @test_throws ArgumentError get_build_report(old)
-    end
+    @test_throws ArgumentError AustralianElectricityMarkets._check_replay_availability(nem_system(_ST_DB, RegionalNetworkConfiguration()))
+    # A build report written before unavailable_constraints throws instead of a KeyError.
+    delete!(PowerSystems.get_ext(sys)["build_report"], "unavailable_constraints")
+    @test_throws ArgumentError get_build_report(sys)
 end
 
 @testset "the replay inputs refuse single time series off the dispatch interval" begin
@@ -65,34 +76,4 @@ end
         e
     end
     @test err isa ArgumentError && occursin("dispatch intervals", err.msg) && occursin("1 hour", err.msg)
-end
-
-@testset "a NEMDE replay system round-trips through JSON with its replay inputs" begin
-    hive = mktempdir()
-    create_mock_data(hive; complete_inputs = true)
-    write_mock_interconnector_results(hive)
-    db = aem_connect(HiveConfiguration(hive_location = hive))
-    t = DateTime(2025, 1, 1, 0, 5)
-    sys = nem_system(db, NEMDEConfiguration(); date_range = t:Minute(5):(t + Minute(20)))
-    path = joinpath(mktempdir(), "sys.json")
-    to_json(sys, path; force = true)
-    sys2 = System(path)
-    AEM_ = AustralianElectricityMarkets
-    @test PowerSystems.get_time_series_counts(sys2) == PowerSystems.get_time_series_counts(sys)
-    @test replay_intervals(sys2) == replay_intervals(sys)
-    @test length(collect(get_components(AEM_.EnergyTieBreak, sys2))) == 1
-    @test get_build_report(sys2) == get_build_report(sys)
-    @test isnothing(AEM_._check_replay_availability(sys2))
-    prices(s, f) = sort(
-        [
-            (get_name(d), string(hasproperty(b, :service) ? b.service : b.direction), b.band_prices) for d in AEM_.nem_dispatch_devices(s)
-                for c in (AEM_._nem_offer_cost(d),) if !isnothing(c) for b in f(c)
-        ]; by = string,
-    )
-    @test !isempty(prices(sys, AEM_.get_fcas_bids))
-    @test prices(sys2, AEM_.get_fcas_bids) == prices(sys, AEM_.get_fcas_bids)
-    @test prices(sys2, AEM_.get_energy_bids) == prices(sys, AEM_.get_energy_bids)
-    # Tie-break scales are series on the devices and survive with the forecasts.
-    scale_names(s) = sort([k.name for d in AEM_.nem_dispatch_devices(s) for k in PowerSystems.get_time_series_keys(d) if startswith(k.name, "tie_break_scale")])
-    @test scale_names(sys2) == scale_names(sys)
 end

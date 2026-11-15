@@ -1,6 +1,5 @@
 using AustralianElectricityMarkets
 using Test
-# using JET
 
 using Dates
 using DuckDB
@@ -79,7 +78,3 @@ for (name, (title, files)) in TEST_GROUPS
     end
 end
 
-# TODO Review Jet
-# @testset "JET" begin
-#     JET.test_package(AustralianElectricityMarkets; target_defined_modules = true)
-# end

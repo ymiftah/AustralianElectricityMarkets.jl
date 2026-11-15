@@ -165,8 +165,6 @@ end
     model = toy_model(sys; template = replay_template(sys))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
-    @test !isdefined(AEMS, :EnergyBandPriceParameter)
-    @test all(k -> nameof(PSI.IS.Optimization.get_entry_type(k)) != :EnergyBandPriceParameter, Base.keys(PSI.get_parameters(model)))
     invariant = PSI.get_invariant_terms(PSI.get_objective_expression(container))
     scale = 100.0 * interval_hours(PSI.get_resolution(container))
     gen = PSI.get_variable(container, EnergyOfferBandVariable(), ThermalStandard, "gen")

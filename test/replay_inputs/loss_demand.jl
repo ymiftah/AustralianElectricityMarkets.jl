@@ -6,12 +6,11 @@ const _LD_START = DateTime(2025, 1, 1, 0, 5)
 const _LD_N = 4
 
 # A NEM replay System on the mock hive, with its replay inputs written by `nem_system`.
-function _ld_mock_system()
-    hive = mktempdir()
+const _LD_SYS = let hive = mktempdir()
     create_mock_data(hive; complete_inputs = true)
     write_mock_interconnector_results(hive)
     db = aem_connect(HiveConfiguration(hive_location = hive))
-    return nem_system(db, NEMDEConfiguration(); date_range = _LD_START:Minute(5):(_LD_START + Minute(5 * _LD_N)))
+    nem_system(db, NEMDEConfiguration(); date_range = _LD_START:Minute(5):(_LD_START + Minute(5 * _LD_N)))
 end
 
 # The error thrown by `f`.
@@ -70,22 +69,16 @@ end
     @test AEM.loss_demand_coefficient(model, Dict{String, Float64}()) == 0.0
 end
 
-@testset "the stage writes the coefficient series on each loss-modelled interchange only" begin
+@testset "the stage writes the demand term per interval on each loss-modelled interchange only" begin
     AEM = AustralianElectricityMarkets
-    sys = _ld_mock_system()
+    sys = _LD_SYS
     modelled = _ld_modelled(sys)
     @test !isempty(modelled)
     for ic in PowerSystems.get_components(PowerSystems.AreaInterchange, sys)
         has = PowerSystems.has_time_series(ic, PowerSystems.SingleTimeSeries, AEM.NEM_SERIES.loss_demand_coefficient)
         @test has == (ic in modelled)
     end
-end
-
-@testset "the coefficient is the demand term per interval, on per-unit regional demand" begin
-    AEM = AustralianElectricityMarkets
-    sys = _ld_strip!(_ld_mock_system())
-    AEM._set_loss_demand_coefficients!(sys)
-    for ic in _ld_modelled(sys)
+    for ic in modelled
         model = only(PowerSystems.get_supplemental_attributes(AEM.InterconnectorLossModel, ic))
         coefficient = PowerSystems.get_time_series_values(PowerSystems.SingleTimeSeries, ic, AEM.NEM_SERIES.loss_demand_coefficient)
         @test coefficient ≈ _ld_expected(sys, model)
@@ -95,15 +88,13 @@ end
     end
 end
 
-@testset "an unavailable VIC1 load changes the coefficient of an interchange that names VIC1, and the rerun matches the expectation" begin
+@testset "an unavailable VIC1 load changes the coefficient of an interchange that names VIC1" begin
     AEM = AustralianElectricityMarkets
-    sys = _ld_strip!(_ld_mock_system())
-    AEM._set_loss_demand_coefficients!(sys)
+    sys = deepcopy(_LD_SYS)
     ic = first(ic for ic in _ld_modelled(sys) if haskey(only(PowerSystems.get_supplemental_attributes(AEM.InterconnectorLossModel, ic)).demand_coefficients, "VIC1"))
     model = only(PowerSystems.get_supplemental_attributes(AEM.InterconnectorLossModel, ic))
     before = PowerSystems.get_time_series_values(PowerSystems.SingleTimeSeries, ic, AEM.NEM_SERIES.loss_demand_coefficient)
-    load = PowerSystems.get_component(PowerSystems.PowerLoad, sys, "VIC1 Load")
-    PowerSystems.set_available!(load, false)
+    PowerSystems.set_available!(PowerSystems.get_component(PowerSystems.PowerLoad, sys, "VIC1 Load"), false)
     _ld_strip!(sys)
     AEM._set_loss_demand_coefficients!(sys)
     coefficient = PowerSystems.get_time_series_values(PowerSystems.SingleTimeSeries, ic, AEM.NEM_SERIES.loss_demand_coefficient)
@@ -113,8 +104,7 @@ end
 
 @testset "the coefficient is the same bit for bit whatever the System's units setting" begin
     AEM = AustralianElectricityMarkets
-    sys = _ld_strip!(_ld_mock_system())
-    AEM._set_loss_demand_coefficients!(sys)
+    sys = deepcopy(_LD_SYS)
     ics = _ld_modelled(sys)
     series = [PowerSystems.get_time_series_values(PowerSystems.SingleTimeSeries, ic, AEM.NEM_SERIES.loss_demand_coefficient) for ic in ics]
     _ld_strip!(sys)
@@ -127,7 +117,7 @@ end
 
 @testset "the writer writes nothing when no interchange carries an InterconnectorLossModel" begin
     AEM = AustralianElectricityMarkets
-    sys = _ld_strip!(_ld_mock_system())
+    sys = _ld_strip!(deepcopy(_LD_SYS))
     for ic in _ld_modelled(sys)
         PowerSystems.remove_supplemental_attribute!(sys, ic, only(PowerSystems.get_supplemental_attributes(AEM.InterconnectorLossModel, ic)))
     end
@@ -137,48 +127,26 @@ end
     end
 end
 
-@testset "the writer rejects a system with no available load" begin
-    AEM = AustralianElectricityMarkets
-    sys = _ld_strip!(_ld_mock_system())
-    foreach(l -> PowerSystems.set_available!(l, false), PowerSystems.get_components(PowerSystems.PowerLoad, sys))
-    err = _ld_error(() -> AEM._set_loss_demand_coefficients!(sys))
-    @test err isa ArgumentError
-    @test occursin("no available PowerLoad", sprint(showerror, err))
-end
-
-@testset "the writer rejects a load on a bus with no area" begin
-    AEM = AustralianElectricityMarkets
-    sys = _ld_strip!(_ld_mock_system())
-    load = PowerSystems.get_component(PowerSystems.PowerLoad, sys, "VIC1 Load")
-    PowerSystems.set_area!(PowerSystems.get_bus(load), nothing)
-    err = _ld_error(() -> AEM._set_loss_demand_coefficients!(sys))
-    @test err isa ArgumentError
-    @test occursin("on a bus with no area", sprint(showerror, err))
-end
-
-@testset "the writer rejects a load with no loss_demand series" begin
-    AEM = AustralianElectricityMarkets
-    sys = _ld_strip!(_ld_mock_system())
-    load = PowerSystems.get_component(PowerSystems.PowerLoad, sys, "VIC1 Load")
-    remove_series_and_forecast!(sys, load, "loss_demand")
-    err = _ld_error(() -> AEM._set_loss_demand_coefficients!(sys))
-    @test err isa ArgumentError
-    @test occursin("no \"loss_demand\" series", sprint(showerror, err))
-end
-
-@testset "the writer rejects a load series off the common timestamps" begin
-    AEM = AustralianElectricityMarkets
-    sys = _ld_strip!(_ld_mock_system())
-    load = PowerSystems.get_component(PowerSystems.PowerLoad, sys, "VIC1 Load")
+# Moves the "loss_demand" series of `load` five minutes later, off the common timestamps.
+function _ld_shift_series!(sys, load)
     original = PowerSystems.get_time_series(PowerSystems.SingleTimeSeries, load, "loss_demand")
     stamps = PowerSystems.get_time_series_timestamps(PowerSystems.SingleTimeSeries, load, "loss_demand")
     values = PowerSystems.get_time_series_values(PowerSystems.SingleTimeSeries, load, "loss_demand")
     remove_series_and_forecast!(sys, load, "loss_demand")
     PowerSystems.add_time_series!(
-        sys, load,
-        AEM.single_series("loss_demand", first(stamps) + Minute(5), values, PowerSystems.get_resolution(original)),
+        sys, load, AustralianElectricityMarkets.single_series("loss_demand", first(stamps) + Minute(5), values, PowerSystems.get_resolution(original)),
     )
-    err = _ld_error(() -> AEM._set_loss_demand_coefficients!(sys))
-    @test err isa ArgumentError
-    @test occursin("is not on the timestamps", sprint(showerror, err))
+    return
+end
+
+@testset "the writer rejects $(message)" for (message, damage!) in (
+        "no available PowerLoad" => (sys, _) -> foreach(l -> PowerSystems.set_available!(l, false), PowerSystems.get_components(PowerSystems.PowerLoad, sys)),
+        "on a bus with no area" => (_, load) -> PowerSystems.set_area!(PowerSystems.get_bus(load), nothing),
+        "no \"loss_demand\" series" => (sys, load) -> remove_series_and_forecast!(sys, load, "loss_demand"),
+        "is not on the timestamps" => _ld_shift_series!,
+    )
+    sys = _ld_strip!(deepcopy(_LD_SYS))
+    damage!(sys, PowerSystems.get_component(PowerSystems.PowerLoad, sys, "VIC1 Load"))
+    err = _ld_error(() -> AustralianElectricityMarkets._set_loss_demand_coefficients!(sys))
+    @test err isa ArgumentError && occursin(message, sprint(showerror, err))
 end

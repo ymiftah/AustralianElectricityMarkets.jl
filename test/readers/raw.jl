@@ -1,9 +1,6 @@
 let
     hive_dir = AEM_TEST_HIVE_DIR
-    @test isdir(hive_dir)
-
-    config = HiveConfiguration(hive_location = hive_dir, filesystem = "file")
-    db = aem_connect(config)
+    db = aem_connect(HiveConfiguration(hive_location = hive_dir, filesystem = "file"))
 
     @testset "read_interconnectors drops an interconnector with a retired endpoint region" begin
         # A region absent from DISPATCHREGIONSUM (the authoritative "currently active" source)
@@ -79,7 +76,6 @@ let
             @test eltype(units.REGISTERED_UNTIL) == DateTime
         end
         # The older archive's stale open rows must not leak into either as-of read.
-        @test maxmwin(read_interconnectors(vdb; as_of = early)) != 111.0
         @test only(read_units(vdb; as_of = early)[read_units(vdb; as_of = early).DUID .== "BW01", :REGISTEREDCAPACITY]) == 100.0
         # A unit not yet registered as of the date is omitted.
         @test isempty(read_units(vdb; as_of = DateTime(2019, 1, 1)))
@@ -136,9 +132,6 @@ let
 
     @testset "read_demand" begin
         df = read_demand(db)
-        @test df isa DataFrame
-        @test nrow(df) > 0
-        @test "REGIONID" in names(df)
         first_vic = df[(df.REGIONID .== "VIC1") .& (df.SETTLEMENTDATE .== minimum(df.SETTLEMENTDATE)), :]
         @test only(first_vic.TOTALDEMAND) == 1000.0
         # Loss-equation demand is INITIALSUPPLY + DEMANDFORECAST (mock: 990 + 10 i + 25) plus the
@@ -151,22 +144,15 @@ let
 
     @testset "read_units" begin
         df = read_units(db)
-        @test df isa DataFrame
-        @test nrow(df) > 0
-        @test "DUID" in names(df)
-        @test "CO2E_ENERGY_SOURCE" in names(df)
         @test !("TECHNOLOGY" in names(df))
         @test !("FUELTYPE" in names(df))
-        @test "BW01" in df.DUID
         @test only(df.CO2E_ENERGY_SOURCE[df.DUID .== "BW01"]) == "Battery Storage"
 
         # BAYSW (station for BW01-BW04) is renamed in a later STATION archive_month
         # partition (mock_data.jl). read_units() must resolve one name per DUID —
         # not fan out into duplicate rows via the STATIONID -> STATIONNAME join.
         @test allunique(df.DUID)
-        bw01_names = df.STATIONNAME[df.DUID .== "BW01"]
-        @test length(bw01_names) == 1
-        @test only(bw01_names) == "Bayswater Power Station"
+        @test only(df.STATIONNAME[df.DUID .== "BW01"]) == "Bayswater Power Station"
     end
 
     @testset "read_bids rejects period offers without a price-band row" begin

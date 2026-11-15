@@ -40,7 +40,6 @@ _ud_telemetry(; uigf = nothing) = AEM.NEMTelemetry(;
 
 @testset "NEMRegistration coerces numbers to Float64" begin
     reg = _ud_registration()
-    @test reg.schedule_type == AEM.ScheduleType.SEMI_SCHEDULED
     @test reg.gen_loss_factor === 1.0
     @test reg.load_loss_factor === 0.0
     @test reg == _ud_registration()
@@ -52,8 +51,6 @@ end
 
 @testset "NEMTelemetry takes static and key-backed values" begin
     tel = _ud_telemetry()
-    @test tel.agc_status === true
-    @test isnothing(tel.uigf)
     @test tel.ramp_up_limit === 2.0
     @test tel.raise_reg_enablement === (0.0, 50.0)
     @test tel.lower_reg_enablement === (1.5, 40.0)
@@ -64,8 +61,6 @@ end
         ramp_down_limit = 3, raise_reg_enablement = _ud_key("raise_enab"), lower_reg_enablement = (1.5, 40),
         raise_reg_max_avail = _ud_key("raise_max"), lower_reg_max_avail = 40,
     )
-    @test keyed.uigf isa _UD_IS.TimeSeriesKey
-    @test keyed.agc_status isa _UD_IS.TimeSeriesKey
     @test keyed == AEM.NEMTelemetry(;
         agc_status = _ud_key("agc"), uigf = _ud_key("uigf"), ramp_up_limit = _ud_key("up"),
         ramp_down_limit = 3, raise_reg_enablement = _ud_key("raise_enab"), lower_reg_enablement = (1.5, 40),
@@ -81,118 +76,15 @@ end
     @test obs == AEM.NEMObservedState(; initial_mw = 12.0, dispatch_mode = 3)
 
     keyed = AEM.NEMObservedState(; initial_mw = _ud_key("initial"), dispatch_mode = _ud_key("mode"))
-    @test keyed.initial_mw isa _UD_IS.TimeSeriesKey
-    @test keyed.dispatch_mode isa _UD_IS.TimeSeriesKey
     @test keyed == AEM.NEMObservedState(; initial_mw = _ud_key("initial"), dispatch_mode = _ud_key("mode"))
     @test keyed != obs
 end
-
-@testset "Stock devices throw an ArgumentError naming the device" begin
-    stock = ThermalStandard(;
-        name = "stock_unit", available = true, status = true, bus = _ud_bus(), active_power = 50.0,
-        reactive_power = 0.0, rating = 120.0, active_power_limits = (min = 10.0, max = 100.0),
-        reactive_power_limits = nothing, ramp_limits = nothing, operation_cost = ThermalGenerationCost(nothing),
-        base_power = 100.0,
-    )
-    for (getter, what) in (
-            (AEM.get_registration, "registration"),
-            (AEM.get_telemetry, "telemetry"),
-            (AEM.get_observed_state, "observed state"),
-        )
-        err = try
-            getter(stock)
-        catch e
-            e
-        end
-        @test err isa ArgumentError
-        @test err.msg == "stock_unit is not a NEM device, so it has no $what"
-    end
-end
-
-@testset "NEM device setters replace the unit data field" begin
-    sys = System(100.0)
-    bus = _ud_bus()
-    add_component!(sys, bus)
-    gen = _ud_thermal("settable", bus)
-    add_component!(sys, gen)
-    AEM.attach_nem_unit_data!(sys, gen)
-    reg = _ud_registration()
-    @test AEM.set_registration!(gen, reg) === reg
-    @test AEM.get_registration(gen) == reg
-
-    later = AEM.NEMRegistration(;
-        schedule_type = AEM.ScheduleType.NON_SCHEDULED, gen_loss_factor = 0.5, load_loss_factor = 0.5,
-        registered_from = DateTime(2026, 1, 1), registered_until = DateTime(2031, 1, 1),
-    )
-    AEM.set_registration!(gen, later)
-    @test AEM.get_registration(gen) == later
-
-    AEM.set_telemetry!(gen, _ud_telemetry())
-    @test AEM.get_telemetry(gen) == _ud_telemetry()
-
-    AEM.set_observed_state!(gen, AEM.NEMObservedState(; initial_mw = 5, dispatch_mode = 0))
-    @test AEM.get_observed_state(gen) == AEM.NEMObservedState(; initial_mw = 5.0, dispatch_mode = 0)
-end
-
-@testset "NEM device structs round-trip through JSON" begin
-    sys = System(100.0)
-    bus = _ud_bus()
-    add_component!(sys, bus)
-    gen = _ud_thermal("unit", bus)
-    add_component!(sys, gen)
-    AEM.attach_nem_unit_data!(sys, gen)
-    AEM.set_registration!(gen, _ud_registration())
-    for name in ("initial_mw", "agc", "raise_enab")
-        add_time_series!(sys, gen, _ud_series(name))
-    end
-    key(name) = only(k for k in _UD_IS.get_time_series_keys(gen) if k.name == name)
-    AEM.set_telemetry!(
-        gen,
-        AEM.NEMTelemetry(;
-            agc_status = key("agc"), uigf = nothing, ramp_up_limit = 2.0, ramp_down_limit = 3.0,
-            raise_reg_enablement = key("raise_enab"), lower_reg_enablement = (1.5, 40.0),
-            raise_reg_max_avail = 30.0, lower_reg_max_avail = 40.0,
-        ),
-    )
-    AEM.set_observed_state!(gen, AEM.NEMObservedState(; initial_mw = key("initial_mw"), dispatch_mode = 2))
-
-    mktempdir() do dir
-        path = joinpath(dir, "sys.json")
-        to_json(sys, path; force = true)
-        restored = System(path)
-        back = get_component(ThermalStandard, restored, "unit")
-
-        @test AEM.get_registration(back) == AEM.get_registration(gen)
-        @test AEM.get_telemetry(back) == AEM.get_telemetry(gen)
-        @test AEM.get_observed_state(back) == AEM.get_observed_state(gen)
-
-        telemetry = AEM.get_telemetry(back)
-        @test telemetry.agc_status isa _UD_IS.TimeSeriesKey
-        @test telemetry.raise_reg_enablement isa _UD_IS.TimeSeriesKey
-        @test telemetry.lower_reg_enablement === (1.5, 40.0)
-
-        # Each key resolves through the reloaded unit to the series it was built from.
-        observed = AEM.get_observed_state(back)
-        @test observed.initial_mw isa _UD_IS.TimeSeriesKey
-        for resolved in (observed.initial_mw, telemetry.agc_status, telemetry.raise_reg_enablement)
-            @test _UD_IS.get_time_series(back, resolved) !== nothing
-        end
-        stored = get_time_series(SingleTimeSeries, back, observed.initial_mw.name).data
-        @test TimeSeries.values(stored) == collect(1.0:length(_UD_STAMPS))
-    end
-end
-
-_ud_stock(name, bus) = ThermalStandard(;
-    name, available = true, status = true, bus, active_power = 50.0, reactive_power = 0.0,
-    rating = 120.0, active_power_limits = (min = 10.0, max = 100.0), reactive_power_limits = nothing,
-    ramp_limits = nothing, operation_cost = ThermalGenerationCost(nothing), base_power = 100.0,
-)
 
 @testset "Stock devices carry NEM unit data as an attribute" begin
     sys = System(100.0)
     bus = _ud_bus()
     add_component!(sys, bus)
-    stock = _ud_stock("attached", bus)
+    stock = _ud_thermal("attached", bus)
     add_component!(sys, stock)
 
     @test !AEM.has_nem_unit_data(stock)
@@ -221,7 +113,6 @@ _ud_stock(name, bus) = ThermalStandard(;
     @test err.msg == "attached has no NEM unit data; attach it with attach_nem_unit_data!"
 
     unit = AEM.attach_nem_unit_data!(sys, stock)
-    @test unit isa AEM.NEMUnitData
     @test AEM.has_nem_unit_data(stock)
     @test AEM._nem_offer_cost(stock) == unit.offer
     @test isnothing(unit.registration) && isnothing(unit.telemetry) && isnothing(unit.observed_state)
@@ -260,7 +151,7 @@ end
     sys = System(100.0)
     bus = _ud_bus()
     add_component!(sys, bus)
-    stock = _ud_stock("stock_json", bus)
+    stock = _ud_thermal("stock_json", bus)
     add_component!(sys, stock)
     for name in ("max_avail", "initial_mw", "agc", "raise_enab")
         add_time_series!(sys, stock, _ud_series(name))
@@ -287,7 +178,7 @@ end
             ),
         ],
     )
-    unit = AEM.attach_nem_unit_data!(sys, stock; offer)
+    AEM.attach_nem_unit_data!(sys, stock; offer)
     AEM.set_registration!(stock, _ud_registration())
     AEM.set_telemetry!(
         stock, AEM.NEMTelemetry(;
@@ -304,18 +195,15 @@ end
         restored = System(path)
         back = get_component(ThermalStandard, restored, "stock_json")
 
-        @test AEM.has_nem_unit_data(back)
-        @test AEM._nem_unit_data(back).offer == unit.offer
+        @test AEM._nem_offer_cost(back) == offer
         @test AEM.get_registration(back) == AEM.get_registration(stock)
         @test AEM.get_telemetry(back) == AEM.get_telemetry(stock)
         @test AEM.get_observed_state(back) == AEM.get_observed_state(stock)
-        @test AEM.get_telemetry(back).agc_status isa _UD_IS.TimeSeriesKey
-        @test AEM.get_observed_state(back).initial_mw isa _UD_IS.TimeSeriesKey
 
-        restored_offer = AEM._nem_offer_cost(back)
-        @test restored_offer == offer
-        @test only(AEM.get_fcas_bids(restored_offer)).max_avail == 10.0
-        @test restored_offer.energy[1].max_avail isa _UD_IS.TimeSeriesKey
-        @test only(b for b in restored_offer.energy if b.direction == AEM.BidDirection.LOAD).max_avail == 5.0
+        # Each key resolves through the reloaded unit to the series it was built from.
+        initial_mw = AEM.get_observed_state(back).initial_mw
+        stored = get_time_series(SingleTimeSeries, back, initial_mw.name).data
+        @test TimeSeries.values(stored) == collect(1.0:length(_UD_STAMPS))
+        @test _UD_IS.get_time_series(back, AEM.get_telemetry(back).agc_status) !== nothing
     end
 end

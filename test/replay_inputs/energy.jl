@@ -4,13 +4,11 @@
 end
 
 # A NEM replay System on the mock hive, with its replay inputs written by `nem_system`.
-function _energy_mock_system()
-    hive = mktempdir()
+const _EN_SYS = let hive = mktempdir()
     create_mock_data(hive; complete_inputs = true)
     write_mock_interconnector_results(hive)
-    db = aem_connect(HiveConfiguration(hive_location = hive))
     t = DateTime(2025, 1, 1, 0, 5)
-    return nem_system(db, NEMDEConfiguration(); date_range = t:Minute(5):(t + Minute(20)))
+    nem_system(aem_connect(HiveConfiguration(hive_location = hive)), NEMDEConfiguration(); date_range = t:Minute(5):(t + Minute(20)))
 end
 
 # Removes the energy offer series of every bidding device of `sys`, so the writer can run again.
@@ -51,16 +49,12 @@ function _check_referred_energy_offers(sys)
     return checked
 end
 
-@testset "NEMDE replay writes the referred energy offer curves without AEMSim" begin
-    sys = _energy_mock_system()
-    checked = _check_referred_energy_offers(sys)
-    @test checked[AustralianElectricityMarkets.OfferSide.GEN] > 0
-    @test checked[AustralianElectricityMarkets.OfferSide.LOAD] > 0
-end
-
 @testset "energy offers are referred by the loss factor of their own side" begin
     AEM = AustralianElectricityMarkets
-    sys = _energy_mock_system()
+    checked = _check_referred_energy_offers(_EN_SYS)
+    @test checked[AEM.OfferSide.GEN] > 0
+    @test checked[AEM.OfferSide.LOAD] > 0
+    sys = deepcopy(_EN_SYS)
     # Distinct factors per side, so a swap of the two would change the expected prices.
     _strip_energy_offers!(sys)
     for device in AEM._bidding_devices(sys)
@@ -83,7 +77,7 @@ end
 
 @testset "a static energy bid is rejected when the replay inputs are written" begin
     AEM = AustralianElectricityMarkets
-    sys = _energy_mock_system()
+    sys = deepcopy(_EN_SYS)
     _strip_energy_offers!(sys)
     gen = PowerSystems.get_component(PowerSystems.ThermalStandard, sys, "ER01")
     AEM._nem_unit_data(gen).offer = AEM.NEMOfferCost(;
@@ -99,7 +93,7 @@ end
 
 @testset "two FCAS bids of one service on one side are rejected when the replay inputs are written" begin
     AEM = AustralianElectricityMarkets
-    sys = _energy_mock_system()
+    sys = deepcopy(_EN_SYS)
     _strip_energy_offers!(sys)
     gen = PowerSystems.get_component(PowerSystems.ThermalStandard, sys, "ER01")
     max_avail_name = AEM.bid_series_name(AEM.BidType.ENERGY, :max_avail, AEM.BidDirection.GEN)

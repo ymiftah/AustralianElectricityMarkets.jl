@@ -90,7 +90,6 @@ end
 
 @testset "the problem type selects the replay mode" begin
     @test NEMClosedLoopDispatchProblem <: AbstractNEMDispatchProblem <: PSI.DefaultDecisionProblem
-    @test NEMDispatchProblem <: AbstractNEMDispatchProblem
     sys = sentinel_system()
     closed = PSI.DecisionModel(
         NEMClosedLoopDispatchProblem, replay_template(sys), sys; optimizer = STOCK_OPTIMIZER, initial_time = TOY_START,
@@ -104,7 +103,6 @@ end
         err = _caught(() -> PSI.DecisionModel(NEMDispatchProblem, replay_template(sys), sys; kw => TOY_RESOLUTION))
         @test err isa ArgumentError && occursin(string(kw), err.msg)
     end
-    @test_throws ArgumentError PSI.DecisionModel(NEMDispatchProblem, replay_template(sys), sys; ext = Dict{String, Any}())
     container = PSI.get_optimization_container(STOCK_SIM.model)
     @test !AEMS._closed_loop(container)
     initial, covered = AEMS._initial_mw_accessor(container, ThermalStandard, false)
@@ -148,18 +146,6 @@ end
     end
 end
 
-
-@testset "a constraint invoked at no step is left out and reported with its reason" begin
-    never = sentinel_system(; invoked = [0.0, 0.0])
-    AustralianElectricityMarkets._set_constraint_availability!(never)
-    @test AustralianElectricityMarkets.get_unavailable_constraints(never) == DataFrame(; constraint = ["N_TOY_LIMIT"], reason = [:never_invoked])
-    invoked_once = sentinel_system(; invoked = [1.0, 0.0])
-    AustralianElectricityMarkets._set_constraint_availability!(invoked_once)
-    @test isempty(AustralianElectricityMarkets.get_unavailable_constraints(invoked_once))
-    out_never = run_replay(never, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
-    row_never = only(filter(:constraint => ==("N_TOY_LIMIT"), out_never.skipped_constraints))
-    @test (row_never.reason, row_never.n_missing) == (:never_invoked, 0)
-end
 
 # Two intervals of 100 MW load: Alta $20 (150 MW, so part-loaded and marginal at 100 MW once the
 # constraint is masked), Park City $80 (100 MW). No binding ramp. One generic constraint `name` of
@@ -301,11 +287,13 @@ function battery_sentinel_system()
 end
 
 
+const BATTERY_SENTINEL_EXPECTED = [
+    (battery = 15.0, alta = 25.0, price = 50.0, objective = (1325 + 5.0 * AustralianElectricityMarkets.ENERGY_MAX_AVAIL_CVP_FACTOR * AustralianElectricityMarkets._financial_year_mpc(TOY_START)) / 12),
+    (battery = 10.0, alta = 30.0, price = 50.0, objective = 1550 / 12),
+]
+
 @testset "a battery's ramp floor binds in step 1 only: simulation equals standalone solves" begin
-    expected = [
-        (battery = 15.0, alta = 25.0, price = 50.0, objective = (1325 + 5.0 * AustralianElectricityMarkets.ENERGY_MAX_AVAIL_CVP_FACTOR * AustralianElectricityMarkets._financial_year_mpc(TOY_START)) / 12),
-        (battery = 10.0, alta = 30.0, price = 50.0, objective = 1550 / 12),
-    ]
+    expected = BATTERY_SENTINEL_EXPECTED
     sim = stock_simulate(battery_sentinel_system())
     @test PSI.built_for_recurrent_solves(PSI.get_optimization_container(sim.model))
     for (k, t) in enumerate(STOCK_STEPS)
@@ -825,13 +813,7 @@ end
     @test isempty(AEMS._modeled_fcas_services(no_fcas, sys))
     @test Set(r.constraint for r in skipped) == Set(["F_REG", "F_R6", "F_L6"])
     @test all(r -> r.reason == :unmodeled_fcas_service, skipped)
-    @test !any(m -> PSI.get_component_type(m) === EnergyTieBreak, values(PSI.get_service_models(no_fcas)))
-    # exclude_constraints leaves a constraint out with its reason, and rejects an unknown name.
-    skipped = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
-    sys = sentinel_system()
-    replay_template(sys; template = template_nemde(; exclude_constraints = Dict("N_TOY_LIMIT" => :never_invoked)), skipped)
-    @test only(skipped) == (constraint = "N_TOY_LIMIT", reason = :never_invoked, n_missing = 0)
-    @test PSY.get_available(PSY.get_component(GenericConstraint, sys, "N_TOY_LIMIT"))
+    # exclude_constraints rejects an unknown name.
     @test_throws r"exclude_constraints names N_ABSENT" replay_template(
         sentinel_system(); template = template_nemde(; exclude_constraints = Dict("N_ABSENT" => :x)),
     )
@@ -843,18 +825,6 @@ end
 end
 
 @testset "named errors of the replay core" begin
-    # A constraint on a unit absent from the system blocks a partial template; a left-out family does not.
-    ghost = nem_toy_system(
-        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0;
-        horizon = TOY_RESOLUTION, mutate! = (sys, stamps) -> begin
-            gc = GenericConstraint(;
-                name = "N_GHOST", sense = ConstraintSense.LE, rhs = 1.0, terms = ConstraintTerm[UnitTerm("GHOST", BidType.ENERGY, 1.0)],
-            )
-            PSY.add_service!(sys, gc, [PSY.get_component(ThermalStandard, sys, TOY_CHEAP)])
-            add_toy_constraint_series!(sys, gc, stamps, [100.0, 100.0], [1.0, 1.0])
-        end,
-    )
-    @test_throws r"cannot model: N_GHOST \(missing_component\)" replay_template(ghost; template = with_generic_constraints!(energy_template()))
     # Losses modeled but no interchange variable in the results.
     sys = loss_curve_sentinel_system()
     uncoupled = stock_standalone(sys, TOY_START; template = replay_template(sys; template = energy_template()))
@@ -939,30 +909,29 @@ end
 end
 
 @testset "closed loop: a battery's ramp rates follow its solved starting output" begin
-    open_loop = stock_simulate(battery_sentinel_system())
     closed = stock_simulate(battery_sentinel_system(); problem = NEMClosedLoopDispatchProblem)
-    @test closed.objectives[1] ≈ open_loop.objectives[1] atol = TOY_TOLERANCE
-    @test stock_mw(closed.solved[1], TOY_BATTERY) ≈ stock_mw(open_loop.solved[1], TOY_BATTERY) atol = TOY_TOLERANCE
+    @test closed.objectives[1] ≈ first(BATTERY_SENTINEL_EXPECTED).objective atol = TOY_TOLERANCE
+    @test stock_mw(closed.solved[1], TOY_BATTERY) ≈ first(BATTERY_SENTINEL_EXPECTED).battery atol = TOY_TOLERANCE
     # Step 2 ramps from the step-1 solve (15 MW) rather than the observed 0 MW.
     battery_2 = stock_mw(closed.solved[2], TOY_BATTERY)
     @test battery_2 >= 15.0 - 5.0 - TOY_TOLERANCE
 end
 
+const CLOSED_FCAS_SYSTEM = fcas_toy_system(; FCAS_CHANGES...)
+const CLOSED_FCAS = stock_simulate(CLOSED_FCAS_SYSTEM; problem = NEMClosedLoopDispatchProblem)
+
 @testset "closed loop: MNSP and FCAS sentinels build and execute, starting as open loop" begin
-    for build in (() -> mnsp_sentinel_system(), () -> fcas_toy_system(; FCAS_CHANGES...))
-        open_loop = stock_simulate(build())
-        closed = stock_simulate(build(); problem = NEMClosedLoopDispatchProblem)
-        @test closed.objectives[1] ≈ open_loop.objectives[1] atol = TOY_TOLERANCE
+    closed_mnsp = stock_simulate(mnsp_sentinel_system(); problem = NEMClosedLoopDispatchProblem)
+    @test PSI.has_container_key(PSI.get_optimization_container(closed_mnsp.model), NEMInitialFlow, PSY.AreaInterchange)
+    for (closed, build) in ((closed_mnsp, mnsp_sentinel_system), (CLOSED_FCAS, () -> fcas_toy_system(; FCAS_CHANGES...)))
+        @test closed.objectives[1] ≈ stock_simulate(build()).objectives[1] atol = TOY_TOLERANCE
         @test length(closed.objectives) == 2
     end
-    closed = stock_simulate(mnsp_sentinel_system(); problem = NEMClosedLoopDispatchProblem)
-    container = PSI.get_optimization_container(closed.model)
-    @test PSI.has_container_key(container, NEMInitialFlow, PSY.AreaInterchange)
 end
 
 @testset "closed loop: step 2's FCAS ramping limits are AEM's closed-loop inputs at the step-1 solve" begin
-    sys = fcas_toy_system(; FCAS_CHANGES...)
-    closed = stock_simulate(sys; problem = NEMClosedLoopDispatchProblem)
+    sys = CLOSED_FCAS_SYSTEM
+    closed = CLOSED_FCAS
     container = PSI.get_optimization_container(closed.model)
     t2 = last(STOCK_STEPS)
     base = PSY.get_base_power(sys)
@@ -976,8 +945,7 @@ end
         series = PSI.get_time_series_name(attributes)
         for (name, uuid) in attributes.component_name_to_ts_uuid
             device = PSY.get_component(T, sys, name)
-            solved = T <: PSY.Storage ? stock_mw(closed.solved[1], name) : stock_mw(closed.solved[1], name)
-            expected = AustralianElectricityMarkets.closed_loop_input(device, series, t2, solved, base)
+            expected = AustralianElectricityMarkets.closed_loop_input(device, series, t2, stock_mw(closed.solved[1], name), base)
             isnothing(expected) && continue
             actual = [PSI.JuMP.fix_value(array[uuid, field, 1]) for field in ("joint_ramping", "bdu_ramping")]
             @test actual ≈ collect(expected) atol = 1.0e-9

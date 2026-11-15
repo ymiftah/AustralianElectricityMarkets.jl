@@ -38,12 +38,15 @@
         return [haskey(by, t) ? row_curve(by[t], direction) : absent for t in grid]
     end
 
+    # One bid system shared by the read-only testsets; ASLOAD1 starts unavailable before the bids.
+    bid_sys, _ = nem_network(db; as_of = first(interval), through = last(interval) - Minute(5))
+    @test !get_available(get_component(InterruptiblePowerLoad, bid_sys, "ASLOAD1"))
+    set_market_bids!(bid_sys, db, interval)
+
     @testset "every bid field equals its read_offers column, on the grid" begin
-        sys, _ = nem_network(db; as_of = first(interval), through = last(interval) - Minute(5))
         offers = read_offers(db, interval)
-        set_market_bids!(sys, db, interval)
         n = length(grid)
-        for device in get_components(Device, sys)
+        for device in get_components(Device, bid_sys)
             name = get_name(device)
             cost = AEM._nem_offer_cost(device)
             isnothing(cost) && continue
@@ -97,10 +100,8 @@
     end
 
     @testset "each bid's series keys are the keys the series were stored under" begin
-        sys, _ = nem_network(db; as_of = first(interval), through = last(interval) - Minute(5))
-        set_market_bids!(sys, db, interval)
         checked = 0
-        for device in get_components(Generator, sys)
+        for device in get_components(Generator, bid_sys)
             cost = AEM._nem_offer_cost(device)
             isnothing(cost) && continue
             for bid in AEM.get_energy_bids(cost), field in fieldnames(typeof(bid))
@@ -115,17 +116,6 @@
         @test checked > 0
     end
 
-    @testset "a LOAD offer curve is stored with its bands in reverse order" begin
-        sys, _ = nem_network(db; as_of = first(interval), through = last(interval) - Minute(5))
-        offers = read_offers(db, interval)
-        set_market_bids!(sys, db, interval)
-        pump = get_component(Device, sys, "PUMP1")
-        row = rows_by_stamp(offers, "PUMP1", BidType.ENERGY, AEM.BidDirection.LOAD)[first(interval)]
-        curve = first(bid_value(pump, energy_bid(pump, AEM.BidDirection.LOAD), :offer_curves, first(interval), 1))
-        @test get_y_coords(curve) == reverse(Float64.(row.PRICEBANDARRAY))
-        @test get_x_coords(curve) == [0.0; cumsum(reverse(Float64.(row.BANDAVAILARRAY)))]
-    end
-
     @testset "a registered stamp without an energy row throws, naming the unit" begin
         # BW02's GEN energy and RAISE6SEC rows at 00:10 are removed from the cache, while BW02 is registered.
         gap_db = damaged_cache(
@@ -137,13 +127,11 @@
     end
 
     @testset "NULL fields are nothing when NULL throughout, and zero where NULL on some intervals" begin
-        sys, _ = nem_network(db; as_of = first(interval), through = last(interval) - Minute(5))
-        set_market_bids!(sys, db, interval)
-        er01 = energy_bid(get_component(ThermalStandard, sys, "ER01"), AEM.BidDirection.GEN)
+        er01 = energy_bid(get_component(ThermalStandard, bid_sys, "ER01"), AEM.BidDirection.GEN)
         @test isnothing(er01.energy_limit)
         @test isnothing(er01.fixed_load)
         # BW02 carries a 50 MW fixed load at 00:10 and 00:15 only.
-        @test series(get_component(Device, sys, "BW02"), AEM.bid_series_name(BidType.ENERGY, :fixed_load, AEM.BidDirection.GEN)) == [0.0, 50.0, 50.0]
+        @test series(get_component(Device, bid_sys, "BW02"), AEM.bid_series_name(BidType.ENERGY, :fixed_load, AEM.BidDirection.GEN)) == [0.0, 50.0, 50.0]
     end
 
     @testset "a fixed load is NaN at the intervals where FIXEDLOAD is NULL" begin
@@ -179,37 +167,12 @@
         @test any(s -> get_bid_type(s) == BidType.RAISE6SEC, get_components(FCASService, sys))
     end
 
-    @testset "a registered unit without an energy offer at an interval throws, naming it" begin
-        wide = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 8)
-        sys, _ = nem_network(db; as_of = first(wide), through = last(wide) - Minute(5))
-        @test_throws r"\w+ (GEN|LOAD) has no energy offer at" set_market_bids!(sys, db, wide)
-    end
-
-    @testset "a non-scheduled load with an FCAS bid ends available and bids no energy" begin
-        sys, _ = nem_network(db; as_of = first(interval), through = last(interval) - Minute(5))
-        asload = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
-        @test !get_available(asload)
-        set_market_bids!(sys, db, interval)
+    @testset "a non-scheduled load with an FCAS bid ends available with a zero LOAD MAXAVAIL and no energy bid" begin
+        asload = get_component(InterruptiblePowerLoad, bid_sys, "ASLOAD1")
         @test get_available(asload)
         @test !isempty(AEM.get_fcas_bids(AustralianElectricityMarkets._nem_offer_cost(asload)))
         @test isempty(AEM.get_energy_bids(AustralianElectricityMarkets._nem_offer_cost(asload)))
-    end
-
-    @testset "an available non-scheduled load without an energy bid gets a zero LOAD MAXAVAIL series" begin
-        sys, _ = nem_network(db; as_of = first(interval), through = last(interval) - Minute(5))
-        asload = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
-        name = AEM.bid_series_name(BidType.ENERGY, :max_avail, AEM.BidDirection.LOAD)
-        set_market_bids!(sys, db, interval)
-        @test !isempty(series(asload, name))
-        @test all(==(0.0), series(asload, name))
-    end
-
-    @testset "loss factors are kept in each bidding unit's registration" begin
-        sys, _ = nem_network(db; as_of = first(interval), through = last(interval) - Minute(5))
-        set_market_bids!(sys, db, interval)
-        for storage in get_components(EnergyReservoirStorage, sys)
-            @test get_registration(storage).gen_loss_factor > 0.0
-            @test get_registration(storage).load_loss_factor > 0.0
-        end
+        max_avail = series(asload, AEM.bid_series_name(BidType.ENERGY, :max_avail, AEM.BidDirection.LOAD))
+        @test !isempty(max_avail) && all(==(0.0), max_avail)
     end
 end

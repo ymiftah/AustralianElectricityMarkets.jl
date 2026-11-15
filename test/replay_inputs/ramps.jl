@@ -19,13 +19,12 @@ end
     @test isnan(effective_regulation_max_avail(50.0, NaN))
 end
 
-# A NEM replay System on the mock hive, with its replay inputs written by `nem_system` over `n` stamps from `start`.
-function _ramps_system(start::DateTime = DateTime(2025, 1, 1, 0, 5), n::Int = 5)
-    hive = mktempdir()
+# A NEM replay System on the mock hive, with its replay inputs written by `nem_system`.
+const _RP_SYS = let hive = mktempdir()
     create_mock_data(hive; complete_inputs = true)
     write_mock_interconnector_results(hive)
-    db = aem_connect(HiveConfiguration(hive_location = hive))
-    return nem_system(db, NEMDEConfiguration(); date_range = start:Minute(5):(start + Minute(5 * (n - 1))))
+    t = DateTime(2025, 1, 1, 0, 5)
+    nem_system(aem_connect(HiveConfiguration(hive_location = hive)), NEMDEConfiguration(); date_range = t:Minute(5):(t + Minute(20)))
 end
 
 # The stored values of `device`'s series `name`, without the scaling factor.
@@ -123,7 +122,7 @@ function _ramps_strip!(sys)
 end
 
 @testset "the writer gives generators and batteries their ramp rates without AEMSim" begin
-    sys = _ramps_system()
+    sys = _RP_SYS
     base = get_base_power(sys)
     n = length(_ramps_raw(get_component(ThermalStandard, sys, "ER01"), NEM_TELEMETRY_SERIES.ramp_up_limit))
     for name in ("ER01", "ER02")
@@ -140,7 +139,7 @@ end
 end
 
 @testset "a non-scheduled load is written zero ramp rates" begin
-    sys = _ramps_system()
+    sys = _RP_SYS
     asload = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
     @test AustralianElectricityMarkets.is_non_scheduled_load(asload)
     @test all(==(0.0), _ramps_raw(asload, NEM_SERIES.ramp_up_rate))
@@ -149,7 +148,7 @@ end
 
 @testset "the AGC ramp rates follow the regulation availability, swapped on a controllable load" begin
     AEM = AustralianElectricityMarkets
-    sys = _ramps_system()
+    sys = _RP_SYS
     base = get_base_power(sys)
     n = length(_ramps_raw(get_component(ThermalStandard, sys, "ER01"), NEM_TELEMETRY_SERIES.ramp_up_limit))
     written = Dict(:swapped => 0, :plain => 0)
@@ -172,7 +171,7 @@ end
 
 @testset "a device bidding regulation on both sides has the summed bid max availability" begin
     AEM = AustralianElectricityMarkets
-    sys = _ramps_system()
+    sys = deepcopy(_RP_SYS)
     base = get_base_power(sys)
     battery = get_component(EnergyReservoirStorage, sys, "BW01")
     n = length(_ramps_raw(battery, NEM_TELEMETRY_SERIES.ramp_up_limit))
@@ -190,7 +189,7 @@ end
 end
 
 @testset "a bid rate binds on the side the unit bids, and telemetry binds otherwise" begin
-    sys = _ramps_system()
+    sys = deepcopy(_RP_SYS)
     base = get_base_power(sys)
     er01 = get_component(ThermalStandard, sys, "ER01")
     pump = get_component(InterruptiblePowerLoad, sys, "PUMP1")
@@ -216,12 +215,10 @@ end
 @testset "the composite blend branch runs for a battery below zero with both sides bid" begin
     # The mock's charging interval (initial output -30 MW at 04:00) has no regional demand after 04:00, so the
     # window stays at 00:05 to 00:25 and the second interval's initial output is set to -30 MW, the same arithmetic.
-    sys = _ramps_system()
+    sys = deepcopy(_RP_SYS)
     base = get_base_power(sys)
     battery = get_component(EnergyReservoirStorage, sys, "BW01")
     n = length(_ramps_raw(battery, NEM_TELEMETRY_SERIES.ramp_up_limit))
-    @test has_time_series(battery, SingleTimeSeries, bid_series_name(BidType.ENERGY, :roc_up, BidDirection.LOAD))
-    @test has_time_series(battery, SingleTimeSeries, bid_series_name(BidType.ENERGY, :roc_down, BidDirection.LOAD))
     # GEN ROCUP 2 MW/min, LOAD ROCDOWN 10 MW/min and a 1000 MW/h telemetered limit, so the composite rate is written.
     _ramps_set_series!(sys, battery, bid_series_name(BidType.ENERGY, :roc_up, BidDirection.GEN), 2.0)
     _ramps_set_series!(sys, battery, bid_series_name(BidType.ENERGY, :roc_down, BidDirection.LOAD), 10.0)
@@ -250,17 +247,15 @@ end
 end
 
 @testset "the dispatch-limit writer writes no upper limit series" begin
-    sys = _ramps_system()
+    sys = _RP_SYS
     for device in AustralianElectricityMarkets.nem_dispatch_devices(sys)
         @test !has_time_series(device, SingleTimeSeries, NEM_SERIES.max_active_power)
     end
-    device = get_component(ThermalStandard, sys, "ER01")
-    @test has_time_series(device, SingleTimeSeries, NEM_SERIES.ramp_down_rate)
 end
 
 @testset "a NaN telemetered ramp limit is written as a zero ramp rate" begin
     AEM = AustralianElectricityMarkets
-    sys = _ramps_system()
+    sys = deepcopy(_RP_SYS)
     base = get_base_power(sys)
     device = get_component(ThermalStandard, sys, "ER01")
     stamps = get_time_series_timestamps(SingleTimeSeries, device, NEM_TELEMETRY_SERIES.ramp_up_limit)
@@ -276,7 +271,7 @@ end
 
 @testset "a unit without telemetry gets no ramp series, and its telemetry accessor throws" begin
     AEM = AustralianElectricityMarkets
-    sys = _ramps_system()
+    sys = deepcopy(_RP_SYS)
     device = get_component(ThermalStandard, sys, "ER01")
     _ramps_strip!(sys)
     set_telemetry!(device, nothing)

@@ -109,23 +109,7 @@ end
         end
     end
 
-    @testset "schema 2 solve_and_write rows are counted" begin
-        mktempdir() do root
-            run, day = ss_day(root)
-            ss_timings(
-                day, ["phase", "execution_count", "interval_aest", "wall_s", "timed_solve_s", "pricing_s", "auxiliary_s", "schema_version"], [
-                    ["parameter_update", 0, "2026-04-07T04:05:00", 4, "NaN", "NaN", "NaN", 2],
-                    ["solve_and_write", 0, "2026-04-07T04:05:00", 50, 40, 8, 1, 2],
-                ],
-            )
-            timing = SS.analyze([run])["days"][1]["timing"]
-            @test timing["written_intervals"] == 1
-            @test timing["series"]["mip"]["total_s"] == 40
-            @test timing["series"]["solve_and_write"]["total_s"] == 50
-        end
-    end
-
-    @testset "the schema 2 residual does not subtract the native state update twice" begin
+    @testset "schema 2 rows are counted and the residual does not subtract the native state update twice" begin
         mktempdir() do root
             run, day = ss_day(root)
             ss_state_timer(day, 10)
@@ -138,6 +122,9 @@ end
             timing = SS.analyze([run])["days"][1]["timing"]
             # execute 80 - (parameter_update 4 + solve_and_write 50); the state update is inside solve_and_write.
             @test timing["timing_schema"] == 2
+            @test timing["written_intervals"] == 1
+            @test timing["series"]["mip"]["total_s"] == 40
+            @test timing["series"]["solve_and_write"]["total_s"] == 50
             @test timing["execution_unattributed_s"] == 26
             @test timing["native_state_s"] == 10
             @test timing["series"]["solve_and_write_residual"]["total_s"] == 1

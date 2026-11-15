@@ -1,13 +1,11 @@
 # The band prices of each energy bid, written on the mock replay System (AEMSim not loaded).
 
 # A NEM replay System on the mock hive, with its replay inputs written by `nem_system`.
-function _prices_mock_system()
-    hive = mktempdir()
+const _PR_SYS = let hive = mktempdir()
     create_mock_data(hive; complete_inputs = true)
     write_mock_interconnector_results(hive)
-    db = aem_connect(HiveConfiguration(hive_location = hive))
     t = DateTime(2025, 1, 1, 0, 5)
-    return nem_system(db, NEMDEConfiguration(); date_range = t:Minute(5):(t + Minute(20)))
+    nem_system(aem_connect(HiveConfiguration(hive_location = hive)), NEMDEConfiguration(); date_range = t:Minute(5):(t + Minute(20)))
 end
 
 _prices_curve(prices) = PowerSystems.PiecewiseStepData(collect(0.0:10.0:(10.0 * length(prices))), prices)
@@ -26,7 +24,7 @@ end
 
 @testset "bids of a built system carry the referred prices of their energy offer series" begin
     AEM = AustralianElectricityMarkets
-    sys = _prices_mock_system()
+    sys = _PR_SYS
     checked = Dict(AEM.OfferSide.GEN => 0, AEM.OfferSide.LOAD => 0)
     for device in AEM._bidding_devices(sys)
         cost = AEM._nem_offer_cost(device)
@@ -51,29 +49,29 @@ end
     @test checked[AEM.OfferSide.LOAD] > 0
 end
 
-# Replaces the first energy offer series of `sys` on its GEN side with `curves` and returns the device.
-function _prices_replace_offer!(sys, curves)
-    AEM = AustralianElectricityMarkets
-    device = first(d for d in AEM._bidding_devices(sys) if PowerSystems.has_time_series(d, PowerSystems.SingleTimeSeries, AEM.energy_offer_series_name(AEM.OfferSide.GEN)))
-    name = AEM.energy_offer_series_name(AEM.OfferSide.GEN)
+# Replaces `device`'s series `name` with the curves `curves(stamps)` on its own stamps.
+function _prices_replace!(sys, device, name, curves)
     stamps = PowerSystems.get_time_series_timestamps(PowerSystems.SingleTimeSeries, device, name)
     remove_series_and_forecast!(sys, device, name)
-    PowerSystems.add_time_series!(sys, device, AEM.single_series(name, first(stamps), curves(stamps), Minute(5)))
-    return device
+    PowerSystems.add_time_series!(sys, device, AustralianElectricityMarkets.single_series(name, first(stamps), curves(stamps), Minute(5)))
+    return
+end
+
+# `flat` before the second replay interval of `sys` and `moved` from it on.
+_prices_step(sys, flat, moved) = let second = AustralianElectricityMarkets._replay_interval_stamps(sys)[2]
+    stamps -> [t < second ? flat : moved for t in stamps]
 end
 
 @testset "a price change inside the replay range throws; one in the trailing stamps does not" begin
     AEM = AustralianElectricityMarkets
-    sys = _prices_mock_system()
-    stamps = AEM._replay_interval_stamps(sys)
-    flat = _prices_curve([20.0, 40.0])
-    moved = _prices_curve([21.0, 40.0])
-    replay = Set(stamps)
-    @test length(stamps) >= 2
-    _prices_replace_offer!(sys, ts -> [t in replay ? flat : moved for t in ts])
+    sys = deepcopy(_PR_SYS)
+    name = AEM.energy_offer_series_name(AEM.OfferSide.GEN)
+    device = first(d for d in AEM._bidding_devices(sys) if PowerSystems.has_time_series(d, PowerSystems.SingleTimeSeries, name))
+    flat, moved = _prices_curve([20.0, 40.0]), _prices_curve([21.0, 40.0])
+    replay = Set(AEM._replay_interval_stamps(sys))
+    _prices_replace!(sys, device, name, ts -> [t in replay ? flat : moved for t in ts])
     @test isnothing(AEM._set_band_prices!(sys))
-    second = stamps[2]
-    _prices_replace_offer!(sys, ts -> [t < second ? flat : moved for t in ts])
+    _prices_replace!(sys, device, name, _prices_step(sys, flat, moved))
     @test_throws r"vary within the replay range" AEM._set_band_prices!(sys)
 end
 
@@ -94,7 +92,7 @@ end
 
 @testset "FCAS bids of a built system carry the unreferred prices of the first replay interval" begin
     AEM = AustralianElectricityMarkets
-    sys = _prices_mock_system()
+    sys = _PR_SYS
     checked = Dict(AEM.OfferSide.GEN => 0, AEM.OfferSide.LOAD => 0)
     for (device, bid) in _prices_fcas_bids(sys)
         raw = PowerSystems.get_time_series_values(
@@ -110,25 +108,15 @@ end
 
 @testset "an FCAS price change inside the replay range throws naming the unit and service" begin
     AEM = AustralianElectricityMarkets
-    sys = _prices_mock_system()
-    stamps = AEM._replay_interval_stamps(sys)
-    @test length(stamps) >= 2
+    sys = deepcopy(_PR_SYS)
     device, bid = first(_prices_fcas_bids(sys))
-    name = AEM.IS.get_name(bid.offer_curves)
-    all_stamps = PowerSystems.get_time_series_timestamps(PowerSystems.SingleTimeSeries, device, name)
-    flat = _prices_curve([20.0, 40.0])
-    moved = _prices_curve([21.0, 40.0])
-    second = stamps[2]
-    remove_series_and_forecast!(sys, device, name)
-    PowerSystems.add_time_series!(
-        sys, device, AEM.single_series(name, first(all_stamps), [t < second ? flat : moved for t in all_stamps], Minute(5)),
-    )
+    _prices_replace!(sys, device, AEM.IS.get_name(bid.offer_curves), _prices_step(sys, _prices_curve([20.0, 40.0]), _prices_curve([21.0, 40.0])))
     @test_throws Regex("band prices of $(PowerSystems.get_name(device)) $(bid.service) .* vary within the replay range") AEM._set_band_prices!(sys)
 end
 
 @testset "an FCAS bid with a static offer_curves field throws, naming the unit" begin
     AEM = AustralianElectricityMarkets
-    sys = _prices_mock_system()
+    sys = deepcopy(_PR_SYS)
     device, bid = first(_prices_fcas_bids(sys))
     static = AEM.NEMFCASBid(;
         service = bid.service, direction = bid.direction, offer_curves = _prices_curve([20.0, 40.0]),
@@ -150,7 +138,7 @@ end
 
 @testset "MNSP bids of a built system carry the first replay interval's prices, band k at PRICEBAND<k>" begin
     AEM = AustralianElectricityMarkets
-    sys = _prices_mock_system()
+    sys = _PR_SYS
     bids = _prices_mnsp_bids(sys)
     @test !isempty(bids)
     for (device, bid) in bids
@@ -166,18 +154,8 @@ end
 
 @testset "an MNSP price change inside the replay range throws naming the interchange" begin
     AEM = AustralianElectricityMarkets
-    sys = _prices_mock_system()
-    stamps = AEM._replay_interval_stamps(sys)
-    @test length(stamps) >= 2
+    sys = deepcopy(_PR_SYS)
     device, bid = first(_prices_mnsp_bids(sys))
-    name = AEM.IS.get_name(bid.offer_curves)
-    all_stamps = PowerSystems.get_time_series_timestamps(PowerSystems.SingleTimeSeries, device, name)
-    flat = _prices_curve(fill(20.0, 10))
-    moved = _prices_curve(fill(21.0, 10))
-    second = stamps[2]
-    remove_series_and_forecast!(sys, device, name)
-    PowerSystems.add_time_series!(
-        sys, device, AEM.single_series(name, first(all_stamps), [t < second ? flat : moved for t in all_stamps], Minute(5)),
-    )
+    _prices_replace!(sys, device, AEM.IS.get_name(bid.offer_curves), _prices_step(sys, _prices_curve(fill(20.0, 10)), _prices_curve(fill(21.0, 10))))
     @test_throws Regex("band prices of $(PowerSystems.get_name(device)) MNSP .* vary within the replay range") AEM._set_band_prices!(sys)
 end
