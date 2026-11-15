@@ -80,3 +80,24 @@ end
     @test !isnothing(get_component(Generator, sys, "BW02"))
     @test_nowarn replay_template(sys)
 end
+
+@testset "a vacuous constraint's dropped term fails the replay inputs check only for a registered unit" begin
+    constraint = "N_VACUOUS@2025-01-01#1"
+    term(registered::Bool) = Dict{String, Any}(
+        "constraint" => constraint, "kind" => "UNIT", "key" => "GONE_DUID", "bid_type" => "ENERGY",
+        "factor" => 1.0, "registered" => registered,
+    )
+    skipped = [Dict{String, Any}("constraint" => constraint, "reason" => "vacuous_unknown_duid", "missing" => ["GONE_DUID"])]
+    sys = System(100.0; time_series_in_memory = true)
+    set_build_report!(sys, NEMBuildReport(; skipped_constraints = skipped, dropped_terms = [term(true)]))
+    err = try
+        AEMS._check_replay_constraint_inputs(sys)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin(constraint, err.msg) && occursin("GONE_DUID", err.msg)
+    set_build_report!(sys, NEMBuildReport(; skipped_constraints = skipped, dropped_terms = [term(false)]))
+    @test isnothing(AEMS._check_replay_constraint_inputs(sys))
+end

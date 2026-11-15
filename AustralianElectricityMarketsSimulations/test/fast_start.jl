@@ -176,3 +176,38 @@ end
     err = _caught(() -> PSI.DecisionModel(NEMDispatchProblem, replay_template(sys), sys; fast_start_run = :other))
     @test err isa ArgumentError
 end
+
+# The FCAS offer limits (`max_avail`, `enablement_min`, `enablement_max`) of `name` in the first interval of `out`'s dispatch run.
+function fs_fcas_limits(out, name)
+    key = PSI.ParameterKey(AEMS.FCASOfferLimitParameter, ThermalStandard, AEMS._fcas_offer_meta(BidType.RAISEREG, false))
+    param = PSI.get_parameter(PSI.get_optimization_container(out.dispatch), key)
+    uuid = PSI.get_attributes(param).component_name_to_ts_uuid[name]
+    array = PSI.get_parameter_array(param)
+    return [PSI.JuMP.fix_value(array[uuid, field, 1]) for field in AEMS._FCAS_LIMIT_FIELDS]
+end
+
+@testset "closed-loop fast-start dispatch: the first interval's FCAS offers are the observed ones" begin
+    # Alta is in fast-start mode 0 with 15 MW of raise regulation observed at the start of the interval.
+    sys = fcas_toy_system(; alta_fast_start = FS_PROFILE, alta_mode = 0)
+    observed = fs_fcas_limits(fs_replay(sys), TOY_CHEAP)
+    closed = fs_fcas_limits(fs_replay(sys; problem = NEMClosedLoopDispatchProblem), TOY_CHEAP)
+    @test closed ≈ observed atol = 1.0e-9
+    @test closed[1] ≈ 0.15 atol = 1.0e-9
+end
+
+@testset "a sequence's dispatch run without the commitment-target feedforward does not build" begin
+    sys = fast_start_system()
+    built = nem_dispatch_sequence(NEMDispatchProblem, replay_template(sys), sys; optimizer = FS_OPTIMIZER, initial_time = TOY_START)
+    @test PSI.get_ext(PSI.get_settings(built.dispatch))["fast_start_feedforward"] === true
+    # The sequence's dispatch run without the feedforward the sequence adds: it has no commitment target for Alta.
+    bare = PSI.DecisionModel(
+        NEMDispatchProblem, replay_template(sys), sys; optimizer = FS_OPTIMIZER, initial_time = TOY_START, fast_start_run = :dispatch,
+    )
+    PSI.get_ext(PSI.get_settings(bare))["fast_start_feedforward"] = true
+    PSI.set_output_dir!(bare, mktempdir())
+    err = _caught(() -> PSI.build_impl!(bare))
+    @test err isa ArgumentError
+    message = err isa ArgumentError ? err.msg : ""
+    @test occursin("ThermalStandard", message)
+    @test occursin("ActivePowerVariable", message)
+end

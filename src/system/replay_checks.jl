@@ -77,9 +77,7 @@ function _check_nemde_constraint_report(sys)
         ),
     )
     # A vacuous constraint (zero left-hand side, satisfiable) cannot bind; every other skip is an error.
-    all_skipped = get_skipped_constraints(sys)
-    skipped = filter(:reason => !=(:vacuous_unknown_duid), all_skipped)
-    vacuous = Set(all_skipped.constraint[all_skipped.reason .== :vacuous_unknown_duid])
+    skipped = filter(:reason => !=(:vacuous_unknown_duid), get_skipped_constraints(sys))
     isempty(skipped.constraint) || throw(
         ArgumentError(
             "nem_system: $(nrow(skipped)) invoked GENCONID version(s) could not be built: " *
@@ -89,7 +87,7 @@ function _check_nemde_constraint_report(sys)
         ),
     )
     # A dropped term of a unit not registered over the range (retired or not yet registered) contributes zero.
-    dropped = filter([:constraint, :registered] => (c, r) -> c ∉ vacuous && r, get_dropped_terms(sys))
+    dropped = filter(:registered => identity, get_dropped_terms(sys))
     isempty(dropped.constraint) || throw(
         ArgumentError(
             "nem_system: $(nrow(dropped)) term(s) of units registered over the range were dropped from built constraints: " *

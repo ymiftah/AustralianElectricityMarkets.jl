@@ -788,8 +788,7 @@ end
     row = only(filter(:constraint => ==(vname("N_PHANTOM_TEST")), get_skipped_constraints(sys)))
     @test row.reason == :vacuous_unknown_duid
 
-    # PHANTOM1 is registered (DUDETAILSUMMARY) but not built: the check accepts the vacuous constraint, not the
-    # dropped mixed one.
+    # PHANTOM1 is registered (DUDETAILSUMMARY) but not built: a registered dropped term fails the check, vacuous or not.
     @test all(get_dropped_terms(sys).registered)
     err = try
         check(sys)
@@ -799,7 +798,7 @@ end
     end
     @test err isa ArgumentError
     @test occursin(vname("N_ONE_PHANTOM_TERM"), err.msg)
-    @test !occursin(vname("N_PHANTOM_TEST"), err.msg)
+    @test occursin(vname("N_PHANTOM_TEST"), err.msg)
 
     # The dropped term of a unit not registered over the range contributes zero and passes the check.
     report = AustralianElectricityMarkets.get_build_report(sys)
@@ -830,6 +829,35 @@ end
     end
     @test err isa ArgumentError
     @test occursin(vname("N_PHANTOM_TEST"), err.msg)
+
+    # A vacuous constraint whose only dropped term is one unit: it fails the check when that unit is registered and
+    # passes when it is not.
+    sys, _, _ = build_with_rhs(-5.0)
+    report = AustralianElectricityMarkets.get_build_report(sys)
+    phantom = [t for t in report.dropped_terms if t["constraint"] == vname("N_PHANTOM_TEST")]
+    @test length(phantom) == 1
+    function check_with_registration(registered::Bool)
+        AustralianElectricityMarkets.set_build_report!(
+            sys,
+            AustralianElectricityMarkets.NEMBuildReport(;
+                skipped_constraints = report.skipped_constraints,
+                missing_constraint_intervals = report.missing_constraint_intervals,
+                defaulted_constraint_weights = report.defaulted_constraint_weights,
+                dropped_terms = [merge(t, Dict{String, Any}("registered" => registered)) for t in phantom],
+                unavailable_constraints = report.unavailable_constraints,
+            ),
+        )
+        return check(sys)
+    end
+    err = try
+        check_with_registration(true)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin(vname("N_PHANTOM_TEST"), err.msg)
+    @test isnothing(check_with_registration(false))
 
     # Sense table of the zero left-hand side.
     vac = AustralianElectricityMarkets._is_vacuous

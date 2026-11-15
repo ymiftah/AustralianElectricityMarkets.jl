@@ -27,7 +27,10 @@ invoked interval `0 sense RHS` is then decidable:
 - If it holds at every invoked interval (`<=`: RHS >= 0; `>=`: RHS <= 0; `=`: |RHS| <= 1e-6 MW) the
   constraint can never bind. It is not built and is recorded as skipped with reason
   `:vacuous_unknown_duid`, with its dropped terms kept in the build report. The invoked-coverage check
-  accepts this reason and ignores the dropped terms of these constraints.
+  accepts this reason. A dropped term of a registered unit still fails the checks of `nem_system` and
+  `check_template_against_sys`, as a registered unit missing from the `System` does under
+  [0105](0105-split-battery-units-and-unregistered-terms.md) section 2; only dropped terms of unregistered
+  units are ignored.
 - Otherwise it keeps the `:unknown_duid` skip and the strict error naming the constraint.
 
 Constraints that mix known and unknown unit terms are unchanged: built with the unknown terms dropped,

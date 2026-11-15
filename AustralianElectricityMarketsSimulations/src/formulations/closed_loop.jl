@@ -139,7 +139,8 @@ end
 
 Updates a time-series parameter of a closed-loop replay: PowerSimulations' own update reads the interval's
 series, then each component whose series is state-dependent (see `is_state_dependent_input`) gets the value
-`closed_loop_input` computes from its solved output at the previous interval.
+`closed_loop_input` computes from its solved output at the previous interval. The first execution of the model
+keeps the stock series values, the build-time observed values; the overwrite starts from the second execution.
 
 # Returns
 `nothing`.
@@ -152,7 +153,8 @@ function PSI.update_parameter_values!(
     attributes = PSI.get_attributes(param_container)
     series = attributes isa PSI.TimeSeriesAttributes ? PSI.get_time_series_name(attributes) : nothing
     family = isnothing(series) ? nothing : AustralianElectricityMarkets._closed_loop_family(series)
-    if isnothing(family) || (family.kind == :ramp && !(T <: PSY.Storage))
+    # Before the first solve the system state is NaN, so the observed values written at build stand.
+    if PSI.get_execution_count(model) < 1 || isnothing(family) || (family.kind == :ramp && !(T <: PSY.Storage))
         _stock_update!(P(), model, key, state, true)
         return
     end

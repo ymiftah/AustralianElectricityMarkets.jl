@@ -90,10 +90,20 @@ function _add_fast_start_profile_rows!(container::PSI.OptimizationContainer, ::T
     return
 end
 
-# The commitment run's energy target of each unit, per-unit, from the dispatch run's `FixValueParameter`; 0 without one.
+# The commitment run's energy target of each unit, per-unit, from the dispatch run's `FixValueParameter`. A standalone
+# dispatch run has none and reads 0; a sequence's dispatch run must have the feedforward that adds it.
 function _commitment_targets(container::PSI.OptimizationContainer, ::Type{T}) where {T}
     meta = _fix_value_meta(PSI.ActivePowerVariable)
-    PSI.has_container_key(container, PSI.FixValueParameter, T, meta) || return (name, t) -> 0.0
+    if !PSI.has_container_key(container, PSI.FixValueParameter, T, meta)
+        sequenced = get(PSI.get_ext(PSI.get_settings(container)), "fast_start_feedforward", false)::Bool
+        sequenced && throw(
+            ArgumentError(
+                "fast-start dispatch run of nem_dispatch_sequence: no commitment target for $T " *
+                    "(FixValueParameter with meta \"$meta\"); the feedforward is missing",
+            ),
+        )
+        return (name, t) -> 0.0
+    end
     values = PSI.get_parameter_array(container, PSI.FixValueParameter(), T, meta)
     return (name, t) -> Float64(values[name, t])
 end

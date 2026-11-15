@@ -54,6 +54,7 @@ function nem_dispatch_sequence(
         throw(ArgumentError("nem_dispatch_sequence: the two runs need different names, got \"$name\" for both"))
     commitment = PSI.DecisionModel{M}(template, sys; name = commitment_name, fast_start_run = :commitment, kwargs...)
     dispatch = PSI.DecisionModel{M}(template, sys; name, fast_start_run = :dispatch, kwargs...)
+    PSI.get_ext(PSI.get_settings(dispatch))["fast_start_feedforward"] = true
     models = PSI.SimulationModels(; decision_models = [commitment, dispatch])
     feedforwards = Dict(
         string(name) => [

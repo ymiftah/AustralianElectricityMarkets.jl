@@ -1254,6 +1254,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `read_offers` takes the `MINIMUMLOAD` and `T1` to `T4` of each energy row from the daily offer version in force at the interval (the latest `BIDDAYOFFER.OFFERDATE` at or before the period offer's `LASTCHANGED`), instead of the single per-day `BIDDAYOFFER_D` row, so intraday rebids of the fast-start profile and minimum load reach the replay. A unit whose rebid zeroes its profile is not fast-start from that interval. Rows without a matching version, and every row when `BIDDAYOFFER` is not cached, keep the `BIDDAYOFFER_D` values; price bands stay on `BIDDAYOFFER_D`.
 
+- A closed-loop replay with fast start keeps the observed state-dependent inputs (FCAS offers, battery ramp rates) on the first solve of its dispatch run: before the first solve the system state is NaN, which previously set the offers inactive and the ramp rates to 0 without an error.
+
+- A vacuous constraint no longer hides a dropped term of a registered unit: `nem_system` and `check_template_against_sys` fail on it, as on any other constraint, and still accept dropped terms of unregistered units.
+
+- A sequence's fast-start dispatch run throws an `ArgumentError` when its commitment-target feedforward is missing, instead of committing no mode-0 unit; a standalone dispatch run still reads 0 MW targets.
+
 ## [0.1.3] - 2026-03-09
 
 ### Added
