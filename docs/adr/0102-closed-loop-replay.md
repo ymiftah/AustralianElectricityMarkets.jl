@@ -102,3 +102,21 @@ than SCADA), section 4.
   equal `closed_loop_input` at the step-1 solve.
 - Root test: `closed_loop_input` at the observed state equals the written series for ramp, fixed-load, FCAS
   offer and FCAS ramping series of the mock cache.
+- Real trading day 2026-06-04 (288 intervals, batch runner, `8e7d0e8`): the closed loop completes, executing in
+  716 s against 662 s open loop (each step evaluates prepared inputs; a first version that re-read every series
+  per step took about 6.5 minutes per interval).
+
+| Absolute gap to NEMDE, MAE | Open loop | Closed loop | Closed against open, max |
+| --- | --- | --- | --- |
+| Unit dispatch (MW) | 0.012 | 0.268 | 128.1 |
+| Energy price (\$/MWh) | 0.033 | 0.651 | 27.4 |
+| FCAS price (\$/MWh) | 0.0009 | 0.207 | 941.6 |
+| Interconnector flow (MW) | 0.230 | 2.95 | 126.2 |
+
+The drift stays bounded: the hourly dispatch MAE against the open loop is 0.011 MW in the first hour and between
+0.08 and 0.72 MW afterwards. Unit ramp violations fall from 34 (open loop, where AEMO's metered start can sit
+outside the ramp envelope) to none. MaxAvail and UIGF violations rise (DDPS1 from 4 to 66 intervals, HUMENSW from
+114 to 220, 59 UIGF rows on semi-scheduled units): the closed-loop trajectory can sit above an availability AEMO
+set for the real trajectory, and the unit's ramp-down limit holds it there for a few intervals. The largest FCAS
+difference is a shifted SA1 RAISE60SEC scarcity: about \$990/MWh at 13:55 in the closed loop against 14:20 in
+NEMDE and the open loop.
