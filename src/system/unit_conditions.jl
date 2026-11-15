@@ -15,10 +15,13 @@ read. The values are `SingleTimeSeries` in AEMO's natural units, and their keys 
 - `"observed_initial_mw"`: `INITIALMW`, MW, zero where no row is published.
 - `"observed_dispatch_mode"`: `DISPATCHMODE` of the previous interval, the fast-start mode at the start of each
   interval.
+- `"observed_dispatch_mode_time"`: `DISPATCHMODETIME` of the previous interval, the minutes in that mode at the
+  start of each interval.
 
 A non-scheduled load is pinned to zero initial output, but keeps its metered ramp rates for AGC ramping.
 The read also covers the interval before the first, which supplies the first dispatch mode. A ramp, regulation or
-AGC status value with no row at an interval is `NaN`, and so is a dispatch mode whose previous interval has no row;
+AGC status value with no row at an interval is `NaN`, and so is a dispatch mode or mode time whose previous interval
+has no row;
 the telemetry `uigf` is zero there. A registered unit with a `NaN` mode is refused by the replay state. Every problem
 across every device is raised as one `ArgumentError`, and `sys` is left unmodified. A repeat call replaces each series
 it writes, and replaces the structs on the devices.
@@ -90,6 +93,7 @@ function _set_unit_data!(sys, device, semi::Bool, series_keys::AbstractDict{Stri
         NEMObservedState(;
             initial_mw = series_keys[NEM_OBSERVED_SERIES.initial_mw],
             dispatch_mode = series_keys[NEM_OBSERVED_SERIES.dispatch_mode],
+            dispatch_mode_time = series_keys[NEM_OBSERVED_SERIES.dispatch_mode_time],
         ),
     )
     return
@@ -98,6 +102,7 @@ end
 
 const _UNIT_CONDITION_COLUMNS = (
     :SETTLEMENTDATE, :INITIALMW, :AVAILABILITY, :UIGF, :RAMPUPRATE, :RAMPDOWNRATE, :AGCSTATUS, :DISPATCHMODE,
+    :DISPATCHMODETIME,
     :RAISEREGENABLEMENTMIN, :RAISEREGENABLEMENTMAX, :LOWERREGENABLEMENTMIN, :LOWERREGENABLEMENTMAX,
     :RAISEREGAVAILABILITY, :LOWERREGAVAILABILITY,
 )
@@ -190,6 +195,7 @@ function _stage_unit_conditions!(problems, sys, device, c, grid)
     series = Pair{String, Vector}[
         NEM_OBSERVED_SERIES.initial_mw => initial_mw,
         NEM_OBSERVED_SERIES.dispatch_mode => [_raw_value(index, c.DISPATCHMODE, t) for t in previous],
+        NEM_OBSERVED_SERIES.dispatch_mode_time => [_raw_value(index, c.DISPATCHMODETIME, t) for t in previous],
         NEM_TELEMETRY_SERIES.agc_status => [_raw_value(index, c.AGCSTATUS, t) for t in grid],
         NEM_TELEMETRY_SERIES.ramp_up_limit => ramp_up,
         NEM_TELEMETRY_SERIES.ramp_down_limit => ramp_down,

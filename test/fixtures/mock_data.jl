@@ -742,6 +742,8 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
     initial_mw_for(duid, i) = duid == "BW01" && i == last(intervals) ? -30.0 : duid == "ASLOAD1" ? 0.1 : duid in nonscheduled ? 0.0 : 40.0 + duid_offset(duid) + (i % 10)
     # BW04 (fast-start, T1 > 0) is in DISPATCHMODE 4 at 00:10 and 2 at 00:15, its fixed-load intervals.
     dispatch_mode_for(duid, i) = duid == "BW04" && i == 2 ? 4 : duid == "BW04" && i == 3 ? 2 : 0
+    # BW04's mode times exceed its zero T2 and T4, so the replay state caps them to 0.
+    dispatch_mode_time_for(duid, i) = dispatch_mode_for(duid, i) == 0 ? 0 : 7
     ramp_up_rate_for(duid, i) = duid in nonscheduled ? 0.0 : 4.0 + duid_offset(duid) + (i % 5)
     ramp_down_rate_for(duid, i) = duid in nonscheduled ? 0.0 : 3.0 + duid_offset(duid) + (i % 5)
     availability_for(duid, i) = duid in nonscheduled ? 0.0 : 90.0 - 3 * duid_offset(duid) + (i % 6)
@@ -767,6 +769,7 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
             INTERVENTION = fill(0, m),
             DUID = dl_duids,
             DISPATCHMODE = [dispatch_mode_for(d, i) for d in dl_duids],
+            DISPATCHMODETIME = [dispatch_mode_time_for(d, i) for d in dl_duids],
             INITIALMW = [initial_mw_for(d, i) for d in dl_duids],
             RAMPUPRATE = [ramp_up_rate_for(d, i) for d in dl_duids],
             RAMPDOWNRATE = [ramp_down_rate_for(d, i) for d in dl_duids],

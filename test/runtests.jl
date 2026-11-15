@@ -62,6 +62,7 @@ const TEST_GROUPS = [
     "replay_inputs_units" => ("Replay inputs replay-unit series and accessors", ["replay_inputs/replay_units.jl"]),
     "replay_inputs_range" => ("Replay inputs forecasts and date-range rules", ["replay_inputs/range.jl"]),
     "replay_inputs_closed_loop" => ("Replay inputs of a closed-loop interval", ["replay_inputs/closed_loop.jl"]),
+    "fast_start" => ("Fast-start state and two-run kernel", ["fast_start.jl"]),
     "aqua" => ("Aqua", ["aqua.jl"]),
 ]
 

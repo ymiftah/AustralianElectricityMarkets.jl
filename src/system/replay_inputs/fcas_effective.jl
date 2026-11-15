@@ -131,7 +131,7 @@ function _fcas_pair_window(device, value, stamps::Vector{DateTime}, base::Float6
 end
 
 
-# The per-interval fast-start flags of `device`: whether a bid side's `T1` to `T4` profile has a positive value.
+# The per-interval fast-start flags of `device`: whether a bid side's profile is fast-start (`is_fast_start`).
 # A `FastStartProfile` held as a static bid value applies to every interval.
 function _fcas_fast_start_flags(device, stamps::Vector{DateTime})
     n = length(stamps)
@@ -143,7 +143,7 @@ function _fcas_fast_start_flags(device, stamps::Vector{DateTime})
         profiles = bid_value(device, bid, :fast_start_profile, first(stamps), n)
         for t in 1:n
             profile = profiles isa AbstractVector ? profiles[t] : profiles
-            flags[t] |= any(>(0.0), (profile.t1, profile.t2, profile.t3, profile.t4))
+            flags[t] |= is_fast_start(profile)
         end
     end
     return flags
@@ -156,7 +156,7 @@ function _fcas_window(device, stamps::Vector{DateTime}, resolution::Dates.Period
     telemetry = get_telemetry(device)
     status = _fcas_telemetry_window(device, telemetry.agc_status, stamps)
     uigf = _fcas_telemetry_window(device, telemetry.uigf, stamps)
-    states = [NEMUnitState(s.initial_mw / base, s.dispatch_mode) for s in something(states, observed_unit_states(device, stamps))]
+    states = [NEMUnitState(s.initial_mw / base, s.dispatch_mode, s.time_in_mode) for s in something(states, observed_unit_states(device, stamps))]
     return _FCASWindow(
         stamps, resolution, base, states, _fcas_fast_start_flags(device, stamps),
         isnothing(uigf) ? nothing : uigf ./ base,

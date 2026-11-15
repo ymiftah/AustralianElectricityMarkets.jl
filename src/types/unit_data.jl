@@ -138,25 +138,28 @@ end
 
 
 """
-    NEMObservedState(; initial_mw, dispatch_mode)
+    NEMObservedState(; initial_mw, dispatch_mode, dispatch_mode_time = 0.0)
 
 AEMO's published unit state from `DISPATCHLOAD`, in natural units: the output at the start of the
-interval and the fast-start dispatch mode. Each field is a static value or a key of the time series that
-holds it on the unit.
+interval, the fast-start dispatch mode and the time in that mode. Each field is a static value or a key of the
+time series that holds it on the unit.
 
 # Fields
 - `initial_mw`: `INITIALMW`, MW.
 - `dispatch_mode`: the fast-start mode from 0 to 4 at the start of the interval, which is the `DISPATCHMODE` of
   the previous interval.
+- `dispatch_mode_time`: the minutes in `dispatch_mode` at the start of the interval, which is the
+  `DISPATCHMODETIME` of the previous interval, as published (not capped at the mode's length).
 """
 struct NEMObservedState <: PSY.DeviceParameter
     initial_mw::Union{IS.StaticTimeSeriesKey, Float64}
     dispatch_mode::Union{IS.StaticTimeSeriesKey, Int}
+    dispatch_mode_time::Union{IS.StaticTimeSeriesKey, Float64}
 end
 
-function NEMObservedState(; initial_mw, dispatch_mode)
+function NEMObservedState(; initial_mw, dispatch_mode, dispatch_mode_time = 0.0)
     mode = dispatch_mode isa IS.StaticTimeSeriesKey ? dispatch_mode : Int(dispatch_mode)
-    return NEMObservedState(_bid_number(initial_mw), mode)
+    return NEMObservedState(_bid_number(initial_mw), mode, _bid_number(dispatch_mode_time))
 end
 
 function Base.:(==)(a::NEMObservedState, b::NEMObservedState)

@@ -44,6 +44,9 @@ export NEMUnitState, max_active_power_floor, in_fast_start_profile, fixed_load_i
     fcas_state_stranded_ok, fcas_both_sides_stranded_ok, fcas_ramping_active, fcas_ramping_limit,
     fcas_joint_ramping_exempt, mnsp_ramp_envelope, composite_ramp_rates,
     effective_ramp_limit, effective_regulation_max_avail, agc_ramp_rate
+export is_fast_start, fast_start_mode_length, fast_start_time_in_mode, FastStartEndState, fast_start_end_state,
+    FastStartEnvelope, fast_start_envelope, fast_start_ramp_up_limit, fast_start_ramp_exempt,
+    FastStartUnitInputs, fast_start_unit_inputs, has_fast_start_profile, NEM_FAST_START_SERIES, FAST_START_CVP_FACTOR
 export OfferSide, offer_side, side_suffix, NEM_SERIES, NEM_TELEMETRY_SERIES, NEM_OBSERVED_SERIES, NEM_STATE_INPUT_SERIES, NEM_INTERCONNECTOR_SERIES, NEM_MNSP_SERIES, NEM_MNSP_FIXED_LOAD_SERIES, NEM_CONSTRAINT_SERIES, energy_offer_series_name
 export NEMOfferCost, NEMEnergyBid, NEMFCASBid, BidDirection, FastStartProfile, FCASTrapeziumPoints, bid_value, bid_series_name
 export get_energy_bids, get_fcas_bids, get_direction, get_offer_curves, get_max_avail, get_roc_up, get_roc_down,
@@ -90,6 +93,7 @@ end
 include("accessors/series_names.jl")
 include("types/nem_offer_cost.jl")
 include("types/unit_data.jl")
+include("derivations/fast_start.jl")
 include("types/network_data.jl")
 include("types/build_report.jl")
 include("accessors/device_flags.jl")

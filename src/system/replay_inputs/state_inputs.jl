@@ -44,10 +44,12 @@ end
     observed_unit_states(device, stamps::AbstractVector{DateTime}) -> Vector{NEMUnitState}
 
 The state of `device` at the start of the interval beginning at each stamp of `stamps`, read from its
-[`NEMObservedState`](@ref). A stamp with a finite dispatch mode gives its observed output and mode. A stamp
-with a non-finite mode gives zero output in mode `0` when the build does not observe the unit there (outside
-the device's registration, or a pinned non-scheduled load), and the observed output in mode `0` when the
-previous interval is unobserved, which is the device's first registered interval.
+[`NEMObservedState`](@ref). A stamp with a finite dispatch mode gives its observed output and mode, and the
+time in mode of [`fast_start_time_in_mode`](@ref) from the observed mode time and the fast-start profile of the
+device's energy offer at the stamp. A stamp with a non-finite mode gives zero output in mode `0` when the build
+does not observe the unit there (outside the device's registration, or a pinned non-scheduled load), and the
+observed output in mode `0` when the previous interval is unobserved, which is the device's first registered
+interval. The time in mode is zero in mode `0`.
 
 # Arguments
 - `device`: the NEM device.
@@ -55,18 +57,28 @@ previous interval is unobserved, which is the device's first registered interval
 
 # Returns
 A `Vector{NEMUnitState}` the length of `stamps`. Throws an `ArgumentError` naming `device` and the stamp
-when `device` has no NEM observed state, or when the dispatch mode is not finite at a stamp whose previous
-interval is observed.
+when `device` has no NEM observed state, when the dispatch mode is not finite at a stamp whose previous
+interval is observed, or when the mode time of a fast-start unit in modes 1 to 4 is not finite.
 """
 function observed_unit_states(device, stamps::AbstractVector{DateTime})::Vector{NEMUnitState}
     initial = _observed_grid(device, :initial_mw, stamps)
     mode = _observed_grid(device, :dispatch_mode, stamps)
+    mode_time = _observed_grid(device, :dispatch_mode_time, stamps)
+    profiles = _fast_start_profile_window(device, stamps)
     unobserved = _unobserved_stamp_mask(device, stamps)
     previous = _unobserved_stamp_mask(device, stamps .- Minute(5))
     states = Vector{NEMUnitState}(undef, length(stamps))
     for i in eachindex(stamps)
         if isfinite(mode[i])
-            states[i] = NEMUnitState(initial[i], Int(mode[i]))
+            m = Int(mode[i])
+            time = fast_start_time_in_mode(m, mode_time[i], profiles[i])
+            isfinite(time) || throw(
+                ArgumentError(
+                    "The dispatch mode time of \"$(PSY.get_name(device))\" at $(stamps[i]) is not finite in mode $m. " *
+                        "Check that DISPATCHLOAD publishes DISPATCHMODETIME at the previous interval (t - 5 minutes).",
+                ),
+            )
+            states[i] = NEMUnitState(initial[i], m, time)
         elseif unobserved[i]
             states[i] = NEMUnitState(0.0, 0)
         elseif previous[i]

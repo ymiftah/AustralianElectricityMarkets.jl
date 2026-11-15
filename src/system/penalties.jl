@@ -96,6 +96,15 @@ const FIXED_LOADING_CVP_FACTOR = 380.0
 
 
 """
+    FAST_START_CVP_FACTOR
+
+CVP factor (1130) of AEMO's Fast Start Inflexibility Profile constraint, item 10 of the *Schedule of Constraint
+Violation Penalty Factors* v8.0. Prices the deficit and surplus of a fast-start unit's profile rows.
+"""
+const FAST_START_CVP_FACTOR = 1130.0
+
+
+"""
     FCAS_CAPACITY_CVP_FACTOR
 
 CVP factor (70) of AEMO's FCAS EnablementMin/EnablementMax constraint, item 24 of the *Schedule of

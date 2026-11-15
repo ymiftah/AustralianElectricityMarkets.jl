@@ -51,7 +51,8 @@ is_state_dependent_input(series_name::AbstractString) = !isnothing(_closed_loop_
     closed_loop_unit_state(device, t, initial_mw) -> NEMUnitState
 
 The state of `device` at the start of the interval beginning at `t` in a closed-loop replay: the starting
-output `initial_mw`, in MW, with the observed dispatch mode at `t`, since fast-start profiles are not modelled.
+output `initial_mw`, in MW, with the observed dispatch mode and time in mode at `t`: a closed loop does not carry
+the fast-start state of its own solves.
 
 # Arguments
 - `device`: the NEM device.
@@ -63,7 +64,7 @@ A [`NEMUnitState`](@ref).
 """
 function closed_loop_unit_state(device, t::DateTime, initial_mw::Real)
     observed = only(observed_unit_states(device, [t]))
-    return NEMUnitState(Float64(initial_mw), observed.dispatch_mode)
+    return NEMUnitState(Float64(initial_mw), observed.dispatch_mode, observed.time_in_mode)
 end
 
 
@@ -146,8 +147,11 @@ function _observed_states!(inputs::ClosedLoopInputs)
 end
 
 
-# The state of the device at interval `i` for `initial_mw` (MW), with its observed dispatch mode.
-_closed_loop_state(inputs::ClosedLoopInputs, i::Int, initial_mw::Real) = NEMUnitState(Float64(initial_mw), _observed_states!(inputs)[i].dispatch_mode)
+# The state of the device at interval `i` for `initial_mw` (MW), with its observed dispatch mode and time in mode.
+function _closed_loop_state(inputs::ClosedLoopInputs, i::Int, initial_mw::Real)
+    observed = _observed_states!(inputs)[i]
+    return NEMUnitState(Float64(initial_mw), observed.dispatch_mode, observed.time_in_mode)
+end
 
 
 function _ramp_inputs!(inputs::ClosedLoopInputs)
@@ -194,7 +198,7 @@ function _closed_loop_fcas_values(inputs::ClosedLoopInputs, bid_type::BidType, t
     prep = _fcas_inputs!(inputs, bid_type)
     isnothing(prep) && return nothing
     state = _closed_loop_state(inputs, i, initial_mw)
-    prep.window.states[i] = NEMUnitState(state.initial_mw / inputs.base, state.dispatch_mode)
+    prep.window.states[i] = NEMUnitState(state.initial_mw / inputs.base, state.dispatch_mode, state.time_in_mode)
     return _fcas_values_at(prep, inputs.device, bid_type, i)
 end
 
@@ -206,7 +210,7 @@ end
 The value of the state-dependent replay input `series_name` of the device at the interval beginning at `t` when the
 unit starts the interval at `initial_mw`, in the units and element type `nem_system` writes the series in. It
 evaluates the writer's rules for that interval with the closed-loop state: `initial_mw` and the observed dispatch
-mode, since fast-start profiles are not modelled.
+mode and time in mode.
 
 # Arguments
 - `inputs`: the device's [`ClosedLoopInputs`](@ref); the second form builds them for one call.

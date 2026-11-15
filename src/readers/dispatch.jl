@@ -123,7 +123,7 @@ end
 
 Reads each unit's operating condition from one `DISPATCHLOAD` read: the metered and dispatch
 state (`INITIALMW`, `AVAILABILITY`, `RAMPUPRATE`, `RAMPDOWNRATE`, `UIGF`, `DISPATCHMODE`,
-`AGCSTATUS`), the regulation enablement limits and the regulation availabilities, for each
+`DISPATCHMODETIME`, `AGCSTATUS`), the regulation enablement limits and the regulation availabilities, for each
 interval of the half-open `date_range`. Rates are as published: MW/h, and the ramp rates are
 the lesser of bid and telemetered rate.
 
@@ -134,15 +134,15 @@ the lesser of bid and telemetered rate.
 
 # Returns
 A `DataFrame` with `SETTLEMENTDATE`, `DUID`, `INITIALMW`, `AVAILABILITY`, `RAMPUPRATE`,
-`RAMPDOWNRATE`, `UIGF`, `DISPATCHMODE`, `AGCSTATUS`, `RAISEREGENABLEMENTMIN`, `RAISEREGENABLEMENTMAX`,
+`RAMPDOWNRATE`, `UIGF`, `DISPATCHMODE`, `DISPATCHMODETIME`, `AGCSTATUS`, `RAISEREGENABLEMENTMIN`, `RAISEREGENABLEMENTMAX`,
 `LOWERREGENABLEMENTMIN`, `LOWERREGENABLEMENTMAX`, `RAISEREGAVAILABILITY` and `LOWERREGAVAILABILITY`,
 sorted by `DUID` and `SETTLEMENTDATE`. Throws an `ArgumentError` when `DISPATCHLOAD` is not cached or
 a cached partition lacks one of these columns.
 """
 function read_unit_conditions(db, date_range; intervention::Integer = 0)
     columns = (
-        "INITIALMW", "AVAILABILITY", "RAMPUPRATE", "RAMPDOWNRATE", "UIGF", "DISPATCHMODE", "AGCSTATUS",
-        "RAISEREGENABLEMENTMIN", "RAISEREGENABLEMENTMAX", "LOWERREGENABLEMENTMIN", "LOWERREGENABLEMENTMAX",
+        "INITIALMW", "AVAILABILITY", "RAMPUPRATE", "RAMPDOWNRATE", "UIGF", "DISPATCHMODE", "DISPATCHMODETIME",
+        "AGCSTATUS", "RAISEREGENABLEMENTMIN", "RAISEREGENABLEMENTMAX", "LOWERREGENABLEMENTMIN", "LOWERREGENABLEMENTMAX",
         "RAISEREGAVAILABILITY", "LOWERREGAVAILABILITY",
     )
     df = _read_dispatch_table(db, :DISPATCHLOAD, "DUID", date_range; intervention) do schema

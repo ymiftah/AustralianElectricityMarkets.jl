@@ -81,12 +81,33 @@ const NEM_TELEMETRY_SERIES = (
     NEM_OBSERVED_SERIES
 
 Names of the per-device `SingleTimeSeries` that [`set_unit_conditions!`](@ref) attaches for a unit's
-[`NEMObservedState`](@ref), in AEMO's natural units: `initial_mw` (`INITIALMW`, MW) and `dispatch_mode`
-(`DISPATCHMODE` of the previous interval).
+[`NEMObservedState`](@ref), in AEMO's natural units: `initial_mw` (`INITIALMW`, MW), `dispatch_mode`
+(`DISPATCHMODE` of the previous interval) and `dispatch_mode_time` (`DISPATCHMODETIME` of the previous interval,
+minutes).
 """
 const NEM_OBSERVED_SERIES = (
     initial_mw = "observed_initial_mw",
     dispatch_mode = "observed_dispatch_mode",
+    dispatch_mode_time = "observed_dispatch_mode_time",
+)
+
+
+"""
+    NEM_FAST_START_SERIES
+
+Names of the per-device `SingleTimeSeries` that the replay input stage writes for a unit whose energy offer
+carries a fast-start profile, read through [`fast_start_unit_inputs`](@ref):
+
+- `flag`: `1` at the intervals the offer's profile makes the unit fast-start ([`is_fast_start`](@ref)), `0`
+  elsewhere.
+- `start_mode`: the fast-start dispatch mode at the start of each interval, from 0 to 4.
+- `time_in_mode`: the minutes in that mode at the start of each interval, capped at the mode's length
+  ([`fast_start_time_in_mode`](@ref)).
+"""
+const NEM_FAST_START_SERIES = (
+    flag = "fast_start_flag",
+    start_mode = "fast_start_start_mode",
+    time_in_mode = "fast_start_time_in_mode",
 )
 
 
