@@ -93,10 +93,10 @@ using CairoMakie #hide
 # curve is convex, a chord lies above it everywhere between its two ends. A chord that
 # spans zero flow therefore shows a small positive loss at zero flow.
 #
-# !!! note "Deviation in AustralianElectricityMarketsSimulations"
+# !!! note "Deviation in AustralianElectricityMarkets"
 #     **AEMO:** the loss equation is defined by integration from zero flow. The published
-#     documents do not say how the breakpoint values are placed. **AustralianElectricityMarkets.jl:** when a
-#     chord spans zero flow, every breakpoint value is lowered by that chord's value at zero,
+#     documents do not say how the breakpoint values are placed.
+#     **AustralianElectricityMarkets:** when a chord spans zero flow, every breakpoint value is lowered by that chord's value at zero,
 #     so the curve passes through zero. Slopes, and therefore marginal losses, are unchanged.
 
 let #hide
@@ -119,9 +119,9 @@ end #hide
 #
 # !!! note "Deviation in AustralianElectricityMarketsSimulations"
 #     **AEMO:** the published documents do not describe how NEMDE enforces segment order.
-#     **AustralianElectricityMarkets.jl:** integer variables force the segments to fill in order, which makes
+#     **AustralianElectricityMarketsSimulations:** integer variables force the segments to fill in order, which makes
 #     the problem a mixed-integer programme (SOS2 constraints). Even though the curves are convex,
-#     the possibility of negative prices make integer variables a requirement.
+#     the possibility of negative prices makes integer variables a requirement.
 #     Prices are taken from a second solve with those integers fixed. The first and last breakpoints also bound the flow as hard limits,
 #     whatever the flow-limit slacks allow.
 #
@@ -192,16 +192,15 @@ end #hide
 # !!! note "Deviation in AustralianElectricityMarketsSimulations"
 #     **AEMO:** MNSP availability and offer limits can be violated at a penalty, the flow is
 #     ramp-limited, and a fixed loading can be offered.
-#     **AustralianElectricityMarkets.jl:** availability and
-#     band quantities are hard limits, and the ramp rate and fixed loading are not modelled.
-#     An integer variable allows only one direction to flow in an interval.
+#     **AustralianElectricityMarketsSimulations:** models the same rows, each elastic at its
+#     penalty factor: availability, the offered band quantities, the ramp rate and the fixed
+#     loading. In addition, a binary variable allows only one direction to flow in an interval.
 #
-# !!! note "Deviation in AustralianElectricityMarketsSimulations"
+# !!! note "Deviation in AustralianElectricityMarkets"
 #     **AEMO:** Basslink has fixed converter losses and cannot operate in a band of low flows
-#     around zero. **AustralianElectricityMarkets.jl:** neither is modelled. When Basslink has no offers in the
-#     data, it is treated as a free-flowing interconnector with all of its losses assigned to
-#     Tasmania, in place of the zero share published for it. This fallback applies only
-#     when constructing a model outside that default validation.
+#     around zero. **AustralianElectricityMarkets:** neither is modelled. The share of
+#     Basslink's (`T-V-MNSP1`) losses assigned to its from region, Tasmania, is always set to
+#     1.0, in place of the value AEMO publishes, which is not well defined.
 #
 # ## A worked example
 #

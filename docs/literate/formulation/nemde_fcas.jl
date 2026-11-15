@@ -388,9 +388,11 @@ end #hide
 # exempt from these two constraints; see [Fast-start dispatch](@ref nemde-fast-start).
 #
 # !!! note "Deviation in AustralianElectricityMarketsSimulations"
-#     **AEMO:** exempts fast-start units in modes 0, 1 and 2 from joint ramping. **This
-#     package:** has no fast-start modes, so the joint ramping constraints apply to those
-#     units as to any other.
+#     **AEMO:** exempts fast-start units in modes 0, 1 and 2 from joint ramping.
+#     **AustralianElectricityMarketsSimulations:** decides the exemption from the mode the unit
+#     starts the interval in, and keeps it in both fast-start runs. A unit that starts in
+#     mode 0, 1 or 2, ends the interval in mode 3 or 4 and offers regulation therefore stays
+#     exempt in the dispatch run, where the end mode would no longer exempt it.
 #
 # ### Batteries offer regulation on each side
 #
@@ -449,8 +451,8 @@ end #hide
 # availability.*
 #
 # !!! note "Deviation in AustralianElectricityMarketsSimulations"
-#     **AEMO:** publishes actual availability for every unit and service. **AustralianElectricityMarkets.jl:**
-#     does not compute it. The published values can be read from the data for comparison.
+#     **AEMO:** publishes actual availability for every unit and service.
+#     **AustralianElectricityMarketsSimulations:** does not compute it. The published values can be read from the data for comparison.
 #
 # ## [FCAS prices](@id fcas-pricing)
 #

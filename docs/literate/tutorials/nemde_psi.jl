@@ -88,7 +88,8 @@ DataFrame(cumulative_MW = PSY.get_x_coords(coal_offer)[2:end], price = PSY.get_y
 #
 # Before going into PSI.jl, let's first build the intuition behind the abstractions it develops.
 # Let's look again at the complete JuMP model from the previous section, reordering some of the
-# function calls
+# function calls. It still includes the FCAS service, the interconnector losses and the generic
+# constraints, which the PSI model of this page leaves out; the grouping is what matters here.
 #
 function build_model(sys, market)
     model = Model(HiGHS.Optimizer)
@@ -103,44 +104,44 @@ function build_model(sys, market)
     regions = region_names(sys)
     from = PSY.get_name(PSY.get_from_area(interconnector(sys)))
 
-    # Define Arguments: variables and expressions specific to:
-    # 1.1. Devices:
-    # 1.1.1. Units
+    ## Define Arguments: variables and expressions specific to:
+    ## 1.1. Devices:
+    ## 1.1.1. Units
     @variable(model, 0 <= cleared[n in names, j in eachindex(bands[n])] <= quantity(bands[n][j]))
     @expression(model, dispatch[n in names], sum(cleared[n, j] for j in eachindex(bands[n])))
     @expression(model, offer_cost, sum(price(bands[n][j]) * cleared[n, j] * INTERVAL_H for n in names for j in eachindex(bands[n])))
-    # 1.1.2 Interconnectors
+    ## 1.1.2 Interconnectors
     @variable(model, flow)
     @variable(model, 0 <= segment_flow[s in 1:n_segments] <= segments[s].to_mw - segments[s].from_mw)
     @variable(model, filled[s in 1:(n_segments - 1)], Bin)
     @expression(model, loss, loss_at(ic, ic.breakpoints[1]) - zero_flow_chord_loss(ic) + sum(segments[s].slope * segment_flow[s] for s in 1:n_segments))
-    # 1.2 Services
-    # 1.2.1 FCAS
+    ## 1.2 Services
+    ## 1.2.1 FCAS
     @variable(model, 0 <= raise[n in fnames] <= max_avail(trapezium(market, n)))
     @variable(model, 0 <= raise_cleared[n in fnames, j in eachindex(fcas_bids(market, n))] <= quantity(fcas_bids(market, n)[j]))
     @expression(model, fcas_cost, sum(price(b) * raise_cleared[n, j] * INTERVAL_H for n in fnames for (j, b) in enumerate(fcas_bids(market, n))))
 
 
-    # Define Constraints. Constraints must be defined after their variables and coefficients / paramters are defined.
-    # 2.1 Devices
-    # 2.1.1 Units
+    ## Define Constraints. Constraints must be defined after their variables and coefficients / parameters are defined.
+    ## 2.1 Devices
+    ## 2.1.1 Units
     @constraint(model, envelope_min[n in names], dispatch[n] >= envelopes[n][1])
     @constraint(model, envelope_max[n in names], dispatch[n] <= envelopes[n][2])
-    # 2.1.2 Interconnectors
+    ## 2.1.2 Interconnectors
     @constraint(model, flow_definition, flow == ic.breakpoints[1] + sum(segment_flow))
     @constraint(model, segment_full[s in 1:(n_segments - 1)], segment_flow[s] >= (segments[s].to_mw - segments[s].from_mw) * filled[s])
     @constraint(model, segment_next[s in 1:(n_segments - 1)], segment_flow[s + 1] <= (segments[s + 1].to_mw - segments[s + 1].from_mw) * filled[s])
     @constraint(model, flow_limit_up, flow <= flow_limit(sys))
     @constraint(model, flow_limit_down, flow >= -flow_limit(sys))
 
-    # 2.2 Services
-    # 2.2.1 FCAS Constraints
+    ## 2.2 Services
+    ## 2.2.1 FCAS Constraints
     @constraint(model, raise_definition[n in fnames], raise[n] == sum(raise_cleared[n, j] for j in eachindex(fcas_bids(market, n))))
     @constraint(model, trapezium_upper[n in fnames], dispatch[n] + upper_slope(trapezium(market, n)) * raise[n] <= trapezium(market, n).enablement_max)
     @constraint(model, trapezium_lower[n in fnames], dispatch[n] - lower_slope(trapezium(market, n)) * raise[n] >= trapezium(market, n).enablement_min)
 
 
-    # 2.2.1 Joint devices constraints
+    ## 2.3 Joint devices constraints
     generation(r) = sum(dispatch[n] for n in units_in(sys, r))
     exported(r) = r == from ? flow : -flow
     loss_charged(r) = (r == from ? ic.from_loss_share : 1 - ic.from_loss_share) * loss
@@ -176,13 +177,16 @@ built = build_model(sys, market) #hide
 optimize!(built) #hide
 @assert abs(objective_value(built) - solve_toy_jump(sys, market).objective) < 1.0e-6 #hide
 
-# The grouping above surfaces the main building phases of a model, independently of the the concrete data.
-# 0. Initialising empty containers to hold expressions spanning devices and services. These will be used later to build constraints.
-# 1. Attach the variables and parameters for each of the system components: devices, services, branches
+# The grouping above surfaces the main building phases of a model, independently of the concrete data:
+#
+# 0. Initialise empty containers to hold expressions spanning devices and services. These are
+#    used later to build constraints.
+# 1. Attach the variables and parameters of each system component: devices, services, branches.
 # 2. Attach the constraints:
-#   2.1 Attach to the model, for each device, service, branch the constraints which are only indexed on themselves
-#   2.2 Add to the expression containers of step 0 the contribution of each device / service / branch where applicable
-#   2.3 Attach the constraints to the model using the expression containers
+#    1. for each device, service and branch, the constraints indexed only on itself;
+#    2. the contribution of each device, service and branch to the expression containers of
+#       step 0, where applicable;
+#    3. the constraints written on those expression containers.
 # 3. Attach the objective function to the model.
 #
 # ## The problem: a template and a decision model
@@ -204,7 +208,9 @@ PSI.set_device_model!(template, PSY.AreaInterchange, PSI.StaticBranch)
 template
 
 # A `DecisionModel` adds what the template leaves open: the data and solver, the first interval and the
-# horizon.
+# horizon. The stock PSI problem used here takes `horizon`, `resolution` and `interval`; the NEM
+# replay problem `NEMDispatchProblem` of [the next page](@ref nemde-aem) takes none of them,
+# because it always solves one five-minute dispatch interval at a time.
 
 model_psi = PSI.DecisionModel(
     template,
@@ -226,9 +232,9 @@ model_psi = PSI.DecisionModel(
 # them. The split lets every component contribute to a shared expression, such as a region's
 # balance, before any constraint is written on it.
 #
-# Let's see how this translate into PSI directly.
+# Let's see how this translates into PSI directly.
 #
-# ```{julia}
+# ```julia
 # function build_impl!(model::DecisionModel{<:DecisionProblem})
 #     build_pre_step!(model)
 #     @info "Instantiating Network Model"

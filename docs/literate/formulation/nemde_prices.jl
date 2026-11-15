@@ -40,18 +40,21 @@
 # conventions in its
 # [Constraint Formulation Guidelines, §§4-5](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/congestion-information/2025/constraint-formulation-guidelines.pdf).
 #
-# !!! note "Deviation in AustralianElectricityMarketsSimulations"
-#     **AEMO:** computes each right-hand side from live system measurements. **AustralianElectricityMarkets.jl:** uses the right-hand side AEMO published for the interval. It does not
-#     recompute it, so it reproduces the limits that applied and cannot answer what the
-#     limit would have been under different conditions.
+# !!! note "Deviation in AustralianElectricityMarkets"
+#     **AEMO:** computes each right-hand side from live system measurements.
+#     **AustralianElectricityMarkets:** uses the right-hand side AEMO published for the
+#     interval. It does not recompute it, so it reproduces the limits that applied and cannot
+#     answer what the limit would have been under different conditions.
 #
-# !!! note "Deviation in AustralianElectricityMarketsSimulations"
+# !!! note "Deviation in AustralianElectricityMarkets"
 #     **AEMO:** evaluates each constraint using its applicable participant and interconnector
-#     terms. **AustralianElectricityMarkets.jl:** the data-loading step records dropped unit terms and skipped
-#     constraints when components cannot be matched. The default configuration rejects those
-#     incomplete inputs. If a model family is explicitly omitted, it excludes the whole
-#     affected constraint; it does not solve a partial left-hand side. A custom configuration
-#     built directly from the loaded constraints must check these records itself.
+#     terms. **AustralianElectricityMarkets:** drops a unit term whose unit is not in the
+#     `System` and records it in the build report. A dropped term of a unit that is not
+#     registered over the replayed range (retired or not yet registered) contributes zero. A
+#     constraint whose only terms are dropped is skipped when it can never bind at its
+#     invoked intervals (reason `:vacuous_unknown_duid`). The replay checks reject every other
+#     dropped term and skipped constraint, so the model is never built on a partial left-hand
+#     side; read the records with `get_dropped_terms` and `get_skipped_constraints`.
 #
 # ## When constraints cannot all be met
 #
@@ -175,8 +178,8 @@
 # [Dispatch Procedure](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/power_system_ops/procedures/so_op_3705-dispatch.pdf).
 #
 # !!! note "Deviation in AustralianElectricityMarketsSimulations"
-#     **AEMO:** publishes prices after the adjustments above. **AustralianElectricityMarkets.jl:** returns the
-#     marginal values, using an LP with integer decisions fixed when the dispatch model
+#     **AEMO:** publishes prices after the adjustments above.
+#     **AustralianElectricityMarketsSimulations:** returns the marginal values, using an LP with integer decisions fixed when the dispatch model
 #     contains integers, with none of AEMO's pricing adjustments. Its prices are
 #     comparable with the ROP. In an interval with a violated constraint they contain
 #     penalty prices and can be far from the published RRP.

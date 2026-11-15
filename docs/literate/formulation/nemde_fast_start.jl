@@ -90,12 +90,12 @@ end #hide
 #    fast-start unit would produce if it were fully flexible.
 # 2. **Commitment.** Each unit's mode at the end of the interval is set from its mode at the
 #    start and its first-solve result.
-#    - An offline unit is **started** if its first-solve target exceeds 0.005 MW. It then
-#      moves along its profile; if ``T_1+T_2`` is under five minutes it is already in mode 3
-#      by the end of the interval.
+#    - An offline unit is **started** if its first-solve target is positive. It then moves
+#      along its profile; if ``T_1+T_2`` is under five minutes it is already in mode 3 by the
+#      end of the interval.
 #    - A unit already on its profile **continues** along it.
-#    - A unit that has completed ``T_4`` is **shut down** the first time its target is
-#      0.005 MW or less. It returns to mode 0 once it has ramped down to zero.
+#    - A unit that has completed ``T_4`` runs as an ordinary unit until its target reaches
+#      zero.
 # 3. **Second solve, with profiles.** The profile constraints are enforced for the modes
 #    found in step 2. This solve produces the published targets and prices.
 #
@@ -120,8 +120,8 @@ end #hide
 # ## A worked example
 #
 # Take the profile in the figure: ``M=40`` MW and durations of 2, 4, 3 and 4 minutes. The
-# unit is offline, and the first solve gives it a target of 25 MW. That exceeds 0.005 MW, so
-# the unit is started.
+# unit is offline, and the first solve gives it a target of 25 MW. That is positive, so the
+# unit is started.
 #
 # | Interval end | Minutes since start | Mode | Constraint on the target |
 # | --- | --- | --- | --- |
@@ -133,14 +133,52 @@ end #hide
 # interval it produces 30 MW whatever the price turns out to be. The cost of those fixed MW
 # is the risk the two-solve scheme is designed to weigh.
 #
+# ## How the replay implements it
+#
+# `nem_dispatch_sequence` builds the replay of each interval as two PowerSimulations decision
+# models that run in order at the same timestamp, when the `System` has an available
+# fast-start unit (a unit whose energy offer has a positive ``T_1`` to ``T_4``):
+#
+# 1. **Commitment run.** The full dispatch without profile rows. A fast-start unit that
+#    starts the interval in mode 0, 1 or 2 has no energy ramp rows and no joint ramping rows.
+# 2. **End state.** From the commitment run's target, `fast_start_end_state` commits a unit
+#    starting in mode 0 when that target is above 0 MW, then advances it through modes 1, 2
+#    and 3 by the five minutes of the interval. A unit never leaves mode 4 in the replay.
+# 3. **Dispatch run.** The same dispatch with the profile rows of the end mode, elastic at the
+#    fast-start penalty factor of 1130 times the Market Price Cap (`FAST_START_CVP_FACTOR`).
+#    Its targets, prices and violations are the replay's results.
+#
+# | End mode | Row of the dispatch run |
+# | --- | --- |
+# | 0 or 1 | ``p_u\le 0`` |
+# | 2 | ``p_u=M\,\tau/T_2`` |
+# | 3 | ``p_u\ge M`` |
+# | 4 | ``p_u\ge M\,(1-\tau/T_4)``, a lower bound only |
+#
+# In the dispatch run a unit ending in mode 0, 1 or 2 has no energy ramp rows. A unit that
+# left mode 2 during the interval ramps up from its minimum load instead of its starting
+# output, ``p_u\le M+R^{\uparrow}t_2``, where ``t_2`` is the time since the end of mode 2 and
+# ``R^{\uparrow}`` the lesser of the offered and telemetered ramp-up rates per minute. Every other
+# unit keeps its usual ramp rows. Participant fixed loadings are dropped while the unit starts
+# the interval in mode 1 or 2.
+#
+# The starting mode and minutes in mode come from the previous interval's `DISPATCHMODE` and
+# `DISPATCHMODETIME` in `DISPATCHLOAD`, the minutes capped at the length of the mode. The
+# profile and ``M`` come from the unit's energy offer in `BIDDAYOFFER_D`. Pass
+# `fast_start = false` to `nem_dispatch_sequence`, or `--fast-start false` to the batch
+# runner, to solve one model per interval, without profiles.
+#
 # !!! note "Deviation in AustralianElectricityMarketsSimulations"
-#     **AEMO:** fast-start units follow their inflexibility profile, and commitment is
-#     decided by the two solves above. **This package:** profiles are not modelled and there
-#     is no two-pass commitment. A fast-start unit is dispatched as an ordinary unit, limited
-#     by its offer, availability and ramp rates. Its modelled target can therefore differ from the
-#     published one while the unit is starting up or held at minimum load.
-#     Participant fixed loadings are also omitted for the whole trading day when the unit's
-#     daily offer has a positive ``T_1``, including intervals after its profile would end.
+#     **AEMO:** corrects the starting mode before the first solve, follows the profile from
+#     the end state of the previous interval, and applies the profile to every fast-start
+#     unit. **AustralianElectricityMarketsSimulations:**
+#     - does not model the corrections of the starting mode above, so a unit that NEMDE returns
+#       to mode 0 starts from its published mode;
+#     - in a closed-loop replay, still starts each unit from AEMO's observed mode and minutes in
+#       mode, not from the end state of the previous solve;
+#     - gives batteries no profile rows; a battery with a profile keeps its usual rows;
+#     - decides the regulation joint ramping exemption from the starting mode in both runs; see
+#       [FCAS joint ramping](@ref nemde-fcas).
 #
 # ## References
 #

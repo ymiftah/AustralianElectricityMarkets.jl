@@ -30,7 +30,7 @@ end
 # network spans around 40,000 km of lines and cables and serves more than 85% of Australia's
 # population.
 # This page introduces the NEM's institutions, market design, and dispatch process, then
-# contrasts it's design with other electricity markets.
+# contrasts its design with other electricity markets.
 #
 # !!! note "References"
 #     See [References](@ref nem-references) at the end for official sources - AEMO's
@@ -69,7 +69,7 @@ nothing #hide
 # - **Regional pricing, not nodal pricing.** Each of the five regions clears at a single spot
 #   price, set at that region's **Regional Reference Node (RRN)**. This is a coarser
 #   granularity than the nodal locational marginal pricing (LMP) used across most US
-#   ISOs/RTOs for example (c.f.) [How the NEM differs from US and European markets](@ref nem-vs-world)).
+#   ISOs/RTOs, for example (see [How the NEM differs from US and European markets](@ref nem-vs-world)).
 #
 # !!! note "One price per region is not one price per unit"
 #     Pricing regionally does not mean location stops mattering. NEMDE dispatches against
@@ -113,7 +113,7 @@ nothing #hide
 # right up to **gate closure**
 # (~20 seconds before each dispatch interval), is how many megawatts sit in each of those ten
 # bands in response to revised demand forecasts, plant
-# availability, or market conditions. Absent binding network constraints AEMO, dispatches in
+# availability, or market conditions. Absent binding network constraints, AEMO dispatches in
 # **merit order** and every dispatched unit in a region is
 # paid the same **uniform clearing price**, set by the last (most expensive) band needed to
 # meet demand. Network constraints routinely
@@ -195,7 +195,7 @@ end
 # | Commitment | Self-commitment by each participant | Centrally co-optimised unit commitment | Self-commitment, adjusted in intraday/balancing markets |
 # | Capacity mechanism | None (energy-only) | Common (PJM RPM, ISO-NE FCM); ERCOT is also energy-only | Some member states (e.g. France, GB); others energy-only |
 # | Settlement interval | 5 minutes | Typically 5 minutes real-time / 60 minutes day-ahead | 15-60 minutes, moving toward 15 |
-# | Price cap | \$23,200/MWh (FY2026-27) | Much lower - e.g. ERCOT's \$9,000/MWh system-wide offer cap | EU-harmonised \$4,000/MWh cap on day-ahead coupling |
+# | Price cap | \$23,200/MWh (FY2026-27) | Much lower - e.g. ERCOT's \$9,000/MWh system-wide offer cap | EU-harmonised €4,000/MWh cap on day-ahead coupling |
 #
 # The pattern across most of these rows is the same: the NEM makes fewer things mandatory and
 # fewer things centrally planned than a typical US ISO, while pricing at coarser spatial

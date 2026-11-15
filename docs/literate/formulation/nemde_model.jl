@@ -45,7 +45,7 @@
 # | Generic constraints and their right-hand sides | Violation of any constraint that cannot be met | Violation quantities |
 # | Loss factors and loss equations | | |
 #
-# The published prices and targets for each units are results of the optimisation.
+# The published prices and targets for each unit are results of the optimisation.
 #
 # ## The optimisation in one view
 #
@@ -143,16 +143,22 @@
 #
 # ## [Where this package differs](@id nemde-deviations)
 #
-# These chapters describe AEMO's dispatch. The following limitations apply to the NEM dispatch
-# formulations and replay workflow in `AustralianElectricityMarketsSimulations.jl`; other
-# PowerSimulations formulations can behave differently. The chapter notes give the details.
+# These chapters describe AEMO's dispatch. The table lists where the NEM inputs read by
+# `AustralianElectricityMarkets` and the NEM dispatch formulations and replay workflow of
+# `AustralianElectricityMarketsSimulations` depart from it; other PowerSimulations
+# formulations can behave differently. The chapter notes give the details.
 # Availability, UIGF and total offered energy are enforced with separate priced violations.
 #
 # | Area | Deviation | Chapter |
 # | --- | --- | --- |
-# | Units outside dispatch | Wholesale demand response units are not modelled | [Energy](@ref nemde-energy) |
-# | Market interconnector | Hard availability, no ramp rate or fixed loading, no converter losses or no-go zone | [Interconnectors](@ref nemde-interconnectors) |
-# | Fast-start units | No profiles or two-pass commitment; participant fixed loadings are omitted for units with a positive T1 for the whole trading day | [Fast-start](@ref nemde-fast-start) |
+# | Units outside dispatch | Wholesale demand response units are not dispatched | [Energy](@ref nemde-energy) |
+# | FCAS joint ramping | A fast-start unit's exemption follows its starting mode in both fast-start runs | [FCAS](@ref nemde-fcas) |
+# | FCAS actual availability | Not computed; the published values can be read for comparison | [FCAS](@ref nemde-fcas) |
+# | Interconnector losses | Segments fill in order through integer variables, a mixed-integer programme; breakpoint losses are shifted to zero at zero flow; the outer breakpoints are hard flow limits | [Interconnectors](@ref nemde-interconnectors) |
+# | Market interconnector | Availability, bands, ramp rate and fixed loading are elastic as in NEMDE; a binary allows one direction per interval; no converter losses or no-go zone for Basslink, whose from-region loss share is fixed at 1.0 | [Interconnectors](@ref nemde-interconnectors) |
+# | Fast-start units | Two runs per interval as NEMDE does; NEMDE's pre-processing resets of the starting mode are not modelled, a closed-loop replay keeps the observed starting modes, and batteries have no profile | [Fast-start](@ref nemde-fast-start) |
+# | Generic constraints | Right-hand sides are AEMO's published values, not recomputed; terms of units not registered over the range are dropped and contribute zero | [Prices](@ref nemde-prices) |
+# | Prices | Marginal values of a re-solve with the integer decisions fixed, comparable with the ROP, without AEMO's pricing adjustments | [Prices](@ref nemde-prices) |
 #
 # ## [Official references](@id nemde-model-references)
 #

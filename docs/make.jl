@@ -1,6 +1,7 @@
 using AustralianElectricityMarkets
 using AustralianElectricityMarketsData
 using AustralianElectricityMarketsCache
+using AustralianElectricityMarketsSimulations
 using Documenter
 using DocumenterVitepress
 using Literate
@@ -26,7 +27,7 @@ for (group, names) in [
             "formulation" => FORMULATION_PAGES,
             "overview" => ["nem"],
             "tutorials" => ["nemde_jump", "nemde_psi", "nemde_aem"],
-            "howto" => ["build_system", "economic_dispatch", "market_bids", "interchanges", "clearing-with-batteries"],
+            "howto" => ["build_system", "economic_dispatch", "market_bids", "interchanges", "clearing-with-batteries", "replay_nemde"],
         ], name in names
     figure_options = name in FORMULATION_PAGES ? (; image_formats = [(MIME("image/png"), ".png")]) : (;)
     Literate.markdown(
@@ -46,6 +47,7 @@ makedocs(;
         AustralianElectricityMarkets.Readers,
         AustralianElectricityMarketsData,
         AustralianElectricityMarketsCache,
+        AustralianElectricityMarketsSimulations,
         AustralianElectricityMarkets.RegionModel,
         AustralianElectricityMarkets.NetworkConfigurations,
         AustralianElectricityMarkets.BidTypeModule,
@@ -89,6 +91,8 @@ makedocs(;
             "Market bids" => "examples/market_bids.md",
             "Interchanges" => "examples/interchanges.md",
             "Clearing with batteries" => "examples/clearing-with-batteries.md",
+            "Replay NEMDE dispatch" => "examples/replay_nemde.md",
+            "Batch replays and benchmark" => "replay_batch.md",
         ],
         "Roadmap" => "roadmap.md",
         "Reference" => [

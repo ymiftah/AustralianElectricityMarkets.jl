@@ -178,10 +178,10 @@ end #hide
 #
 # The marginal value of this constraint, ``\lambda_r``, is the regional energy price.
 #
-# !!! note "Deviation in AustralianElectricityMarketsSimulations"
-#     **AEMO:** wholesale demand response units are dispatched like other units. **This
-#     package:** they are not modelled, and their response is absent from the balance.
-#
+# !!! note "Deviation in AustralianElectricityMarkets"
+#     **AEMO:** wholesale demand response units are dispatched like other units.
+#     **AustralianElectricityMarkets:** marks them unavailable in the `System`, so they are
+#     not dispatched and their response is absent from the balance.
 #
 # ## References
 #

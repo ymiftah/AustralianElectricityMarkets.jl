@@ -195,8 +195,9 @@ attach_generic_constraints!(sys, market);
 #
 # `nem_system` ends by deriving the inputs the replay reads from the raw ones: the offers referred to
 # the regional reference node, the effective FCAS trapeziums, the loss demand coefficients, the
-# tie-break scales, the starting output of each unit, and the five-minute forecast windows. The toy
-# calls the same private stage on its hand-built `System`, which then replays the one interval `T0`.
+# tie-break scales, the starting output of each unit, and the five-minute forecast windows. That
+# stage has no public entry point, because `nem_system` always runs it; the toy calls the internal
+# function directly on its hand-built `System`, which then replays the one interval `T0`.
 
 AEM._set_replay_inputs!(sys)
 replay_intervals(sys)
@@ -266,8 +267,8 @@ psi_price = Dict(
 psi_flow = only(read_variable(results, "FlowActivePowerVariable__AreaInterchange").value)
 psi_loss = only(read_variable(results, "InterconnectorLossVariable__AreaInterchange").value)
 psi_fcas_price = read_fcas_prices(results, sys; resolution = RESOLUTION)
-limit_key = only(k for k in keys(read_duals(results)) if occursin("N_COAL_LIMIT", k))
-psi_limit_dual = to_dollars_per_mwh(only(read_dual(results, limit_key).value))
+constraint_duals = read_dual(results, "NEMConstraintLimit__GenericConstraint")
+psi_limit_dual = to_dollars_per_mwh(only(constraint_duals[constraint_duals.name .== "N_COAL_LIMIT", :value]))
 psi_objective = only(values(PSI.get_objective_value(results)))
 
 reference = solve_toy_jump(toy_system(market), market);
@@ -335,17 +336,16 @@ slack_total
 #    intervals it can replay.
 # 3. The replay pre-flight checks run when the model is built, and
 #    `replay_skipped_constraints(sys, template)` reports the constraints left out.
-# 4. Construct, build and run a PSI simulation of the replay intervals:
+# 4. Construct, build and run a PSI simulation of the replay intervals. `nem_dispatch_sequence`
+#    adds NEMDE's second, fast-start run to each interval when the `System` has a fast-start unit:
 #
 #    ```julia
 #    steps = replay_intervals(sys)
 #    template = template_nemde()
-#    model = PSI.DecisionModel(
+#    (; models, sequence) = nem_dispatch_sequence(
 #        AEMSim.NEMDispatchProblem, template, sys;
-#        optimizer = AEMSim.nemde_optimizer(), initial_time = first(steps), name = "dispatch",
+#        optimizer = AEMSim.nemde_optimizer(), initial_time = first(steps),
 #    )
-#    models = PSI.SimulationModels(; decision_models = [model])
-#    sequence = PSI.SimulationSequence(; models, ini_cond_chronology = PSI.InterProblemChronology())
 #    simulation = PSI.Simulation(;
 #        name = "replication", steps = length(steps), models, sequence,
 #        simulation_folder = mktempdir(), initial_time = first(steps),
@@ -355,8 +355,9 @@ slack_total
 #    results = PSI.get_decision_problem_results(PSI.SimulationResults(simulation), "dispatch")
 #    ```
 # 5. `read_solved_interval(results, sys)` and `read_constraint_violations(results, sys)` extract the
-#    solved quantities and constraint violations. The repository scripts compare the solved tables with
-#    `read_published_interval` from the cache.
+#    solved quantities and constraint violations, and `compare_intervals` joins them with
+#    `read_published_interval` from the cache. [Replaying NEMDE dispatch](@ref replay-nemde) runs
+#    these steps on real intervals.
 #
 # Validate the study inputs before solving. `check_fcas_services(template, sys)`
 # verifies that every FCAS service has a corresponding model in the template,

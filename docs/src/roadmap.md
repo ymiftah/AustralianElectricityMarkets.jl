@@ -12,7 +12,11 @@ The following points are the planned next steps in the development of this packa
 - [ ] Account for Commissioning / Decommissioning dates to model the system at different years.
 - [ ] Parse latest ISP assumptions for operation costs.
 - [x] Enforce the FCAS trapezium and joint capacity/ramping constraints (see [FCAS capability and co-optimisation](@ref nemde-fcas)) inside a `PowerSimulations.jl` dispatch problem, and interconnector constraints.
-- [ ] Separate the AustralianElectricityMarketData module in its own package.
+- [x] Separate the data download and cache population into its own package, `AustralianElectricityMarketsData`.
+- [x] Replay NEMDE dispatch on real intervals and compare with the published outcome (see [Replaying NEMDE dispatch](@ref replay-nemde)).
+- [x] Closed-loop replay, in which each interval starts from the previous solve (`NEMClosedLoopDispatchProblem`).
+- [x] Fast-start inflexibility profiles, dispatched in two runs per interval (see [Fast-start dispatch](@ref nemde-fast-start)).
+- [ ] Carry the fast-start end state from one interval to the next in a closed-loop replay.
 
 ## Mid/Long-term
 

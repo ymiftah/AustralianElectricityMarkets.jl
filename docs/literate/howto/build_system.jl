@@ -1,13 +1,8 @@
 # # [Build a regional system](@id build-regional-system)
 #
-# The [National Electricity Market (NEM)](https://www.aemo.com.au/energy-systems/electricity/national-electricity-market-nem)
-# operates on one of the world's longest interconnected power systems. It covers around
-# 40,000 km of transmission lines and cables, supplying a population exceeding 23 million.
-#
-# The NEM is a wholesale market where electricity is traded across five interconnected regions:
-# Queensland (QLD), New South Wales (NSW), Victoria (VIC), South Australia (SA), and Tasmania (TAS).
-# Each region acts as a separate pricing zone, and prices can diverge when the transmission lines
-# (interconnectors) between them become congested.
+# This page builds a `PowerSystems.jl` `System` of the NEM's five regions from cached NEMWEB
+# data. For the market itself (its regions, dispatch process and prices), see
+# [The National Electricity Market](@ref).
 #
 # ## Simple usage
 #
