@@ -1,0 +1,156 @@
+# 0106. Fast-start units dispatched in two runs, as nempy implements NEMDE
+
+## Status
+
+Accepted. Supersedes [0060](0060-fast-start-fixed-loadings.md) for the inflexibility profile and the commitment of
+fast-start units.
+
+## Context
+
+The nempy benchmark (837 intervals of 2024 H2) puts 93% of the absolute energy price error in the 12% of intervals
+where a fast-start unit is on its inflexibility profile and the replay dispatches it differently from NEMDE. Three
+outliers were checked by fixing those units to AEMO's targets, and the published prices came back to the cent:
+
+| Interval | Units NEMDE held on the profile | Price gap before |
+| --- | --- | --- |
+| 2024-12-09 14:55 | ROMA_7/8, MSTUART3, URANQ14 (mode 1, 0 MW); CG2/3, BRAEMAR3 (mode 2) | QLD -100 |
+| 2024-12-13 07:35 | PUMP2 (mode 0 to 1, 0 MW, the replay dispatched 245 MW) | QLD +68 |
+| 2024-12-15 16:30 | URANQ12/13/14 (mode 0 to 1, 0 MW, the replay dispatched 165 MW) | NSW +65, VIC -55 |
+
+Solver tolerances were ruled out in all three. The gap is the departure [0060](0060-fast-start-fixed-loadings.md)
+records: the profile is not modelled.
+
+AEMO's *Fast Start Inflexibility Profile* (FSIP, June 2021) defines the profile of a unit with offered times `T1`
+to `T4` and minimum loading `M` (`BIDDAYOFFER_D.MINIMUMLOAD`): mode 0 offline, mode 1 synchronising at 0 MW for
+`T1`, mode 2 a linear rise to `M` over `T2`, mode 3 at least `M` for `T3`, mode 4 a linear decline from `M` over
+`T4` as a lower bound (FSIP sections 2 and 3, pp. 5 to 8; section 5, pp. 10 to 11). NEMDE commits a unit from a
+first solve without the profile and prices the dispatch of a second solve with it. The full NEMDE formulation is
+restricted; nempy reproduces NEMDE's published prices with the two-run method below, so nempy is the oracle for
+the rules.
+
+## Decision
+
+### 1. Two runs per interval, no MIP commitment
+
+**Run 1 (commitment run).** The full dispatch without profile rows. A fast-start unit starting the interval in
+mode 0, 1 or 2 has no energy ramp rows, and the regulation joint-ramping exemption applies (*FCAS Model in NEMDE*
+Table 3 footnote, already modelled by `fcas_joint_ramping_exempt`).
+
+**Commitment and end state** (nempy `historical_inputs/units.py::_update_modes`), from run 1's energy target:
+
+- a unit starting in mode 0 with a run-1 target strictly above 0.0 MW enters mode 1 with 0 minutes in mode;
+- the unit then advances through modes 1, 2 and 3 once each, in that order, by the 5 minutes of the interval. It
+  leaves mode `k` when `T_k - time_in_mode < time_left` (strict, so a unit exactly at a segment end stays),
+  carrying `time_left - (T_k - time_in_mode)` into mode `k + 1` with 0 minutes in it;
+- `time_in_end_mode` is the time in the last mode plus the time left; it is 0 in end mode 0 and capped at `T4` in
+  end mode 4. A unit never leaves mode 4 for mode 0;
+- a unit that leaves mode 2 during the interval carries `time_since_end_of_mode_two`, the time left at that
+  transition. It keeps it if it also leaves mode 3.
+
+A zero-length segment is crossed at once, because `0 - 0 < time_left` whenever time is left. A unit therefore
+never ends in mode 2 with `T2 = 0`. The kernel still guards the division in the mode 2 and mode 4 rows: with
+`T2 = 0` the mode 2 target is `M`, and with `T4 = 0` the mode 4 bound is 0 (the decline is over).
+
+**Run 2 (dispatch run).** The same dispatch with profile rows by end mode, elastic at the fast-start CVP, as
+nempy builds them (`spot_market_backend/unit_constraints.py::fast_start_mode_*` and
+`create_fast_start_profile_constraints`):
+
+| End mode | Row |
+| --- | --- |
+| 0 or 1 | target <= 0 |
+| 2 | target = `M x time_in_end_mode / T2` |
+| 3 | target >= `M` |
+| 4 | target >= `M x (1 - time_in_end_mode / T4)` |
+
+nempy's `fast_start_mode_four_constraints` computes a target as both `min` and `max`, but
+`create_fast_start_profile_constraints` builds only the `>=` row from it (its doctest prints one `>=` row for the
+mode 4 unit), which matches FSIP's lower bound. The rule is the built row.
+
+Ramp rows in run 2 (nempy `spot_market_backend/ramp_rate_processing.py`, `_remove_fast_start_units_ending_in_mode_0_1_2`
+and `_adjust_ramp_rates_of_units_ending_in_mode_three_and_four`): none for a unit ending in mode 0, 1 or 2. A unit
+with a `time_since_end_of_mode_two` has the up row `target <= M + rate x time_since_end_of_mode_two` and its usual
+down row; `rate` is the effective ramp-up rate, the lesser of the bid and SCADA rate, per minute (nempy applies the
+SCADA minimum before the fast-start adjustment). Every other unit keeps its usual rows about its initial MW.
+Prices are run 2's duals.
+
+The fast-start CVP factor is 1130: AEMO *Schedule of Constraint Violation Penalty Factors* v8.0, Table 1 item 10.
+nempy reads NEMDE's `FastStartPrice`, 19,775,000 in its 2024-07-10 doctest, which is 1130 times the 17,500
+`VoLL` of the same case file.
+
+### 2. Inputs from the MMS tables
+
+nempy reads the starting mode and time in mode from NEMDE's case files (`CurrentMode`, `CurrentModeTime`). From the
+MMS tables they are the previous interval's `DISPATCHLOAD.DISPATCHMODE` and `min(DISPATCHMODETIME, T_mode)`, with
+time 0 in mode 0. This reproduced `CurrentMode` and `CurrentModeTime` on 21,283 of the 21,287 fast-start rows of
+2024-12-13 (all 74 fast-start units, 288 case files). The others are NEMDE's own pre-processing resets (a unit in
+mode 4 or 1 returned to mode 0), which nempy does not model either.
+
+The fast-start set is the units with a fast-start profile in their energy offer (NEMDE's `FastStart="1"`): an
+energy bid whose `T1` to `T4` has a positive value at the interval. The profile and `M` are read from the bid of
+the interval.
+
+AEM reads `DISPATCHMODETIME` with the unit conditions and holds the previous interval's value in the observed
+state. The derived state (starting mode, capped time in mode) is written per interval by the replay input stage,
+and the kernel (`fast_start_end_state`, `fast_start_envelope`) is a pure function of it, run 1's target and the
+profile. The envelope depends on run 1's solve, so it is not precomputed.
+
+### 3. PowerSimulations mapping
+
+Two `DecisionModel`s per interval in one `SimulationSequence`, with equal horizon and interval so both run at the
+same timestamp in order `[1, 2]`. Run 1 uses the replay template with the fast-start units' starting-mode ramp
+exemption and writes its `ActivePowerVariable` to the simulation state. Run 2 reads it through a
+`FixValueFeedforward` into a commitment-target parameter. Run 2's parameter update turns that target and the unit's
+starting state into the envelope by calling AEM's kernel, so no rule is implemented twice and the System is only
+read, as the closed-loop update does ([0102](0102-closed-loop-replay.md)). Results, gates and checks read run 2.
+PSI's thermal unit-commitment formulations and `SemiContinuousFeedforward` are not used.
+
+### 4. Closed loop
+
+A closed-loop replay keeps AEMO's observed starting mode and time in mode, as [0102](0102-closed-loop-replay.md)
+does for the mode. The next interval's starting state is the previous interval's end state, so
+`fast_start_end_state` of run 2's target is the value a closed loop would carry; carrying it is follow-up work.
+
+### 5. Fixed loadings
+
+`read_fixed_loads` flags `IN_PROFILE` from `DISPATCHMODE` at the interval, while the fixed-loading series
+`nem_system` writes drop a loading from the starting mode (the previous interval's mode). The flag feeds only
+`_set_nem_fixed_loads!`, which is dead in production ([0096](0096-per-step-state-updates.md)), so the two do not
+meet in a replay. The starting mode is the pre-solve input, which is what NEMDE has before its first run. With the
+profile in run 2 at CVP 1130 above the fixed loading's 380 (Energy Inflexible Offer, Table 1 item 13), the
+profile governs a unit on it, and dropping the fixed loading in modes 1 and 2 can be revisited when run 2 lands.
+
+## Known departures from NEMDE, kept from nempy
+
+- **Pre-processing resets.** NEMDE returns some units in mode 4 or 1 to mode 0 before its first run (5 of the
+  21,287 rows of 2024-12-13). nempy does not model them and neither does the replay.
+- **Ramp base of a unit leaving the profile.** BRAEMAR2 at 2024-12-09 14:55 started in mode 3 and was dispatched
+  at 143 MW, its previous target 88 MW plus its 55 MW ramp, with a metered 67.5 MW. NEMDE appears to ramp such a
+  unit from its previous target; nempy ramps from the initial MW, and so does the replay.
+- **Commitment threshold.** A unit is committed on any run-1 target above 0.0 MW, as nempy does. An earlier draft
+  used 0.005 MW; nempy has no threshold.
+
+## Consequences
+
+- Two builds and solves per interval, roughly twice the runtime.
+- `NEMObservedState` gains `dispatch_mode_time` and `NEMUnitState` gains `time_in_mode`; both default to 0, so
+  existing constructors keep working.
+- The profile part of [0060](0060-fast-start-fixed-loadings.md) is superseded. Its fixed-loading rule stands until
+  run 2 lands.
+
+## Sources
+
+- nempy: `historical_inputs/units.py` (`UnitData._update_modes`, `get_fast_start_profiles_for_dispatch`),
+  `spot_market_backend/unit_constraints.py` (`fast_start_mode_one_constraints` to
+  `fast_start_mode_four_constraints`, `create_fast_start_profile_constraints`),
+  `spot_market_backend/ramp_rate_processing.py` (`_adjust_ramp_rates_for_fast_start_profiles` and its helpers),
+  `markets.py` (`SpotMarket.set_fast_start_constraints` doctest, `set_unit_ramp_rate_constraints`),
+  `benchmarking/bidirectional_units.py` (the two-run sequence), `historical_inputs/xml_cache.py`
+  (`get_unit_fast_start_parameters`, `get_constraint_violation_prices`).
+- AEMO, [Fast Start Inflexibility Profile, June 2021](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/dispatch/policy_and_process/fast-start-unit-inflexibility-profile.pdf),
+  sections 2 and 3 (pp. 5 to 8) and section 5 (pp. 10 to 11).
+- AEMO, [Schedule of Constraint Violation Penalty Factors v8.0](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/congestion-information/2025/schedule-of-constraint-violation-penalty-factors.pdf),
+  Table 1 items 3 (unit ramp rate, 1155), 10 (fast-start profile, 1130) and 13 (energy inflexible offer, 380).
+- AEMO, [FCAS Model in NEMDE v3.0](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/dispatch/policy_and_process/fcas-model-in-nemde.pdf),
+  section 6.5 Table 3 footnote (joint ramping exemption of fast-start units in modes 0 to 2).
+- AEMO, Electricity Data Model v5.7.0: `DISPATCHLOAD.DISPATCHMODE` and `DISPATCHMODETIME`, `BIDDAYOFFER_D.T1` to
+  `T4` and `MINIMUMLOAD`.

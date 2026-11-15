@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted.
+Accepted. Superseded by [0106](0106-fast-start-two-run-dispatch.md) for the inflexibility profile and the
+commitment of fast-start units; the fixed-loading rule stands until the profile is modelled.
 
 ## Context
 
