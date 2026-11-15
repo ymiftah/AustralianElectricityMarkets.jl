@@ -34,7 +34,7 @@ The report includes:
 
 | File | Contents |
 | --- | --- |
-| `report.md` | Runtime breakdown, timing percentiles, NEMDE errors, error distributions by category, regional prices, unit outliers and failures |
+| `report.md` | Runtime breakdown, timing percentiles, NEMDE errors, energy price tail, error distributions by category, regional prices, unit outliers and failures |
 | `statistics.json` | Full report, provenance, status, warnings and coverage |
 | `runtime.csv` | Per-day totals, updates, MIP, pricing, auxiliary work, writes, state and residual time |
 | `timing_percentiles.csv` | Call counts, totals, min/mean, p5/p25/p50/p75/p90/p95/p99/max by phase and update cohort |
@@ -43,9 +43,16 @@ The report includes:
 | `entity_errors.csv` | The same distributions by DUID, region, FCAS region/service and interconnector, with paired-interval coverage |
 | `worst_errors.csv` | Largest comparison errors and their interval/entity/published/solved values |
 | `over_constrained_intervals.csv` | Price-triggered intervals with a generic-constraint violation, excluded from the pooled errors in `report.md` and `statistics.json` |
+| `price_duration.csv` | Interval prices of the pooled days ranked by published price, highest first: `position`, `interval`, `published`, `solved` |
 | `slowest_intervals.csv` | Slowest update, MIP, pricing and write calls per day |
 | `native_timers.csv` | Native timer snapshots with their hierarchy and call counts; nested totals overlap |
 | `phase_boundaries.csv` | Loading, build, execution, comparison and export boundaries with observed phase spans |
+
+The energy price tail section of `report.md` (and `price_tail` in `statistics.json`) covers the pooled
+days. It gives the signed ROP error (solved minus published: mean, median, p5, p95), the same summary for the
+interval price, and the error distribution and count of the regional ROP rows by published price band (above
+\$300/MWh, \$0 to \$300/MWh, below \$0/MWh). Regional demand is not in the comparison files, so the interval
+price is the unweighted mean of the regional ROPs paired in the interval, not a demand-weighted price.
 
 Energy comparisons use **ROP against ROP**, not RRP. Percentiles use linear
 interpolation; unqualified error percentiles describe absolute errors. Signed

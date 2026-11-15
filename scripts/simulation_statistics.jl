@@ -22,16 +22,21 @@ module SimulationStatistics
         "interconnector_flow_mw" => ("interconnectors", "MWFLOW", ("INTERCONNECTORID",), "MW"),
         "interconnector_losses_mw" => ("interconnectors", "MWLOSSES", ("INTERCONNECTORID",), "MW"),
     ]
+    # (Small constant tables are lookups rather than `Dict`s: each Dict type costs compile time in a fresh process.)
+    metric_spec(metric) = last(METRICS[findfirst(p -> first(p) == metric, METRICS)])
     const PERCENTILES = (5, 25, 50, 75, 90, 95, 99)
+    # Published ROP above \$300/MWh, from \$0 to \$300/MWh, below \$0/MWh.
+    const PRICE_BANDS = ("above_300", "0_to_300", "below_0")
     # Mirrors MARKET_PRICE_CAP_BY_FINANCIAL_YEAR in src/system/penalties.jl, keyed by financial-year start.
-    const MARKET_PRICE_CAP_BY_FINANCIAL_YEAR = Dict(
+    const MARKET_PRICE_CAP_BY_FINANCIAL_YEAR = [
         Date(2024, 7, 1) => 17_500.0, Date(2025, 7, 1) => 20_300.0, Date(2026, 7, 1) => 23_200.0,
-    )
+    ]
     const MARKET_FLOOR_PRICE = -1000.0
     const VIOLATION_FAMILY = "generic_constraint"
     const NOTES = [
         "Errors are solved minus published; unqualified error percentiles are absolute errors.",
         "Energy prices compare ROP with ROP, not RRP. Market timestamps use fixed AEST UTC+10.",
+        "Energy price tail: interval prices are unweighted regional means, not demand-weighted, because regional demand is not in the comparison files.",
         "Percentiles use linear interpolation between adjacent ordered observations.",
         "Accuracy summaries use completed days only. Partial and failed timing prefixes remain visible.",
         "Duplicate comparison keys are excluded entirely; missing values are never filled with zero.",
@@ -48,7 +53,6 @@ module SimulationStatistics
     # whose span also covers the result write, the native state update and the warm start.
     const SOLVER_PHASES = ("solve_impl", "solve_and_write")
     const WRITE_PHASES = ("result_write", "solve_and_write")
-    const MEASURED_PHASES = Dict(1 => ("parameter_update", "solve_impl", "result_write"), 2 => ("parameter_update", "solve_and_write"))
 
     # A CSV record or report row: column names in order, values of any type.
     const Row = Vector{Pair{String, Any}}
@@ -65,18 +69,18 @@ module SimulationStatistics
     # Splits CSV text into records of fields, honouring quoted fields; throws ArgumentError on a malformed quote.
     function _csv_records(text::AbstractString)
         records, record, buf = Vector{Vector{String}}(), String[], IOBuffer()
-        quoted, after_quote, i, chars = false, false, 1, collect(text)
+        quoted, after_quote, i, chars = false, false, 1, codeunits(text)
         while i <= length(chars)
-            c = chars[i]
+            c = Char(chars[i])
             if quoted
                 if c == '"'
-                    if i < length(chars) && chars[i + 1] == '"'
+                    if i < length(chars) && chars[i + 1] == UInt8('"')
                         write(buf, '"'); i += 1
                     else
                         quoted, after_quote = false, true
                     end
                 else
-                    write(buf, c)
+                    write(buf, chars[i])
                 end
             elseif c == '"'
                 position(buf) == 0 && !after_quote || throw(ArgumentError("unexpected quote in field"))
@@ -84,13 +88,13 @@ module SimulationStatistics
             elseif c == ','
                 push!(record, String(take!(buf))); after_quote = false
             elseif c == '\n' || c == '\r'
-                c == '\r' && i < length(chars) && chars[i + 1] == '\n' && (i += 1)
+                c == '\r' && i < length(chars) && chars[i + 1] == UInt8('\n') && (i += 1)
                 push!(record, String(take!(buf))); after_quote = false
                 (length(record) == 1 && isempty(record[1])) || push!(records, record)
                 record = String[]
             else
                 after_quote && throw(ArgumentError("text after a closing quote"))
-                write(buf, c)
+                write(buf, chars[i])
             end
             i += 1
         end
@@ -202,8 +206,10 @@ module SimulationStatistics
     expected_times(day) = Set(string(DateTime(Date(day)) + Hour(4) + Minute(5) * (k + 1)) for k in 0:287)
 
     # The ISO AEST string of a timestamp, converting an offset or `Z` to UTC+10, or `nothing` when unparseable.
-    function normalize_timestamp(value)
-        value isa AbstractString || return nothing
+    const NORMALIZED = Dict{String, Union{Nothing, String}}()
+    normalize_timestamp(value) = value isa AbstractString ? get!(() -> _normalize_timestamp(value), NORMALIZED, String(value)) : nothing
+
+    function _normalize_timestamp(value)
         text = replace(strip(value), ' ' => 'T')
         m = match(r"^(.*?)(Z|[+-]\d{2}:\d{2})$", text)
         try
@@ -217,17 +223,18 @@ module SimulationStatistics
     end
 
     """
-        compare_day(folder, metric, warnings; flagged = Set{String}()) -> (summary, errors, kept, by_entity)
+        compare_day(folder, metric, warnings; flagged = Set{String}(), rows) -> (summary, errors, kept, by_entity, pairs)
 
     Compares one day's solved and published values of `metric`: duplicate keys and rows outside the trading
     day are counted and excluded, missing values are never filled. `kept` leaves out the intervals in
-    `flagged`, and `by_entity` maps each entity to its errors.
+    `flagged`, `by_entity` maps each entity to its errors, and `pairs` lists the paired
+    `(interval, published, solved)` of the energy price metric. `rows` are the comparison rows when already read.
 
     # Returns
-    The summary `Dict`, the errors, the kept errors and the per-entity errors.
+    The summary `Dict`, the errors, the kept errors, the per-entity errors and the energy price pairs.
     """
-    function compare_day(folder, metric, warnings; flagged = Set{String}())
-        table, fieldname, dimensions, unit = Dict(METRICS)[metric]
+    function compare_day(folder, metric, warnings; flagged = Set{String}(), rows = read_csv(joinpath(folder, "comparison_$(metric_spec(metric)[1]).csv"), warnings))
+        table, fieldname, dimensions, unit = metric_spec(metric)
         path = joinpath(folder, "comparison_$table.csv")
         valid = expected_times(basename(folder))
         unique = Dict{Tuple{String, String}, Tuple{Any, Any}}()
@@ -238,7 +245,8 @@ module SimulationStatistics
         metric == "energy_price" && foreach(group!, REGIONS)
         metric == "fcas_price" && foreach(r -> foreach(s -> group!("$r|$s"), SERVICES), REGIONS)
         counts = Dict(k => 0 for k in ("rows", "out_of_day_rows", "invalid_entity_rows", "missing_or_nonfinite", "missing_nonzero_published"))
-        for row in read_csv(path, warnings)
+        published_key, solved_key = fieldname * "_published", fieldname * "_solved"
+        for row in rows
             counts["rows"] += 1
             timestamp = normalize_timestamp(field(row, "SETTLEMENTDATE"))
             if isnothing(timestamp) || !(timestamp in valid)
@@ -253,11 +261,12 @@ module SimulationStatistics
             if haskey(unique, key)
                 push!(duplicates, key)
             else
-                unique[key] = (number(field(row, fieldname * "_published")), number(field(row, fieldname * "_solved")))
+                unique[key] = (number(field(row, published_key)), number(field(row, solved_key)))
                 push!(order, key)
             end
         end
-        errors, kept, outliers = Float64[], Float64[], Tuple[]
+        errors, kept, pairs = Float64[], Float64[], Tuple{String, Float64, Float64}[]
+        worst = Tuple{Float64, String, String, Float64, Float64, Float64}[]
         for key in order
             timestamp, name = key
             published, solved = unique[key]
@@ -275,9 +284,14 @@ module SimulationStatistics
             timestamp in flagged || push!(kept, e)
             push!(item[:errors], e)
             push!(item[:times], timestamp)
-            push!(outliers, (abs(e), timestamp, name, published, solved, e))
+            metric == "energy_price" && push!(pairs, (timestamp, published, solved))
+            # Running top ten by (|error|, interval, entity).
+            if length(worst) < 10 || abs(e) >= first(last(worst))
+                candidate = (abs(e), timestamp, name, published, solved, e)
+                insert!(worst, searchsortedfirst(worst, candidate; rev = true), candidate)
+                length(worst) > 10 && pop!(worst)
+            end
         end
-        worst = first(sort(outliers; rev = true), 10)
         summary = Dict{String, Any}(
             counts..., "duplicate_keys" => length(duplicates), "file_present" => isfile(path), "unit" => unit,
             "errors" => error_distribution(errors),
@@ -294,7 +308,7 @@ module SimulationStatistics
             ],
         )
         by_entity = Dict(name => item[:errors] for (name, item) in groups)
-        return summary, errors, kept, by_entity
+        return summary, errors, kept, by_entity, pairs
     end
 
     financial_year_start(t::DateTime) = Date(month(t) >= 7 ? year(t) : year(t) - 1, 7, 1)
@@ -306,16 +320,16 @@ module SimulationStatistics
     above the Market Price Cap or at or below the floor, or an FCAS ROP at or above the cap, with the set of
     those interval timestamps.
     """
-    function over_constrained_intervals(folder, warnings)
+    function over_constrained_intervals(folder, warnings; read = f -> read_csv(joinpath(folder, f), warnings))
         violated = Dict{String, Set{String}}()
         isfile(joinpath(folder, "constraint_violations.csv")) || push!(warnings, "Missing constraint violations; no intervals flagged: $folder")
-        for row in read_csv(joinpath(folder, "constraint_violations.csv"), warnings)
+        for row in read("constraint_violations.csv")
             timestamp = normalize_timestamp(field(row, "DateTime"))
             field(row, "family") == VIOLATION_FAMILY && !isnothing(timestamp) && push!(get!(Set{String}, violated, timestamp), something(field(row, "name"), ""))
         end
         rows, flagged, missing_years = Row[], Set{String}(), Set{Date}()
         for (table, fcas) in (("comparison_prices.csv", false), ("comparison_fcas_prices.csv", true))
-            for row in read_csv(joinpath(folder, table), warnings)
+            for row in read(table)
                 timestamp = normalize_timestamp(field(row, "SETTLEMENTDATE"))
                 solved = number(field(row, "ROP_solved"))
                 (isnothing(timestamp) || !haskey(violated, timestamp) || isnothing(solved)) && continue
@@ -323,7 +337,7 @@ module SimulationStatistics
                     "energy_low"
                 else
                     start = financial_year_start(DateTime(timestamp))
-                    cap = get(MARKET_PRICE_CAP_BY_FINANCIAL_YEAR, start, nothing)
+                    cap = (i = findfirst(p -> first(p) == start, MARKET_PRICE_CAP_BY_FINANCIAL_YEAR); isnothing(i) ? nothing : last(MARKET_PRICE_CAP_BY_FINANCIAL_YEAR[i]))
                     if isnothing(cap)
                         push!(missing_years, start)
                         continue
@@ -475,7 +489,7 @@ module SimulationStatistics
         schema = single_timing_schema(schemas, folder)
         native, state = native_snapshots(folder, warnings)
         execute = number(field(totals, "execute_s"))
-        measured = sum((v for p in get(MEASURED_PHASES, schema, ()) for v in get(series, p, []) if !isnothing(v)); init = 0.0)
+        measured = sum((v for p in (schema == 1 ? ("parameter_update", "solve_impl", "result_write") : schema == 2 ? ("parameter_update", "solve_and_write") : ()) for v in get(series, p, []) if !isnothing(v)); init = 0.0)
         # The native state update sits inside schema 2's solve_and_write span, so it is not subtracted again.
         unattributed = isnothing(execute) || isnothing(schema) ? nothing : execute - measured - (schema == 1 ? something(state, 0.0) : 0.0)
         result = Dict{String, Any}(
@@ -532,6 +546,41 @@ module SimulationStatistics
         return Pair{String, String}[]
     end
 
+    function signed_summary(v)
+        isempty(v) && return Dict{String, Any}("n" => 0)
+        ordered = sort(v)
+        return Dict{String, Any}(
+            "n" => length(v), "mean" => sum(v) / length(v), "median" => quantile_sorted(ordered, 0.5),
+            "p5" => quantile_sorted(ordered, 0.05), "p95" => quantile_sorted(ordered, 0.95),
+        )
+    end
+
+    # The energy price tail of paired (interval, published, solved) ROPs: signed errors, errors by published-price
+    # band and the interval prices (unweighted regional means) ranked by published price.
+    function price_tail(pairs)
+        sums = Dict{String, Vector{Float64}}()
+        for (t, p, s) in pairs
+            acc = get!(() -> zeros(3), sums, t)
+            acc[1] += p
+            acc[2] += s
+            acc[3] += 1
+        end
+        duration = sort!([(t, a[1] / a[3], a[2] / a[3]) for (t, a) in sums]; by = d -> (-d[2], d[1]))
+        band(p) = p > 300 ? 1 : p >= 0 ? 2 : 3
+        bands = Dict{String, Any}()
+        for (i, name) in enumerate(PRICE_BANDS)
+            errors = Float64[s - p for (_, p, s) in pairs if band(p) == i]
+            bands[name] = error_distribution(errors)
+            bands[name]["share_pct"] = 100 * length(errors) / max(length(pairs), 1)
+        end
+        tail = Dict{String, Any}(
+            "weighting" => "unweighted mean of the regional ROPs paired in each interval; regional demand is not in the comparison files",
+            "regional_signed" => signed_summary(Float64[s - p for (_, p, s) in pairs]),
+            "interval_signed" => signed_summary(Float64[s - p for (_, p, s) in duration]), "bands" => bands,
+        )
+        return tail, duration
+    end
+
     """
         analyze(runs; cache_windows = 24, hive = nothing) -> Dict{String, Any}
 
@@ -556,6 +605,7 @@ module SimulationStatistics
         pools, kept_pools = Dict{String, Vector{Float64}}(), Dict{String, Vector{Float64}}()
         categories = Dict{String, Dict{String, Dict{String, Vector{Float64}}}}()
         flagged_rows, selected, signature = Row[], Set{String}(), nothing
+        tail_pairs = Tuple{String, Float64, Float64}[]
         for root in unique(realpath.(abspath.(runs)))
             isdir(root) || throw(ArgumentError("Run directory does not exist: $root"))
             totals = Dict(field(r, "trading_day") => r for r in read_csv(joinpath(root, "days.csv"), warnings) if field(r, "status") == "completed")
@@ -607,14 +657,18 @@ module SimulationStatistics
                         push!(selected, day)
                         item["pooled"] = true
                     end
-                    day_flags, flagged = over_constrained_intervals(folder, warnings)
+                    cache = Dict{String, Vector{Row}}()
+                    read = f -> get!(() -> read_csv(joinpath(folder, f), warnings), cache, f)
+                    day_flags, flagged = over_constrained_intervals(folder, warnings; read)
                     append!(flagged_rows, [Row(["run" => root; r]) for r in day_flags])
                     units = eligible && !isnothing(hive) ? unit_categories(hive, day) : nothing
                     for (metric, _) in METRICS
-                        comparison, errors, kept, by_entity = compare_day(folder, metric, warnings; flagged)
+                        table = metric_spec(metric)[1]
+                        comparison, errors, kept, by_entity, pairs = compare_day(folder, metric, warnings; flagged, rows = read("comparison_$table.csv"))
                         item["comparisons"][metric] = comparison
                         comparison["file_present"] || push!(warnings, "Missing completed comparison: $folder: $metric")
                         eligible || continue
+                        append!(tail_pairs, pairs)
                         append!(get!(() -> Float64[], pools, metric), errors)
                         append!(get!(() -> Float64[], kept_pools, metric), kept)
                         kinds = get!(() -> Dict{String, Dict{String, Vector{Float64}}}(), categories, metric)
@@ -625,7 +679,7 @@ module SimulationStatistics
                     if eligible
                         # Energy prices by four-hour block of the interval start.
                         blocks = get!(() -> Dict{String, Vector{Float64}}(), get!(() -> Dict{String, Dict{String, Vector{Float64}}}(), categories, "energy_price"), "time of day")
-                        for row in read_csv(joinpath(folder, "comparison_prices.csv"), warnings)
+                        for row in read("comparison_prices.csv")
                             p, s, t = number(field(row, "ROP_published")), number(field(row, "ROP_solved")), normalize_timestamp(field(row, "SETTLEMENTDATE"))
                             (isnothing(p) || isnothing(s) || isnothing(t)) && continue
                             push!(get!(() -> Float64[], blocks, _block(t)), s - p)
@@ -641,6 +695,8 @@ module SimulationStatistics
         result["pooled_excluding_over_constrained"] = Dict{String, Any}(m => error_distribution(v) for (m, v) in kept_pools)
         result["categories"] = Dict{String, Any}(m => Dict{String, Any}(k => Dict{String, Any}(l => error_distribution(v) for (l, v) in labels) for (k, labels) in kinds) for (m, kinds) in categories)
         result["over_constrained_intervals"] = flagged_rows
+        result["price_tail"], duration = price_tail(tail_pairs)
+        result["price_duration"] = [Row(["position" => i, "interval" => t, "published" => p, "solved" => s]) for (i, (t, p, s)) in enumerate(duration)]
         result["unique_completed_days"] = length(Set(d["day"] for d in result["days"] if d["status"] == "completed"))
         result["pooled_completed_days"] = length(selected)
         result["unique_written_intervals"] = length(
@@ -656,7 +712,13 @@ module SimulationStatistics
 
     _json_string(s) = "\"" * replace(s, "\\" => "\\\\", "\"" => "\\\"", "\n" => "\\n", "\r" => "\\r", "\t" => "\\t") * "\""
 
-    function _json(io, x, indent, level)
+    # The key/value pairs of a JSON object, dictionaries sorted by key; one compiled method for all dictionary types.
+    function _json_items(@nospecialize(x))
+        x isa Row && return x
+        return sort!(Pair{String, Any}[string(k) => v for (k, v) in x]; by = first)
+    end
+
+    function _json(io, @nospecialize(x), indent, level)
         pad(l) = indent > 0 ? "\n" * " "^(indent * l) : ""
         sep = indent > 0 ? ": " : ":"
         if isnothing(x) || (x isa AbstractFloat && !isfinite(x))
@@ -668,7 +730,7 @@ module SimulationStatistics
         elseif x isa AbstractString || x isa Symbol || x isa Date || x isa DateTime
             print(io, _json_string(string(x)))
         elseif x isa AbstractDict || x isa Row
-            items = x isa Row ? x : sort!(collect(pairs(x)); by = p -> string(first(p)))
+            items = _json_items(x)
             isempty(items) && return print(io, "{}")
             print(io, "{")
             for (i, (k, v)) in enumerate(items)
@@ -782,11 +844,16 @@ module SimulationStatistics
                 "runtime.csv" => runtime, "errors.csv" => errors, "entity_errors.csv" => groups, "category_errors.csv" => category_rows,
                 "timing_percentiles.csv" => timings, "worst_errors.csv" => worst, "native_timers.csv" => native,
                 "phase_boundaries.csv" => boundaries, "slowest_intervals.csv" => slow, "over_constrained_intervals.csv" => result["over_constrained_intervals"],
+                "price_duration.csv" => result["price_duration"],
             )
             write_csv(joinpath(output, name), rows)
         end
-        write(joinpath(output, "statistics.json"), to_json(result) * "\n")
+        write(joinpath(output, "statistics.json"), to_json(filter(p -> first(p) != "price_duration", result)) * "\n")
         stat(d, keys_) = [_get(d, k) for k in keys_]
+        tail, duration = result["price_tail"], result["price_duration"]
+        # The ten highest intervals and the top 1, 5, 10, 25 and 50 percent marks.
+        extract = sort!(unique([1:min(10, length(duration)); [clamp(ceil(Int, length(duration) * q), 1, length(duration)) for q in (0.01, 0.05, 0.1, 0.25, 0.5)]]))
+        isempty(duration) && empty!(extract)
         lines = String[
             "# Simulation statistics", "", "Snapshot: $(result["generated_utc"])", "",
             "Completed unique trading days: $(result["unique_completed_days"]); unique written interval identities: $(result["unique_written_intervals"]).", "",
@@ -818,6 +885,19 @@ module SimulationStatistics
                 ["Metric", "n", "MAE", "Bias", "p5", "p95", "p99", "Max"],
                 [[m; stat(result["pooled_excluding_over_constrained"][m], ("n", "mae", "bias", "p5", "p95", "p99", "max"))] for (m, _) in METRICS if haskey(result["pooled_excluding_over_constrained"], m)],
             ),
+            "", "## Energy price tail", "",
+            "Pooled days; signed errors are solved minus published ROP in \$/MWh, comparable with nempy. Interval prices are the $(tail["weighting"]).", "",
+            markdown_table(
+                ["Series", "n", "Mean", "Median", "p5", "p95"],
+                [[l; stat(tail[k], ("n", "mean", "median", "p5", "p95"))] for (l, k) in (("Regional ROP error", "regional_signed"), ("Interval price error", "interval_signed"))],
+            ),
+            "", "### Regional ROP error by published price band", "",
+            markdown_table(
+                ["Published ROP", "n", "Share %", "MAE", "RMSE", "Bias", "Signed p5", "Signed p95", "p99", "Max"],
+                [[b; stat(tail["bands"][b], ("n", "share_pct", "mae", "rmse", "bias", "signed_p5", "signed_p95", "p99", "max"))] for b in PRICE_BANDS],
+            ),
+            "", "### Price-duration extract", "", "Ranked by published price, highest first; the full table is price_duration.csv.", "",
+            markdown_table(["Position", "Interval", "Published", "Solved"], [stat(duration[i], ("position", "interval", "published", "solved")) for i in extract]),
             "", "## Error distributions by category", "",
             "Pooled days. Absolute errors except bias and the signed percentiles; within 1 is the share of cells within 1 unit.", "",
         ]
@@ -869,7 +949,7 @@ module SimulationStatistics
             lines, "",
             "See timing_percentiles.csv for per-day phase/cohort distributions, entity_errors.csv for unit/region/service/link " *
                 "coverage and percentiles, category_errors.csv for the category distributions, worst_errors.csv for outliers, " *
-                "native_timers.csv for unaggregated nested snapshots, slowest_intervals.csv for timing outliers, " *
+                "price_duration.csv for the ranked interval prices, native_timers.csv for unaggregated nested snapshots, slowest_intervals.csv for timing outliers, " *
                 "and phase_boundaries.csv for loading/preflight/build/execute/compare/export boundaries and observed spans. " *
                 "Boundary spans include framework overhead and must not be added to their internal timers.", "",
         )

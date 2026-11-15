@@ -276,6 +276,49 @@ end
         end
     end
 
+    @testset "energy price tail: signed summary, price bands and price duration" begin
+        mktempdir() do root
+            run, day = ss_day(root)
+            # Errors are solved minus published; the last QLD1 row has no published value and is not paired.
+            ss_energy(
+                day, [
+                    ["2026-04-07T04:05:00", "NSW1", 400, 410], ["2026-04-07T04:05:00", "QLD1", 600, 590],
+                    ["2026-04-07T04:10:00", "NSW1", 50, 52], ["2026-04-07T04:10:00", "QLD1", 150, 150],
+                    ["2026-04-07T04:15:00", "NSW1", -20, -25], ["2026-04-07T04:15:00", "QLD1", 0, 1],
+                    ["2026-04-07T04:20:00", "NSW1", 300, 299], ["2026-04-07T04:20:00", "QLD1", "", 5],
+                ],
+            )
+            result = SS.analyze([run])
+            tail = result["price_tail"]
+            # Signed errors 10, -10, 2, 0, -5, 1, -1.
+            signed = tail["regional_signed"]
+            @test signed["n"] == 7
+            @test signed["mean"] ≈ -3 / 7
+            @test signed["median"] == 0
+            @test signed["p5"] ≈ -8.5
+            @test signed["p95"] ≈ 7.6
+            bands = tail["bands"]
+            @test bands["above_300"]["n"] == 2 && bands["above_300"]["mae"] == 10
+            @test bands["0_to_300"]["n"] == 4 && bands["below_0"]["n"] == 1
+            @test bands["below_0"]["bias"] == -5
+            @test bands["above_300"]["share_pct"] ≈ 100 * 2 / 7
+            # Interval prices are unweighted regional means, ranked by published price.
+            duration = result["price_duration"]
+            @test [SS.field(r, "published") for r in duration] == [500, 300, 100, -10]
+            @test SS.field(duration[1], "interval") == "2026-04-07T04:05:00" && SS.field(duration[1], "position") == 1
+            @test SS.field(duration[end], "solved") == -12
+            @test tail["interval_signed"]["n"] == 4
+            output = joinpath(root, "report")
+            SS.save_report(result, output)
+            lines = readlines(joinpath(output, "price_duration.csv"))
+            @test lines[1] == "position,interval,published,solved"
+            @test startswith(lines[2], "1,2026-04-07T04:05:00,500.0,500.0") && length(lines) == 5
+            @test occursin("## Energy price tail", read(joinpath(output, "report.md"), String))
+            json = read(joinpath(output, "statistics.json"), String)
+            @test occursin("\"price_tail\"", json) && !occursin("\"price_duration\"", json)
+        end
+    end
+
     @testset "the command line writes the report and refuses a source run as output" begin
         mktempdir() do root
             run, day = ss_day(root)
