@@ -75,7 +75,10 @@ function _check_nemde_constraint_report(sys)
                 "repopulate GENCONDATA with populate(...; force_new = true)",
         ),
     )
-    skipped = get_skipped_constraints(sys)
+    # A vacuous constraint (zero left-hand side, satisfiable) cannot bind; every other skip is an error.
+    all_skipped = get_skipped_constraints(sys)
+    skipped = filter(:reason => !=(:vacuous_unknown_duid), all_skipped)
+    vacuous = Set(all_skipped.constraint[all_skipped.reason .== :vacuous_unknown_duid])
     isempty(skipped.constraint) || throw(
         ArgumentError(
             "nem_system: $(nrow(skipped)) invoked GENCONID version(s) could not be built: " *
@@ -84,7 +87,7 @@ function _check_nemde_constraint_report(sys)
                 "or build with every unit, region and interconnector the constraints name",
         ),
     )
-    dropped = get_dropped_terms(sys)
+    dropped = filter(:constraint => c -> c ∉ vacuous, get_dropped_terms(sys))
     isempty(dropped.constraint) || throw(
         ArgumentError(
             "nem_system: $(nrow(dropped)) unit term(s) were dropped from built constraints: " *

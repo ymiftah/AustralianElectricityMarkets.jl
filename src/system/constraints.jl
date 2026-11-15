@@ -172,6 +172,19 @@ function _pad_to_grid(values_by_time::Dict, grid::Vector{DateTime}, initial_fill
 end
 
 
+# Absolute tolerance (MW) on `0 == RHS` for an equality constraint with an empty left-hand side.
+const _VACUOUS_EQ_TOLERANCE = 1.0e-6
+
+# Whether `0 sense rhs` holds at every invoked interval; a missing RHS never qualifies.
+function _is_vacuous(constraint_type, rhs)
+    any(ismissing, rhs) && return false
+    return all(rhs) do r
+        constraint_type == "<=" ? r >= 0 :
+            constraint_type == ">=" ? r <= 0 : abs(r) <= _VACUOUS_EQ_TOLERANCE
+    end
+end
+
+
 # One JSON-serializable row of `get_skipped_constraints`.
 function _skipped_row(name::String, reason::Symbol, missing_keys::Vector{String})
     return Dict{String, Any}(
@@ -237,9 +250,9 @@ named `GENCONID@EFFECTIVEDATE#VERSIONNO` and attached via `add_service!` to its 
 
 # Returns
 `(added, skipped)`: `added::Vector{String}` of component names, `skipped::Dict{String, Symbol}`
-mapping a skipped name to `:no_definition`, `:no_terms`, `:unknown_duid`, `:unknown_region`, or
-`:unknown_interconnector` (the kind of the first unresolved term). Dropped unit terms are read back
-with [`get_dropped_terms`](@ref).
+mapping a skipped name to `:no_definition`, `:no_terms`, `:unknown_duid`, `:vacuous_unknown_duid`,
+`:unknown_region`, or `:unknown_interconnector` (the kind of the first unresolved term). Dropped unit
+terms are read back with [`get_dropped_terms`](@ref).
 
 A unit's participant fixed loading (`\$<DUID>`) is not a generic constraint: its `DISPATCHCONSTRAINT`
 row is neither added nor reported as skipped at intervals with a fixed-loading row for an available
@@ -254,6 +267,9 @@ the constraints given the default weight 1.0 for a NULL `GENERICCONSTRAINTWEIGHT
 A unit term whose DUID is absent from `sys` is dropped, as nempy does for a unit that is not in the
 dispatch, and recorded in the build report ([`get_dropped_terms`](@ref)).
 An unresolved region or interconnector term, or a constraint with no resolvable term, skips the constraint.
+A constraint whose every term is a dropped unit term has a zero left-hand side; when `0 sense RHS` holds
+at every invoked interval it cannot bind and is skipped as `:vacuous_unknown_duid` (its dropped terms are
+still recorded), otherwise it is skipped as `:unknown_duid`.
 
 Throws `ArgumentError` when a `RegionTerm` resolves to a region with no Generator/Storage in `sys`;
 the throw leaves `sys` unmodified.
@@ -316,6 +332,7 @@ function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; interven
     skipped = Dict{String, Symbol}()
     skipped_detail = Dict{String, Any}[]
     dropped = Dict{String, Vector{Dict{String, Any}}}()
+    vacuous_dropped = Dict{String, Vector{Dict{String, Any}}}()
     missing_weight = String[]
     empty_region_terms = @NamedTuple{constraint_name::String, region::String, bid_type::BidType}[]
     staged = @NamedTuple{
@@ -404,6 +421,14 @@ function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; interven
             end
         end
         # Under :drop only unit terms are dropped, and a constraint left with no term is skipped.
+        # One whose terms were all dropped has a zero left-hand side: skipped as vacuous if satisfiable.
+        if !unskippable && skip_reason == :unknown_duid && isempty(resolved_terms) &&
+                _is_vacuous(def.CONSTRAINTTYPE, invoked_by_version[version_key].RHS)
+            skipped[versioned_name] = :vacuous_unknown_duid
+            push!(skipped_detail, _skipped_row(versioned_name, :vacuous_unknown_duid, unique(missing_keys)))
+            vacuous_dropped[versioned_name] = dropped_terms
+            continue
+        end
         if unskippable || (!isnothing(skip_reason) && isempty(resolved_terms))
             skipped[versioned_name] = skip_reason
             push!(skipped_detail, _skipped_row(versioned_name, skip_reason, unique(missing_keys)))
@@ -489,7 +514,7 @@ function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; interven
             missing_constraint_intervals = missing_intervals,
             defaulted_constraint_weights = missing_weight,
             dropped_terms = Dict{String, Any}[
-                merge(term, Dict{String, Any}("constraint" => name)) for (name, terms) in sort!(collect(dropped); by = first)
+                merge(term, Dict{String, Any}("constraint" => name)) for (name, terms) in sort!(collect(merge(dropped, vacuous_dropped)); by = first)
                     for term in terms
             ],
         ),

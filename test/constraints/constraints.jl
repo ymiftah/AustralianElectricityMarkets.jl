@@ -762,3 +762,59 @@ end
         @test get_missing_constraint_intervals(weight_sys) == collect(none)[1:(end - 1)]
     end
 end
+
+@testset "vacuous constraints on unknown units" begin
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
+    start_date = DateTime(2025, 1, 1, 0, 0)
+    date_range = start_date:Minute(5):(start_date + Hour(1))
+    vname(gencon_id) = "$gencon_id@2025-01-01#1"
+    check = AustralianElectricityMarkets._check_nemde_constraint_report
+
+    function build_with_rhs(rhs)
+        sys = first(nem_network(db))
+        invoked, fixed = AustralianElectricityMarkets._read_constraint_inputs(db, date_range)
+        invoked = copy(invoked)
+        invoked.RHS = [g == "N_PHANTOM_TEST" ? rhs : r for (g, r) in zip(invoked.GENCONID, invoked.RHS)]
+        added, skipped = AustralianElectricityMarkets._add_nem_constraints!(sys, db, date_range, invoked, fixed)
+        return sys, added, skipped
+    end
+
+    # N_PHANTOM_TEST is `>=` with its only term on PHANTOM1: 0 >= -5 holds, so it cannot bind.
+    sys, added, skipped = build_with_rhs(-5.0)
+    @test vname("N_PHANTOM_TEST") ∉ added
+    @test skipped[vname("N_PHANTOM_TEST")] == :vacuous_unknown_duid
+    @test vname("N_PHANTOM_TEST") in get_dropped_terms(sys).constraint
+    @test vname("N_ONE_PHANTOM_TERM") in added  # a mixed constraint is still built, term dropped
+    row = only(filter(:constraint => ==(vname("N_PHANTOM_TEST")), get_skipped_constraints(sys)))
+    @test row.reason == :vacuous_unknown_duid
+
+    # The strict invoked-coverage check accepts the vacuous constraint, not the dropped mixed one.
+    err = try
+        check(sys)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin(vname("N_ONE_PHANTOM_TERM"), err.msg)
+    @test !occursin(vname("N_PHANTOM_TEST"), err.msg)
+
+    # A violated zero left-hand side (0 >= 5) is never silently omitted.
+    sys, added, skipped = build_with_rhs(5.0)
+    @test skipped[vname("N_PHANTOM_TEST")] == :unknown_duid
+    err = try
+        check(sys)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin(vname("N_PHANTOM_TEST"), err.msg)
+
+    # Sense table of the zero left-hand side.
+    vac = AustralianElectricityMarkets._is_vacuous
+    @test vac("<=", [0.0, 3.0]) && !vac("<=", [-1.0])
+    @test vac(">=", [0.0, -3.0]) && !vac(">=", [1.0])
+    @test vac("=", [0.0, 1.0e-9]) && !vac("=", [0.5])
+    @test !vac("<=", Union{Float64, Missing}[1.0, missing])
+end

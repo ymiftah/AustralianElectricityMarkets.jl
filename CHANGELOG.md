@@ -1016,6 +1016,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `nem_system` no longer fails on an invoked generic constraint whose every term names a unit absent from the `System` (for example batteries re-registered as bidirectional units in 2024) when its zero left-hand side satisfies the constraint at every invoked interval: it is skipped with the new reason `:vacuous_unknown_duid` and its dropped terms are still recorded. A violated one still throws, naming the constraint. AEMO *Schedule of Constraint Violation Penalties* prices violations of generic constraints; nempy leaves an empty-left-hand-side row in the LP.
+
 - The `HiveConfiguration` docstring gives the `filesystem` default as `"file"`, and the `AEMDB`, `populate` and internal `populate` helper docstrings follow the reference format.
 
 - `set_regional_availability!` throws an `ArgumentError` when the start of its range is off the resolution grid, clamps every value to [0, 1], and gives a device with zero capacity 0.0 at every stamp.
