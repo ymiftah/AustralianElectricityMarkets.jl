@@ -154,6 +154,21 @@ function read_constraint_terms(db, gencon_versions, date_range)
     end
 end
 
+# Warns for each GENCONID whose (REGIONID, BIDTYPE) set differs between intervals of `df`, in one pass.
+function _warn_inconsistent_fcas_requirements(df::DataFrame)
+    P = Set{Tuple{eltype(df.REGIONID), eltype(df.BIDTYPE)}}
+    S = Dict{eltype(df.SETTLEMENTDATE), P}
+    pairs_by_stamp = Dict{eltype(df.GENCONID), S}()
+    for (id, t, region, bid_type) in zip(df.GENCONID, df.SETTLEMENTDATE, df.REGIONID, df.BIDTYPE)
+        push!(get!(P, get!(S, pairs_by_stamp, id), t), (region, bid_type))
+    end
+    for (id, stamps) in pairs_by_stamp
+        pair_sets = collect(values(stamps))
+        allequal(pair_sets) || @warn "GENCONID $id governs a different (REGIONID, BIDTYPE) set at different intervals in this range; using the union." pair_sets
+    end
+    return
+end
+
 """
     read_constraint_fcas_requirements(db, date_range; intervention = 0)
 
@@ -179,13 +194,7 @@ function read_constraint_fcas_requirements(db, date_range; intervention::Integer
     subset!(df, :SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
     subset!(df, :BIDTYPE => ByRow(in(string.(FCAS_BID_TYPES))))
 
-    for sub in groupby(df, :GENCONID)
-        pair_sets = combine(
-            groupby(sub, :SETTLEMENTDATE),
-            [:REGIONID, :BIDTYPE] => ((r, b) -> [Set(zip(r, b))]) => :pairs,
-        ).pairs
-        allequal(pair_sets) || @warn "GENCONID $(sub.GENCONID[1]) governs a different (REGIONID, BIDTYPE) set at different intervals in this range; using the union." pair_sets
-    end
+    _warn_inconsistent_fcas_requirements(df)
 
     result = unique(select(df, :GENCONID, :REGIONID, :BIDTYPE))
     transform!(result, :BIDTYPE => ByRow(BidType) => :BIDTYPE)

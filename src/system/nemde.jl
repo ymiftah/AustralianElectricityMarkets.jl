@@ -179,16 +179,17 @@ function _check_nemde_energy_bid_coverage(sys, bids, dispatch, units, demand, da
         ),
     )
     required_names = Set(bids.DUID)
-    for row in eachrow(dispatch)
-        available = !ismissing(row.AVAILABILITY) && row.AVAILABILITY > 0
-        metered = !ismissing(row.INITIALMW) && !iszero(row.INITIALMW)
-        (available || metered) && push!(required_names, row.DUID)
+    availability, initial_mw = dispatch.AVAILABILITY, dispatch.INITIALMW
+    for (i, duid) in enumerate(dispatch.DUID)
+        available = !ismissing(availability[i]) && availability[i] > 0
+        metered = !ismissing(initial_mw[i]) && !iszero(initial_mw[i])
+        (available || metered) && push!(required_names, duid)
     end
     required = Dict{String, Tuple{Vararg{String}}}()
     registrations = Dict{String, NEMRegistration}()
     coverage = Dict{Tuple{String, String}, Set{DateTime}}()
-    for row in eachrow(bids)
-        push!(get!(coverage, (row.DUID, row.DIRECTION), Set{DateTime}()), row.INTERVAL_DATETIME)
+    for (duid, direction, t) in zip(bids.DUID, bids.DIRECTION, bids.INTERVAL_DATETIME)
+        push!(get!(coverage, (duid, direction), Set{DateTime}()), t)
     end
     for T in (PSY.Generator, PSY.ControllableLoad, PSY.Storage), device in PSY.get_components(T, sys)
         name = PSY.get_name(device)
@@ -199,11 +200,11 @@ function _check_nemde_energy_bid_coverage(sys, bids, dispatch, units, demand, da
         required[name] = _required_bid_directions(device, coverage)
         registrations[name] = registration
     end
-    for row in eachrow(bids)
-        row.DIRECTION in get(required, row.DUID, ()) || continue
-        row.MAXAVAIL isa Real && isfinite(row.MAXAVAIL) && row.MAXAVAIL >= 0 || throw(
+    for (duid, direction, maxavail, t) in zip(bids.DUID, bids.DIRECTION, bids.MAXAVAIL, bids.INTERVAL_DATETIME)
+        direction in get(required, duid, ()) || continue
+        maxavail isa Real && isfinite(maxavail) && maxavail >= 0 || throw(
             ArgumentError(
-                "incomplete energy bid MAXAVAIL for $(row.DUID) $(row.DIRECTION) at $(row.INTERVAL_DATETIME); " *
+                "incomplete energy bid MAXAVAIL for $duid $direction at $t; " *
                     "repopulate BIDPEROFFER_D with populate(...; force_new = true)",
             ),
         )

@@ -99,14 +99,29 @@ function _tie_break_active_bands(offers)
 end
 
 
-# Bands of `offers` at stamp `i`, in the `tie_groups` form, restricted to the `active` segments.
-function _tie_break_stamp_bands(offers, i::Int, active, decremental::Bool)
-    return [
-        (; price, width = x[k + 1] - x[k], name = PSY.get_name(device), band = k)
-            for (device, curves) in offers
-            for (x, y) in ((PSY.get_x_coords(curves[i]), PSY.get_y_coords(curves[i])),)
-            for (k, price) in enumerate(y) if k in get(active, (decremental, PSY.get_name(device)), ())
-    ]
+# One band at one stamp, in the `tie_groups` form, with the index `device` of its unit within its group.
+const _TieBand = @NamedTuple{price::Float64, width::Float64, name::String, band::Int, device::Int}
+
+
+# The unit names of `offers` and, per unit, its `active` segments in ascending order.
+function _tie_break_unit_segments(offers, active, decremental::Bool)
+    names = String[PSY.get_name(device) for (device, _) in offers]
+    segments = [sort!(collect(get(active, (decremental, name), Set{Int}()))) for name in names]
+    return names, segments
+end
+
+
+# Fills `bands` with the bands of `offers` at stamp `i`, in the `tie_groups` form, restricted to the active `segments`.
+function _tie_break_stamp_bands!(bands::Vector{_TieBand}, offers, names, segments, i::Int)
+    empty!(bands)
+    for (d, (_, curves)) in enumerate(offers)
+        curve = curves[i]
+        x, y = PSY.get_x_coords(curve), PSY.get_y_coords(curve)
+        for k in segments[d]
+            push!(bands, (; price = y[k], width = x[k + 1] - x[k], name = names[d], band = k, device = d))
+        end
+    end
+    return bands
 end
 
 
@@ -130,21 +145,22 @@ function _set_tie_break!(sys::PSY.System)
     all_offers = _tie_break_offers(sys)
     active = _tie_break_active_bands(all_offers)
     for ((decremental, _), (; stamps, resolution, offers)) in all_offers
-        scales = Dict{Tuple{PSY.Component, Int}, Vector{Float64}}()
-        devices = Dict(PSY.get_name(device) => device for (device, _) in offers)
+        scales = Dict{Tuple{Int, Int}, Vector{Float64}}()
+        names, segments = _tie_break_unit_segments(offers, active, decremental)
+        bands = _TieBand[]
         for i in eachindex(stamps)
-            bands = _tie_break_stamp_bands(offers, i, active, decremental)
+            _tie_break_stamp_bands!(bands, offers, names, segments, i)
             for group in tie_groups(bands)
                 w_ref = maximum(bands[j].width for j in group)
                 for j in group
-                    s = get!(() -> zeros(length(stamps)), scales, (devices[bands[j].name], bands[j].band))
+                    s = get!(() -> zeros(length(stamps)), scales, (bands[j].device, bands[j].band))
                     s[i] = tie_break_scale(bands[j].width, w_ref)
                 end
             end
         end
-        for ((device, band), values) in scales
+        for ((d, band), values) in scales
             name = tie_break_series_name(band, decremental)
-            PSY.add_time_series!(sys, device, single_series(name, first(stamps), values, resolution))
+            PSY.add_time_series!(sys, offers[d][1], single_series(name, first(stamps), values, resolution))
         end
     end
     devices = [d for d in PSY.get_available_components(PSY.StaticInjection, sys) if _has_energy_offer(d)]

@@ -8,13 +8,14 @@ band is a segment and segment `k` is always the same price band.
 """
 function _extract_power_bids(row; keep_empty_bands::Bool = false)
     prices, quantities = row.PRICEBANDARRAY, row.BANDAVAILARRAY
+    load = row.DIRECTION == "LOAD"
     if keep_empty_bands && length(prices) == length(quantities)
-        order = row.DIRECTION == "LOAD" ? (length(quantities):-1:1) : eachindex(quantities)
+        order = load ? (length(quantities):-1:1) : eachindex(quantities)
         a = Float64[prices[i] for i in order]
         widths = quantities[order]
     else
         price_band_array, bandavail_array = copy(prices), copy(quantities)
-        if row.DIRECTION == "LOAD"
+        if load
             reverse!(price_band_array)
             reverse!(bandavail_array)
         end
@@ -79,21 +80,44 @@ function _bid_field!(sys, device, name::AbstractString, values, start_date, reso
 end
 
 
-# A numeric column on `grid`: the value at each stamp of `by_time`, zero where it is missing or absent.
-_numeric_on_grid(by_time, grid, column::Symbol) =
-    Float64[haskey(by_time, t) && !ismissing(by_time[t][column]) ? Float64(by_time[t][column]) : 0.0 for t in grid]
+# The row index of each stamp of `stamps`.
+_stamp_index(stamps) = Dict{DateTime, Int}(t => i for (i, t) in enumerate(stamps))
 
-# A numeric column on `grid`: the value at each stamp of `by_time`, `NaN` where it is missing or absent.
-_nan_on_grid(by_time, grid, column::Symbol) =
-    Float64[haskey(by_time, t) && !ismissing(by_time[t][column]) ? Float64(by_time[t][column]) : NaN for t in grid]
+# `column` on `grid`: the value at each stamp of `index`, `absent` where it is missing or has no row.
+function _on_grid(index::Dict{DateTime, Int}, column::AbstractVector, grid, absent::Float64)
+    out = fill(absent, length(grid))
+    for (k, t) in enumerate(grid)
+        i = get(index, t, 0)
+        i == 0 && continue
+        v = column[i]
+        ismissing(v) || (out[k] = Float64(v))
+    end
+    return out
+end
 
-# An offer curve on `grid`: the curve at each stamp of `by_time`, or a zero-width curve on the
+# A numeric column on `grid`: zero where it is missing or absent.
+_numeric_on_grid(index, column::AbstractVector, grid) = _on_grid(index, column, grid, 0.0)
+
+# A numeric column on `grid`: `NaN` where it is missing or absent.
+_nan_on_grid(index, column::AbstractVector, grid) = _on_grid(index, column, grid, NaN)
+
+# The columns `names` of `rows` as one concretely typed `NamedTuple` per row.
+function _typed_rows(rows, names::Tuple)
+    return _typed_rows(NamedTuple{names}(map(n -> rows[!, n], names)))
+end
+function _typed_rows(columns::NamedTuple)
+    return [NamedTuple{keys(columns)}(map(c -> c[i], values(columns))) for i in eachindex(first(columns))]
+end
+
+# An offer curve on `grid`: the curve at each stamp of `index`, or a zero-width curve on the
 # prices of the earliest row where there is none.
-function _curves_on_grid(by_time, grid)
-    curves = Dict(t => _extract_power_bids(row; keep_empty_bands = true) for (t, row) in by_time)
-    prices = get_y_coords(curves[minimum(keys(by_time))])
+function _curves_on_grid(index::Dict{DateTime, Int}, rows, grid)
+    typed = _typed_rows(rows, (:PRICEBANDARRAY, :BANDAVAILARRAY, :DIRECTION))
+    curves = [_extract_power_bids(row; keep_empty_bands = true) for row in typed]
+    earliest = index[minimum(keys(index))]
+    prices = get_y_coords(curves[earliest])
     absent = PiecewiseStepData(zeros(length(prices) + 1), copy(prices))
-    return [get(curves, t, absent) for t in grid]
+    return [(i = get(index, t, 0); i == 0 ? absent : curves[i]) for t in grid]
 end
 
 # Whether every row of `rows` holds NULL in `column`, or zero where `zero_is_null` (a fixed load of 0 is none).
@@ -101,6 +125,32 @@ function _all_null(rows, column::Symbol; zero_is_null::Bool = false)
     return all(rows[!, column]) do x
         ismissing(x) || (zero_is_null && iszero(x))
     end
+end
+
+
+# The `T1` to `T4` fast-start times at each stamp of `grid`, zero where missing or without a row.
+function _fast_start_on_grid(index::Dict{DateTime, Int}, rows, grid)
+    t1, t2, t3, t4 = rows.T1, rows.T2, rows.T3, rows.T4
+    out = fill((0.0, 0.0, 0.0, 0.0), length(grid))
+    for (k, t) in enumerate(grid)
+        i = get(index, t, 0)
+        i == 0 && continue
+        out[k] = (
+            Float64(coalesce(t1[i], 0.0)), Float64(coalesce(t2[i], 0.0)),
+            Float64(coalesce(t3[i], 0.0)), Float64(coalesce(t4[i], 0.0)),
+        )
+    end
+    return out
+end
+
+# One where `status` is `"ON"` at each stamp of `grid`, zero otherwise or without a row.
+function _normal_on_grid(index::Dict{DateTime, Int}, status::AbstractVector, grid)
+    out = zeros(length(grid))
+    for (k, t) in enumerate(grid)
+        i = get(index, t, 0)
+        i != 0 && isequal(status[i], "ON") && (out[k] = 1.0)
+    end
+    return out
 end
 
 
@@ -115,7 +165,7 @@ except `fixed_load`, which holds `NaN` so that an unpublished loading is distinc
 and is `nothing` where every row is NULL or zero. Throws `ArgumentError` for a `MAXAVAIL` that is
 missing or not finite.
 """
-function _write_energy_bid!(sys, device, direction::BidDirection, rows, grid, start_date, resolution)
+function _write_energy_bid!(sys, device, direction::BidDirection, rows, grid, start_date, resolution, offer_cost = _nem_offer_cost(device))
     name = get_name(device)
     _check_stamps_on_grid(rows.INTERVAL_DATETIME, grid, "energy bids for $name $(string(direction))")
     bad = findfirst(x -> ismissing(x) || !isfinite(x), rows.MAXAVAIL)
@@ -125,34 +175,30 @@ function _write_energy_bid!(sys, device, direction::BidDirection, rows, grid, st
                 "repopulate BIDPEROFFER_D with populate(...; force_new = true)",
         ),
     )
-    by_time = Dict(zip(rows.INTERVAL_DATETIME, eachrow(rows)))
+    index = _stamp_index(rows.INTERVAL_DATETIME)
     field(f::Symbol) = bid_series_name(BidType.ENERGY, f, direction)
     series(f::Symbol, values) = _bid_field!(sys, device, field(f), values, start_date, resolution)
-    stamp_values(column::Symbol) = _numeric_on_grid(by_time, grid, column)
+    stamp_values(column::Symbol) = _numeric_on_grid(index, rows[!, column], grid)
     fast_start = if _all_null(rows, :T1) && _all_null(rows, :T2) && _all_null(rows, :T3) && _all_null(rows, :T4)
         nothing
     else
-        NTuple{4, Float64}[
-            haskey(by_time, t) ? Tuple(Float64(coalesce(by_time[t][c], 0.0)) for c in (:T1, :T2, :T3, :T4)) : (0.0, 0.0, 0.0, 0.0)
-                for t in grid
-        ]
+        _fast_start_on_grid(index, rows, grid)
     end
-    normal = _all_null(rows, :NORMALSTATUS) ? nothing :
-        Float64[haskey(by_time, t) && isequal(by_time[t].NORMALSTATUS, "ON") ? 1.0 : 0.0 for t in grid]
+    normal = _all_null(rows, :NORMALSTATUS) ? nothing : _normal_on_grid(index, rows.NORMALSTATUS, grid)
     bid = NEMEnergyBid(;
         direction,
-        offer_curves = series(:offer_curves, _curves_on_grid(by_time, grid)),
+        offer_curves = series(:offer_curves, _curves_on_grid(index, rows, grid)),
         max_avail = series(:max_avail, stamp_values(:MAXAVAIL)),
         roc_up = series(:roc_up, stamp_values(:ROCUP)),
         roc_down = series(:roc_down, stamp_values(:ROCDOWN)),
-        fixed_load = series(:fixed_load, _all_null(rows, :FIXEDLOAD; zero_is_null = true) ? nothing : _nan_on_grid(by_time, grid, :FIXEDLOAD)),
+        fixed_load = series(:fixed_load, _all_null(rows, :FIXEDLOAD; zero_is_null = true) ? nothing : _nan_on_grid(index, rows.FIXEDLOAD, grid)),
         minimum_load = series(:minimum_load, _all_null(rows, :MINIMUMLOAD) ? nothing : stamp_values(:MINIMUMLOAD)),
         fast_start_profile = series(:fast_start_profile, fast_start),
         daily_energy_constraint = series(:daily_energy_constraint, _all_null(rows, :DAILYENERGYCONSTRAINT) ? nothing : stamp_values(:DAILYENERGYCONSTRAINT)),
         normal_status = series(:normal_status, normal),
         energy_limit = series(:energy_limit, _all_null(rows, :ENERGYLIMIT) ? nothing : stamp_values(:ENERGYLIMIT)),
     )
-    _set_energy_bid!(_nem_offer_cost(device), bid)
+    _set_energy_bid!(offer_cost, bid)
     return bid
 end
 
@@ -182,6 +228,15 @@ function _fcas_trapezium_points(row)
 end
 
 
+# The validated trapezium of each row of `rows`, on `grid`, zero where there is no row.
+function _trapezium_on_grid(index::Dict{DateTime, Int}, rows, grid)
+    names = (:INTERVAL_DATETIME, :DUID, :DIRECTION, :ENABLEMENTMIN, :LOWBREAKPOINT, :HIGHBREAKPOINT, :ENABLEMENTMAX, :MAXAVAIL)
+    typed = _typed_rows(rows, names)
+    points = [Tuple(_fcas_trapezium_points(row)) for row in typed]
+    return [(i = get(index, t, 0); i == 0 ? (0.0, 0.0, 0.0, 0.0) : points[i]) for t in grid]
+end
+
+
 """
     _write_fcas_bid!(sys, device, service, direction, rows, grid, start_date, resolution) -> NEMFCASBid
 
@@ -198,15 +253,14 @@ function _write_fcas_bid!(sys, device, service::BidType, direction::BidDirection
         ),
     )
     _check_stamps_on_grid(rows.INTERVAL_DATETIME, grid, "FCAS $(service) $(direction) rows for $(get_name(device))")
-    by_time = Dict(zip(rows.INTERVAL_DATETIME, eachrow(rows)))
+    index = _stamp_index(rows.INTERVAL_DATETIME)
     field(f::Symbol) = bid_series_name(service, f, direction)
     series(f::Symbol, values) = _bid_field!(sys, device, field(f), values, start_date, resolution)
-    points = Dict(t => _fcas_trapezium_points(row) for (t, row) in by_time)
-    trapezium = [haskey(points, t) ? Tuple(points[t]) : (0.0, 0.0, 0.0, 0.0) for t in grid]
+    trapezium = _trapezium_on_grid(index, rows, grid)
     bid = NEMFCASBid(;
         service, direction,
-        offer_curves = series(:offer_curves, _curves_on_grid(by_time, grid)),
-        max_avail = series(:max_avail, _numeric_on_grid(by_time, grid, :MAXAVAIL)),
+        offer_curves = series(:offer_curves, _curves_on_grid(index, rows, grid)),
+        max_avail = series(:max_avail, _numeric_on_grid(index, rows.MAXAVAIL, grid)),
         trapezium = series(:trapezium, trapezium),
     )
     _set_fcas_bid!(_nem_offer_cost(device), bid)
@@ -215,14 +269,13 @@ end
 
 
 """
-    _check_registered_bids(device, direction, rows, grid)
+    _check_registered_bids(device, registration, direction, rows, grid)
 
 Throws `ArgumentError` naming `device` and `direction` when the device is registered at a stamp of
-`grid` (see [`NEMRegistration`](@ref)) and has no row in `rows`.
+`grid` (its `registration`, see [`NEMRegistration`](@ref)) and has no row in `rows`.
 """
-function _check_registered_bids(device, direction::BidDirection, rows, grid)
+function _check_registered_bids(device, registration, direction::BidDirection, rows, grid)
     name = get_name(device)
-    registration = get_registration(device)
     stamps = Set(rows.INTERVAL_DATETIME)
     missing_stamps = [t for t in grid if _is_registered(registration, t) && !(t in stamps)]
     isempty(missing_stamps) || throw(
@@ -245,17 +298,19 @@ function _bid_device_energy!(sys, device, required, groups, grid, start_date, re
         set_available!(device, false)
         return false
     end
-    has_nem_unit_data(device) || throw(
+    unit = _nem_unit_data(device)
+    isnothing(unit) && throw(
         ArgumentError("set_market_bids!: $name has no NEM unit data; build it with nem_system"),
     )
     set_available!(device, true)
+    registration = _require_unit_data(unit.registration, "registration", device)
     for direction in required
-        _check_registered_bids(device, direction, rows_of(direction), grid)
+        _check_registered_bids(device, registration, direction, rows_of(direction), grid)
     end
     for direction in (BidDirection.GEN, BidDirection.LOAD)
         rows = rows_of(direction)
         isnothing(rows) && continue
-        _write_energy_bid!(sys, device, direction, rows, grid, start_date, resolution)
+        _write_energy_bid!(sys, device, direction, rows, grid, start_date, resolution, unit.offer)
     end
     return true
 end

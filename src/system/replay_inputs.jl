@@ -17,28 +17,21 @@ include("replay_inputs/closed_loop.jl")
 """
     _set_replay_inputs!(sys::PSY.System) -> Nothing
 
-Writes the replay input series derived from the built inputs of `sys`, in a fixed order, after checking that its
-single time series are at the five-minute dispatch interval. The first
-writer adds the energy offer curves of each bidding device, one series per offer side, with the band
-prices referred to the reference node by the side's loss factor. The second adds the fixed-loading
-value and invocation series of each MNSP link direction, named by [`NEM_MNSP_FIXED_LOAD_SERIES`](@ref).
-The third adds the dispatch ramp rates of each replay unit, named by [`NEM_SERIES`](@ref), and its AGC ramp
-rates, named by `fcas_series_name("fcas_agc_ramp_rate", service)`. The fourth adds the observed starting output
-of each replay unit and its fixed-loading target and invocation, named by [`NEM_STATE_INPUT_SERIES`](@ref). The
-fifth adds the effective FCAS offers of each FCAS-bidding unit, named by [`fcas_effective_series_name`](@ref), and the
-regulation ramping limits of each regulation market, named by [`fcas_ramping_series_name`](@ref), in per-unit of the
-system base. It reads the AGC ramp rates the third writer added and the observed state the fourth added. The sixth
-adds the tie-break scale of each price-tied energy band, named by [`tie_break_series_name`](@ref), and the
-[`EnergyTieBreak`](@ref) service joining the units that carry an energy bid. It reads the energy offer curves the first
-writer added. The seventh adds the demand term
-of each loss-modelled interchange's loss factor, named by [`NEM_SERIES`](@ref), from the loads' `"loss_demand"` series
-per unit of the system base. It reads the demand that [`set_demand!`](@ref) writes before the stage runs. The eighth
-sets the constraints that cannot bind over the replay intervals unavailable, through
-[`_set_constraint_availability!`](@ref). The ninth sets the band prices of each energy, FCAS and MNSP bid from its
-offer series, through [`_set_band_prices!`](@ref). The tenth transforms the single time series of the system into five-minute
-forecast windows, through [`_set_replay_forecasts!`](@ref). No series may be added after it. Last, it records the
-unavailable devices and services the inputs were derived for, through [`_set_replay_availability!`](@ref).
-Called by [`nem_system`](@ref) before its input checks.
+Writes the replay input series derived from the built inputs of `sys`, once and in a fixed order, after checking
+that its single time series are at the five-minute dispatch interval. Called by [`nem_system`](@ref) before its input
+checks. The writers, in order:
+
+- `_set_referred_energy_offers!`: energy offer curves, band prices referred by the side's loss factor.
+- `_set_mnsp_fixed_loads!`: MNSP fixed-loading value and invocation series ([`NEM_MNSP_FIXED_LOAD_SERIES`](@ref)).
+- `_set_dispatch_limits!`: dispatch and AGC ramp rates ([`NEM_SERIES`](@ref)).
+- `_set_observed_state_inputs!`: observed starting output and fixed-loading targets ([`NEM_STATE_INPUT_SERIES`](@ref)).
+- `_set_fcas_effective_offers!`: effective FCAS offers and regulation ramping limits.
+- `_set_tie_break!`: tie-break scales ([`tie_break_series_name`](@ref)) and the [`EnergyTieBreak`](@ref) service.
+- `_set_loss_demand_coefficients!`: loss-factor demand terms of the loss-modelled interchanges.
+- `_set_constraint_availability!`: marks constraints that cannot bind unavailable.
+- `_set_band_prices!`: band prices of each energy, FCAS and MNSP bid.
+- `_set_replay_forecasts!`: transforms the single series into five-minute forecast windows; no series may be added after.
+- `_set_replay_availability!`: records the unavailable devices and services the inputs were derived for.
 
 # Arguments
 - `sys`: the system built by [`nem_system`](@ref).

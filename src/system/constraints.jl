@@ -496,16 +496,14 @@ function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; interven
     )
     for entry in staged
         _add_nem_service!(sys, entry.gc, entry.contributing_devices)
-        add_time_series!(
+        entry.gc.rhs = add_time_series!(
             sys, entry.gc,
             single_series(NEM_CONSTRAINT_SERIES.rhs, start_date, entry.rhs_series, resolution),
         )
-        add_time_series!(
+        entry.gc.invoked = add_time_series!(
             sys, entry.gc,
             single_series(NEM_CONSTRAINT_SERIES.invoked, start_date, entry.invoked_series, resolution),
         )
-        entry.gc.rhs = _series_key(entry.gc, NEM_CONSTRAINT_SERIES.rhs)
-        entry.gc.invoked = _series_key(entry.gc, NEM_CONSTRAINT_SERIES.invoked)
     end
 
     return added, skipped
