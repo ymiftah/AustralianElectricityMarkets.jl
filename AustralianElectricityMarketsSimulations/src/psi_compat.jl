@@ -79,3 +79,20 @@ function PSI._unwrap_for_param(::EnergyBandWidthParameter, curve::IS.PiecewiseSt
     length(widths) <= n || throw(ArgumentError("energy offer has $(length(widths)) bands, more than the band axis' $n."))
     return vcat(widths, zeros(n - length(widths)))
 end
+
+
+# The invariant objective expression of `container`, for adding many terms in place with
+# `JuMP.add_to_expression!` instead of one `add_to_objective_invariant_expression!` call per term.
+function _invariant_objective(container::PSI.OptimizationContainer)
+    return PSI.get_invariant_terms(PSI.get_objective_expression(container))
+end
+
+
+# Values the argument stage computes for the model stage of the same build, held per container
+# (weakly, so a finished build's values go with it). Not in the settings `ext`, which the simulation
+# copies and serializes.
+const _BUILD_SCRATCH = WeakKeyDict{PSI.OptimizationContainer, Dict{Any, Any}}()
+
+function _build_scratch(container::PSI.OptimizationContainer)
+    return get!(() -> Dict{Any, Any}(), _BUILD_SCRATCH, container)
+end

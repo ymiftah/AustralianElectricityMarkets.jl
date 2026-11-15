@@ -63,6 +63,6 @@ function _energy_limit_series(d)
         return names, nothing, _SETTER_REMEDY
     end
     uigf = AustralianElectricityMarkets.get_telemetry(d).uigf
-    isnothing(uigf) && throw(ArgumentError("$(PSY.get_name(d)): semi-scheduled but has no UIGF; call set_unit_conditions!"))
+    isnothing(uigf) && throw(ArgumentError("$(PSY.get_name(d)): semi-scheduled but has no UIGF; $_SETTER_REMEDY"))
     return names, uigf, _SETTER_REMEDY
 end

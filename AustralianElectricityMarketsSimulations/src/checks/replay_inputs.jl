@@ -15,14 +15,15 @@ device, the resolution and five-minute alignment of the series keyed by each dev
 # Arguments
 - `sys`: the `PSY.System` to check.
 - `template`: the `PSI.ProblemTemplate` the replay builds.
+- `has_limits`: the predicate for a device's dispatch-limit series, [`_has_nem_dispatch_limits`](@ref) by default.
 
 # Returns
 `nothing`. Throws an `ArgumentError` naming the first incomplete input and how to supply it.
 """
-function _check_replay_system_inputs(sys::PSY.System, template::PSI.ProblemTemplate)
+function _check_replay_system_inputs(sys::PSY.System, template::PSI.ProblemTemplate; has_limits = _has_nem_dispatch_limits)
     _has_service_model(template, GenericConstraint) && _check_replay_constraint_inputs(sys)
     devices = nem_dispatch_devices(sys)
-    uncovered = [PSY.get_name(device) for device in devices if !_has_nem_dispatch_limits(device)]
+    uncovered = [PSY.get_name(device) for device in devices if !has_limits(device)]
     isempty(uncovered) || throw(
         ArgumentError(
             "check_template_against_sys: incomplete dispatch inputs for $(join(sort!(uncovered), ", ")); " *

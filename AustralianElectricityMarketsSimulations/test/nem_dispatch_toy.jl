@@ -606,7 +606,7 @@ end
     status, log = _toy_build_log(model)
     @test status == PSI.ModelBuildStatus.FAILED
     @test occursin("tie-break: 2 unit(s) with price-tied bands carry no tie-break scale forecast: Alta, Park City.", log)
-    @test occursin("Build the system with nem_system before transform_single_time_series!.", log)
+    @test occursin("Build the System with nem_system(db, NEMDEConfiguration(); date_range)", log)
 end
 
 @testset "a unit carrying tie-break scales must be modelled" begin

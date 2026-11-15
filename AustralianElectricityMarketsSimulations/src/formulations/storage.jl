@@ -65,8 +65,6 @@ function PSI.construct_device!(
     ) where {T <: PSY.Storage, D <: AbstractNEMDispatch}
     devices = PSI.get_available_components(model, sys)
 
-    _check_energy_limit_series(sys, model, PSI.get_initial_time(container), length(PSI.get_time_steps(container)))
-
     PSI.add_variables!(container, PSI.ActivePowerOutVariable, devices, D())
     PSI.add_variables!(container, PSI.ActivePowerInVariable, devices, D())
     _add_device_unit_slacks!(container, EnergyLimitMaxAvailOutVariant(), devices)

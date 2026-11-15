@@ -29,12 +29,12 @@ end
 # An FCAS term needs its device's service modelled; an absent, unavailable or deviceless service
 # contributes zero at build, so it is not a failure.
 function _fcas_failures(
-        sys::PSY.System, device::PSY.Device, bid_type::BidType, fcas_modeled::Set{String}, modeled_types::Vector{DataType},
+        sys::Union{PSY.System, _ConstraintComponentLookup}, device::PSY.Device, bid_type::BidType, fcas_modeled::Set{String}, modeled_types::Vector{DataType},
     )
     name = fcas_service_name(device, bid_type)
-    svc = bid_type == BidType.ENERGY ? nothing : PSY.get_component(FCASService, sys, name)
+    svc = bid_type == BidType.ENERGY ? nothing : _constraint_component(FCASService, sys, name)
     (isnothing(svc) || !PSY.get_available(svc) || name in fcas_modeled) && return _TermFailures()
-    devices = filter(PSY.get_available, PSY.get_contributing_devices(sys, svc))
+    devices = filter(PSY.get_available, PSY.get_contributing_devices(_constraint_system(sys), svc))
     isempty(devices) && return _TermFailures()
     if !any(d -> _type_modeled(d, modeled_types), devices)
         return _TermFailures([(:unmodeled_device_type, typeof(d)) for d in devices])
@@ -54,9 +54,9 @@ end
 
 
 function _term_failures(
-        sys::PSY.System, term::UnitTerm, modeled_types::Vector{DataType}, ::Bool, fcas_modeled::Set{String},
+        sys::Union{PSY.System, _ConstraintComponentLookup}, term::UnitTerm, modeled_types::Vector{DataType}, ::Bool, fcas_modeled::Set{String},
     )
-    device = PSY.get_component(PSY.Device, sys, get_duid(term))
+    device = _constraint_component(PSY.Device, sys, get_duid(term))
     isnothing(device) &&
         return _TermFailures([(:missing_component, nothing)])
     _type_modeled(device, modeled_types) ||
@@ -66,11 +66,11 @@ end
 
 
 function _term_failures(
-        sys::PSY.System, term::RegionTerm, modeled_types::Vector{DataType}, ::Bool, fcas_modeled::Set{String},
+        sys::Union{PSY.System, _ConstraintComponentLookup}, term::RegionTerm, modeled_types::Vector{DataType}, ::Bool, fcas_modeled::Set{String},
     )
     failures = _TermFailures()
     for dname in get_devices(term)
-        device = PSY.get_component(PSY.Device, sys, dname)
+        device = _constraint_component(PSY.Device, sys, dname)
         if isnothing(device)
             push!(failures, (:missing_component, nothing))
         elseif !_type_modeled(device, modeled_types)
@@ -84,9 +84,9 @@ end
 
 
 function _term_failures(
-        sys::PSY.System, term::InterconnectorTerm, ::Vector{DataType}, interconnector_modeled::Bool, ::Set{String},
+        sys::Union{PSY.System, _ConstraintComponentLookup}, term::InterconnectorTerm, ::Vector{DataType}, interconnector_modeled::Bool, ::Set{String},
     )
-    device = PSY.get_component(PSY.AreaInterchange, sys, get_interconnector(term))
+    device = _constraint_component(PSY.AreaInterchange, sys, get_interconnector(term))
     isnothing(device) &&
         return _TermFailures([(:missing_component, nothing)])
     interconnector_modeled && return _TermFailures()
@@ -103,7 +103,7 @@ in `tolerated_reasons`, or, for `:unmodeled_device_type`, when its device type i
 of `tolerated_types`. Returns `nothing` when every term is buildable.
 """
 function _constraint_diagnosis(
-        sys::PSY.System, gc::GenericConstraint, modeled_types::Vector{DataType},
+        sys::Union{PSY.System, _ConstraintComponentLookup}, gc::GenericConstraint, modeled_types::Vector{DataType},
         interconnector_modeled::Bool, fcas_modeled::Set{String};
         tolerated_reasons = Set{Symbol}(), tolerated_types = DataType[],
     )
@@ -152,7 +152,9 @@ const _ConstraintRow = @NamedTuple{constraint::String, reason::Symbol, n_missing
 
 # One row per constraint of `constraints` that `template` cannot build, sorted by name, with whether
 # the failure is blocking: not left out by the template's own scope.
-function _diagnose_constraints(sys::PSY.System, template::PSI.ProblemTemplate, constraints)
+function _diagnose_constraints(
+        sys::PSY.System, template::PSI.ProblemTemplate, constraints; lookup = _ConstraintComponentLookup(sys),
+    )
     modeled_types = _modeled_device_types(template)
     interconnector_modeled = _interconnector_modeled(template)
     fcas_modeled = _modeled_fcas_services(template, sys)
@@ -161,7 +163,7 @@ function _diagnose_constraints(sys::PSY.System, template::PSI.ProblemTemplate, c
     rows = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int, blocking::Bool}[]
     for gc in sort(collect(constraints); by = PSY.get_name)
         diagnosis = _constraint_diagnosis(
-            sys, gc, modeled_types, interconnector_modeled, fcas_modeled; tolerated_reasons, tolerated_types,
+            lookup, gc, modeled_types, interconnector_modeled, fcas_modeled; tolerated_reasons, tolerated_types,
         )
         isnothing(diagnosis) && continue
         reason, _, n_failed, blocking = diagnosis
@@ -173,7 +175,8 @@ end
 
 # The rows of the available constraints the template leaves out: those it excludes by name (`n_missing = 0`)
 # and those it cannot build, sorted by name. Empty without a `GenericConstraint` service model.
-function _template_fact_rows(sys::PSY.System, template::PSI.ProblemTemplate)
+# `lookup` is the build's shared component lookup, made here when not given.
+function _template_fact_rows(sys::PSY.System, template::PSI.ProblemTemplate; lookup = nothing)
     rows = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int, blocking::Bool}[]
     _has_service_model(template, GenericConstraint) || return rows
     excluded = _excluded_constraints(template)
@@ -186,7 +189,8 @@ function _template_fact_rows(sys::PSY.System, template::PSI.ProblemTemplate)
             push!(candidates, gc)
         end
     end
-    append!(rows, _diagnose_constraints(sys, template, candidates))
+    lookup = something(lookup, _ConstraintComponentLookup(sys))
+    append!(rows, _diagnose_constraints(sys, template, candidates; lookup))
     sort!(rows; by = r -> r.constraint)
     return rows
 end

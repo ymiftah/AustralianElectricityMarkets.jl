@@ -558,7 +558,9 @@ function PSI.construct_service!(
             container, FCASUnitRegulationTarget(), FCASService, PSY.get_name.(devices), time_steps; meta = name,
         ) : nothing
 
-    for group in _fcas_offer_groups(name, devices, directions)
+    groups = _fcas_offer_groups(name, devices, directions)
+    _build_scratch(container)[(:fcas_offer_groups, name)] = groups
+    for group in groups
         names = [PSY.get_name(d) for (d, _) in group.offers]
         var = PSI.add_variable_container!(container, group.variable, FCASService, names, time_steps; meta = group.meta)
         lhs = [
@@ -585,35 +587,51 @@ function PSI.construct_service!(
 end
 
 
+# The capacity-variable meta of one side of a `PSY.Storage` device's two-sided regulation offer.
+_fcas_side_meta(name::AbstractString, decremental::Bool) = decremental ? "$(name)_load" : "$(name)_gen"
+
+
 """
-    _fcas_offer_groups(name, devices, bid_type) -> Vector{NamedTuple}
-    _fcas_offer_groups(name, devices, directions) -> Vector{NamedTuple}
+    _FCASOfferGroup
+
+One capacity variable container of an `FCASService` and the offers summing to it: the container's
+`meta`, its capacity `variable` type and `offers`, a vector of `(device, decremental)`.
+"""
+struct _FCASOfferGroup{D}
+    meta::String
+    variable::PSI.VariableType
+    offers::Vector{Tuple{D, Bool}}
+end
+
+
+"""
+    _fcas_offer_groups(name, devices, bid_type) -> Vector{_FCASOfferGroup}
+    _fcas_offer_groups(name, devices, directions) -> Vector{_FCASOfferGroup}
 
 The offers of an `FCASService` named `name`, grouped by the capacity variable container they sum
-to: `(meta, variable, offers)` with `offers` a vector of `(device, decremental)`. Single-sided
+to: [`_FCASOfferGroup`](@ref)s of `(meta, variable, offers)` with `offers` a vector of `(device, decremental)`. Single-sided
 devices form the group `meta = name` on [`FCASCapacityVariable`](@ref); a `PSY.Storage` device
 bidding both sides of a regulation market has one offer in each of `"<name>_gen"` and
 `"<name>_load"` on [`FCASSideCapacityVariable`](@ref). `directions` maps each device name to its
 [`_fcas_direction`](@ref), computed from `bid_type` when not given.
 
 # Returns
-`Vector{NamedTuple{(:meta, :variable, :offers)}}`.
+`Vector{_FCASOfferGroup}`.
 """
-# The capacity-variable meta of one side of a `PSY.Storage` device's two-sided regulation offer.
-_fcas_side_meta(name::AbstractString, decremental::Bool) = decremental ? "$(name)_load" : "$(name)_gen"
-
-
 function _fcas_offer_groups(name::AbstractString, devices, bid_type::BidType)
     return _fcas_offer_groups(name, devices, Dict(PSY.get_name(d) => _fcas_direction(d, bid_type) for d in devices))
 end
 function _fcas_offer_groups(name::AbstractString, devices, directions::AbstractDict)
-    both = [d for d in devices if directions[PSY.get_name(d)] == FCASBidDirection.BOTH]
-    single = [(d, directions[PSY.get_name(d)] == FCASBidDirection.DECREMENTAL) for d in devices if directions[PSY.get_name(d)] != FCASBidDirection.BOTH]
-    groups = NamedTuple[]
-    isempty(single) || push!(groups, (meta = String(name), variable = FCASCapacityVariable(), offers = single))
+    D = eltype(devices)
+    both = D[d for d in devices if directions[PSY.get_name(d)] == FCASBidDirection.BOTH]
+    single = Tuple{D, Bool}[
+        (d, directions[PSY.get_name(d)] == FCASBidDirection.DECREMENTAL) for d in devices if directions[PSY.get_name(d)] != FCASBidDirection.BOTH
+    ]
+    groups = _FCASOfferGroup{D}[]
+    isempty(single) || push!(groups, _FCASOfferGroup{D}(String(name), FCASCapacityVariable(), single))
     if !isempty(both)
         for decremental in (false, true)
-            push!(groups, (meta = _fcas_side_meta(name, decremental), variable = FCASSideCapacityVariable(), offers = [(d, decremental) for d in both]))
+            push!(groups, _FCASOfferGroup{D}(_fcas_side_meta(name, decremental), FCASSideCapacityVariable(), Tuple{D, Bool}[(d, decremental) for d in both]))
         end
     end
     return groups
@@ -718,6 +736,7 @@ function _add_fcas_band_costs!(container::PSI.OptimizationContainer, group, svc:
     bands = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, group.meta)
     labels = axes(bands)[2]
     scale = PSI.get_base_power(container) * interval_hours(PSI.get_resolution(container))
+    invariant = _invariant_objective(container)
     for (device, decremental) in group.offers
         dname = PSY.get_name(device)
         bid = AustralianElectricityMarkets._fcas_side_bid(device, get_bid_type(svc), offer_side(decremental))
@@ -726,7 +745,7 @@ function _add_fcas_band_costs!(container::PSI.OptimizationContainer, group, svc:
             ArgumentError("$dname has no $(get_bid_type(svc)) band prices; run the replay input stage."),
         )
         for t in PSI.get_time_steps(container), (b, label) in enumerate(labels)
-            PSI.add_to_objective_invariant_expression!(container, (scale * prices[b]) * bands[dname, label, t])
+            JuMP.add_to_expression!(invariant, scale * prices[b], bands[dname, label, t])
         end
     end
     return
@@ -752,7 +771,9 @@ function PSI.construct_service!(
     time_steps = PSI.get_time_steps(container)
     jm = PSI.get_jump_model(container)
 
-    groups = _fcas_offer_groups(name, devices, bid_type)
+    groups = get(_build_scratch(container), (:fcas_offer_groups, name)) do
+        return _fcas_offer_groups(name, devices, bid_type)
+    end
 
     # Contingency services carry the regulation targets: `RaiseReg` upper, `LowerReg` lower, swapped for a load.
     if !is_regulation

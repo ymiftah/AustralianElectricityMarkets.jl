@@ -30,18 +30,46 @@ PSI.get_multiplier_value(::GenericConstraintInvocationParameter, ::GenericConstr
     1.0
 
 
-# The System is unchanged while one constraint's terms and diagnostics are constructed.
+# The System is unchanged during one build, so one lookup serves every constraint's terms and
+# diagnostics. `devices` maps each device name to its device, so an abstract `PSY.Device` lookup
+# does not scan every concrete type; a name shared by several device types is in `ambiguous` and
+# resolves through `PSY.get_component`, which throws.
 struct _ConstraintComponentLookup
     system::PSY.System
     components::Dict{Tuple{DataType, String}, Union{Nothing, PSY.Component}}
+    devices::Dict{String, PSY.Device}
+    ambiguous::Set{String}
 end
 
 function _ConstraintComponentLookup(sys::PSY.System)
-    return _ConstraintComponentLookup(sys, Dict{Tuple{DataType, String}, Union{Nothing, PSY.Component}}())
+    devices = Dict{String, PSY.Device}()
+    ambiguous = Set{String}()
+    for device in PSY.get_components(PSY.Device, sys)
+        name = PSY.get_name(device)
+        haskey(devices, name) ? push!(ambiguous, name) : (devices[name] = device)
+    end
+    return _ConstraintComponentLookup(
+        sys, Dict{Tuple{DataType, String}, Union{Nothing, PSY.Component}}(), devices, ambiguous,
+    )
+end
+
+# The build's lookup, kept in the build scratch so every constraint of the build shares it.
+function _constraint_lookup(container::PSI.OptimizationContainer, sys::PSY.System)
+    scratch = _build_scratch(container)
+    lookup = get(scratch, :component_lookup, nothing)
+    lookup isa _ConstraintComponentLookup && lookup.system === sys && return lookup
+    lookup = _ConstraintComponentLookup(sys)
+    scratch[:component_lookup] = lookup
+    return lookup
 end
 
 function _constraint_component(::Type{T}, sys::PSY.System, name::String) where {T <: PSY.Component}
     return PSY.get_component(T, sys, name)
+end
+
+function _constraint_component(::Type{PSY.Device}, lookup::_ConstraintComponentLookup, name::String)
+    name in lookup.ambiguous && return PSY.get_component(PSY.Device, lookup.system, name)
+    return get(lookup.devices, name, nothing)
 end
 
 function _constraint_component(::Type{T}, lookup::_ConstraintComponentLookup, name::String) where {T <: PSY.Component}
@@ -435,7 +463,7 @@ function PSI.construct_service!(
     gc = PSY.get_component(GenericConstraint, sys, name)
     PSY.get_available(gc) || return
 
-    lookup = _ConstraintComponentLookup(sys)
+    lookup = _constraint_lookup(container, sys)
     for term in get_terms(gc)
         PSI.add_to_expression!(container, NEMConstraintLHS, typeof(term), gc, term, lookup)
     end
@@ -486,11 +514,12 @@ function PSI.objective_function!(
     weight = constraint_cvp_factor(gc)
     mpc = _container_market_price_cap(container, PSI.get_initial_time(container))
     scale = base_power * interval_cost_coefficient(weight, resolution) * mpc
+    invariant = _invariant_objective(container)
     for var_type in (GenericConstraintSlackUp, GenericConstraintSlackDown)
         PSI.has_container_key(container, var_type, GenericConstraint, name) || continue
         slack = PSI.get_variable(container, var_type(), GenericConstraint, name)
         for t in time_steps
-            PSI.add_to_objective_invariant_expression!(container, scale * slack[name, t])
+            JuMP.add_to_expression!(invariant, scale, slack[name, t])
         end
     end
     return

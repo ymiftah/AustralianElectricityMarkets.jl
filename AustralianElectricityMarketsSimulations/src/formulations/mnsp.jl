@@ -191,6 +191,7 @@ by [`_loss_range`](@ref). Devices without offers keep their free-flow model.
 function _add_mnsp_link_variables!(container::PSI.OptimizationContainer, devices, device_model)
     foreach(_check_mnsp_offers, devices)
     mnsp = filter(_has_mnsp_offers, collect(devices))
+    _build_scratch(container)[:mnsp_names] = Set(PSY.get_name.(mnsp))
     isempty(mnsp) && return
     foreach(_require_mnsp_fixed_loads, mnsp)
     time_steps = PSI.get_time_steps(container)
@@ -268,6 +269,13 @@ function _add_mnsp_link_variables!(container::PSI.OptimizationContainer, devices
 end
 
 
+# The devices of `devices` whose offers `_add_mnsp_link_variables!` of this build modelled.
+function _modeled_mnsp(container::PSI.OptimizationContainer, devices)
+    names = get(() -> Set{String}(), _build_scratch(container), :mnsp_names)
+    return [d for d in devices if PSY.get_name(d) in names]
+end
+
+
 """
     _add_mnsp_link_constraints!(container, devices)
 
@@ -282,13 +290,13 @@ one direction at a time (`"direction"`), each directional loss zero on the inact
 `nothing`.
 """
 function _add_mnsp_link_constraints!(container::PSI.OptimizationContainer, devices)
-    mnsp = filter(_has_mnsp_offers, collect(devices))
+    mnsp = _modeled_mnsp(container, devices)
     isempty(mnsp) && return
     time_steps = PSI.get_time_steps(container)
     names = PSY.get_name.(mnsp)
     base_power = PSI.get_base_power(container)
     jm = PSI.get_jump_model(container)
-    labels = _mnsp_band_labels(mnsp)
+    labels = collect(axes(PSI.get_variable(container, MNSPLinkBandVariable(), PSY.AreaInterchange, "forward"), 2))
     directions = collect(_MNSP_DIRECTIONS)
 
     link_var = PSI.get_variable(container, MNSPLinkFlowVariable(), PSY.AreaInterchange)
@@ -375,13 +383,14 @@ power and the interval hours.
 `nothing`.
 """
 function _add_mnsp_band_costs!(container::PSI.OptimizationContainer, devices, device_model)
-    mnsp = filter(_has_mnsp_offers, collect(devices))
+    mnsp = _modeled_mnsp(container, devices)
     isempty(mnsp) && return
-    labels = _mnsp_band_labels(mnsp)
+    labels = axes(PSI.get_variable(container, MNSPLinkBandVariable(), PSY.AreaInterchange, "forward"), 2)
     base_power = PSI.get_base_power(container)
     resolution = PSI.get_resolution(container)
     scale = base_power * interval_hours(resolution)
     time_steps = PSI.get_time_steps(container)
+    invariant = _invariant_objective(container)
     for dir in _MNSP_DIRECTIONS
         bands = PSI.get_variable(container, MNSPLinkBandVariable(), PSY.AreaInterchange, dir)
         for device in mnsp
@@ -389,7 +398,7 @@ function _add_mnsp_band_costs!(container::PSI.OptimizationContainer, devices, de
             prices = _mnsp_bid(device, dir).band_prices
             isnothing(prices) && throw(ArgumentError("$name has no MNSP $dir band prices; run the replay input stage."))
             for t in time_steps, (b, label) in enumerate(labels)
-                PSI.add_to_objective_invariant_expression!(container, (scale * prices[b]) * bands[name, label, t])
+                JuMP.add_to_expression!(invariant, scale * prices[b], bands[name, label, t])
             end
         end
     end

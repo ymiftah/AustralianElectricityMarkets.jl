@@ -34,8 +34,9 @@ function _add_mpc_penalty!(
     cap = isnothing(fixed_rate) ? _container_market_price_cap(container, PSI.get_initial_time(container)) : fixed_rate
     slack = PSI.get_variable(container, V(), T, meta)
     cost = PSI.get_base_power(container) * interval_cost_coefficient(cvp_factor, PSI.get_resolution(container)) * cap
+    invariant = _invariant_objective(container)
     for name in names, t in PSI.get_time_steps(container)
-        PSI.add_to_objective_invariant_expression!(container, cost * slack[name, t])
+        JuMP.add_to_expression!(invariant, cost, slack[name, t])
     end
     return
 end

@@ -107,7 +107,7 @@ function _check_tie_break_series(
     isempty(missing_series) || throw(
         ArgumentError(
             "tie-break: $(length(missing_series)) unit(s) with price-tied bands carry no tie-break scale forecast: " *
-                "$(join(sort!(collect(missing_series)), ", ")). Build the system with nem_system before transform_single_time_series!.",
+                "$(join(sort!(collect(missing_series)), ", ")). $_SETTER_REMEDY",
         ),
     )
     unmodeled = String[]
@@ -236,6 +236,7 @@ function PSI.construct_service!(
     jm = PSI.get_jump_model(container)
     coefficient = PSI.get_base_power(container) *
         interval_cost_coefficient(TIE_BREAK_CVP_FACTOR, PSI.get_resolution(container))
+    invariant = _invariant_objective(container)
     key(b, decremental) = PSI.ParameterKey(TieBreakScaleParameter, b.type, _tie_break_meta(b.band, decremental))
     for (label, pair, t, decremental, a, b) in rows
         up[label, pair, t] = JuMP.@variable(jm, base_name = "TieBreakSlackUp_{$label,$pair,$t}", lower_bound = 0.0)
@@ -245,7 +246,8 @@ function PSI.construct_service!(
         con[label, pair, t] = row
         PSI.add_coefficient_target!(container, key(b, decremental), b.name, t, row, a.var, 1.0)
         PSI.add_coefficient_target!(container, key(a, decremental), a.name, t, row, b.var, -1.0)
-        PSI.add_to_objective_invariant_expression!(container, coefficient * (up[label, pair, t] + down[label, pair, t]))
+        JuMP.add_to_expression!(invariant, coefficient, up[label, pair, t])
+        JuMP.add_to_expression!(invariant, coefficient, down[label, pair, t])
     end
     # Drops the cells of the label x pair x time product that hold no row.
     filter!(cell -> !isnothing(last(cell)), con.data)

@@ -191,6 +191,7 @@ function _add_energy_offer_bands!(
     base_power = PSI.get_base_power(container)
     direction = side == OfferSide.GEN ? 1.0 : -1.0
     scale = direction * base_power * interval_hours(PSI.get_resolution(container))
+    invariant = _invariant_objective(container)
     for (name, device) in zip(names, selected)
         prices = _energy_band_prices(device, side)
         width_refs = PSI.get_parameter_column_refs(widths, name)
@@ -207,7 +208,7 @@ function _add_energy_offer_bands!(
                 JuMP.@constraint(jm, bands[name, label, t] <= width_multiplier[name, label, t] * width_refs[label, t] / base_power)
             end
             for (b, label) in enumerate(labels)
-                PSI.add_to_objective_invariant_expression!(container, (scale * prices[b]) * bands[name, label, t])
+                JuMP.add_to_expression!(invariant, scale * prices[b], bands[name, label, t])
             end
         end
     end

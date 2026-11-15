@@ -61,7 +61,7 @@ function _add_energy_limit_rows!(
     names = PSY.get_name.(collect(devices))
     steps = PSI.get_time_steps(container)
     limit, covered = _ts_parameter_accessor(container, _energy_limit_parameter(variant), T, _energy_limit_parameter_meta(variant))
-    _require_coverage(names, "missing energy-limit series", "Call set_unit_conditions! first.", covered)
+    _require_coverage(names, "missing energy-limit series", _SETTER_REMEDY, covered)
     power = PSI.get_variable(container, U(), T)
     slack = PSI.get_variable(container, NEMUnitSlack(), T, _nem_unit_slack_meta(variant))
     rows = PSI.add_constraints_container!(

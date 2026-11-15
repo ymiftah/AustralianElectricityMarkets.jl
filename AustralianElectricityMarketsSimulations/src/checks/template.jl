@@ -25,9 +25,12 @@ function check_template_against_sys(template::PSI.ProblemTemplate, sys::PSY.Syst
             ),
         )
     end
-    _check_replay_system_inputs(sys, template)
+    # One pass of `_has_nem_dispatch_limits` per device, shared by the input check and the participants.
+    cache = Dict{Base.UUID, Bool}()
+    has_limits = d -> get!(() -> _has_nem_dispatch_limits(d), cache, IS.get_uuid(d))
+    _check_replay_system_inputs(sys, template; has_limits)
     modeled = Set(PSI.get_component_type(m) for m in values(PSI.get_device_models(template)))
-    missing_types = [T for T in nem_dispatch_participants(sys) if !(T in modeled)]
+    missing_types = [T for T in nem_dispatch_participants(sys; has_limits) if !(T in modeled)]
     isempty(missing_types) || throw(
         ArgumentError(
             "check_template_against_sys: no device model in template for dispatch participant types " *

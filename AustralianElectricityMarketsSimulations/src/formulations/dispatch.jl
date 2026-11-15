@@ -208,8 +208,6 @@ function PSI.construct_device!(
     ) where {T <: PSY.StaticInjection, D <: AbstractNEMDispatch}
     devices = PSI.get_available_components(model, sys)
 
-    _check_energy_limit_series(sys, model, PSI.get_initial_time(container), length(PSI.get_time_steps(container)))
-
     PSI.add_variables!(container, PSI.ActivePowerVariable, devices, D())
     # A non-scheduled load has no energy offer and is never dispatched for energy (it only offers
     # FCAS), so its energy is held at 0 MW rather than left to the elastic MaxAvail row.
@@ -480,14 +478,15 @@ The component types in `sys` that participate in a NEM dispatch: any
 
 # Arguments
 - `sys`: the `PowerSystems.System` to inspect.
+- `has_limits`: the predicate for a device's dispatch-limit series, `_has_nem_dispatch_limits` by default.
 
 # Returns
 A sorted `Vector` of component types.
 """
-function nem_dispatch_participants(sys)
+function nem_dispatch_participants(sys; has_limits = _has_nem_dispatch_limits)
     types = Set{DataType}()
     for device in PSY.get_components(PSY.StaticInjection, sys)
-        _has_nem_dispatch_limits(device) || continue
+        has_limits(device) || continue
         push!(types, typeof(device))
     end
     return sort!(collect(types); by = string)

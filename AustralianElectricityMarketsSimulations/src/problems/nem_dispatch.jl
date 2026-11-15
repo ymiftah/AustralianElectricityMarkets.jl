@@ -106,11 +106,12 @@ function PSI.validate_template(model::PSI.DecisionModel{<:AbstractNEMDispatchPro
     t = t == PSI.UNSET_INI_TIME ? PSY.get_forecast_initial_timestamp(sys) : t
     cap = _resolved_market_price_cap(t, get(ext, "market_price_cap_override", nothing))
     ext["market_price_cap"] = cap
+    lookup = _ConstraintComponentLookup(sys)
     PSI.get_network_model(template).slack_cost = _area_balance_slack_cost(sys, cap)
     _check_excluded_constraints(sys, template)
     check_template_against_sys(template, sys)
     check_fcas_services(template, sys)
-    facts = _template_fact_rows(sys, template)
+    facts = _template_fact_rows(sys, template; lookup)
     _check_blocked_constraints(_blocked_constraints(sys, template; facts))
     _prune_generic_constraint_models!(template, Set(r.constraint for r in facts))
     check_dispatch_envelope(template, sys)
