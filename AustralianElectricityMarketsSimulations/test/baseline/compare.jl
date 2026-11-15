@@ -12,10 +12,35 @@ const _STATS_RTOL = 1.0e-8
 const _STATS_GATING_COLUMNS = ("objective_value",)
 # The duals that gate in invariants mode: the regional power-balance rows `read_prices` reads.
 const _ENERGY_PRICE_DUAL_KEY = "dual/CopperPlateBalanceConstraint__Area"
-const _FCAS_DUAL_PREFIX = "dual/NEMConstraintLimit__GenericConstraint__"
+const _FCAS_DUAL_KEY = "dual/NEMConstraintLimit__GenericConstraint"
+# Snapshots from before the generic constraints shared containers hold one table per constraint under
+# `<kind>/<Type>__GenericConstraint__<name>`; these are merged into the shared `<kind>/<Type>__GenericConstraint`.
+const _GC_PER_NAME_KEY = r"^(variable|dual|aux|expression|parameter)/(NEMConstraintLHS|NEMConstraintLimit|NEMConstraintRHSParameter|GenericConstraintInvocationParameter|GenericConstraintSlackUp|GenericConstraintSlackDown)__GenericConstraint__(.+)$"
 const _GC_SLACK_PREFIXES = ("variable/GenericConstraintSlackUp", "variable/GenericConstraintSlackDown")
 
 _kind(key::AbstractString) = first(split(key, "/"; limit = 2))
+
+# `snapshot` with its per-constraint generic constraint tables merged into the shared ones, a `name` column
+# naming the constraint where a table has none; a snapshot already in the shared form is returned as is.
+function _aggregate_generic_constraints(snapshot::AbstractDict)
+    any(k -> occursin(_GC_PER_NAME_KEY, k), keys(snapshot)) || return snapshot
+    merged = Dict{String, DataFrame}()
+    parts = Dict{String, Vector{DataFrame}}()
+    for (key, table) in snapshot
+        m = match(_GC_PER_NAME_KEY, key)
+        if isnothing(m)
+            merged[key] = table
+        else
+            part = "name" in names(table) ? table : insertcols(table, :name => fill(String(m[3]), nrow(table)))
+            push!(get!(Vector{DataFrame}, parts, "$(m[1])/$(m[2])__GenericConstraint"), part)
+        end
+    end
+    for (key, tables) in parts
+        haskey(merged, key) && throw(ArgumentError("snapshot holds both $key and per-constraint tables of it."))
+        merged[key] = reduce((a, b) -> vcat(a, b; cols = :union), tables)
+    end
+    return merged
+end
 
 _unmeasured(x) = ismissing(x) || (x isa AbstractFloat && isnan(x))
 
@@ -84,21 +109,33 @@ function _invoked_factor(snapshot::AbstractDict, stamps, name::AbstractString)
     return [column[t] for t in stamps]
 end
 
-# A copy of `snapshot` whose generic-constraint slack tables are multiplied by the invoked series.
+# A copy of `snapshot` whose generic-constraint slack tables are multiplied by the invoked series of each row's
+# constraint.
 function _mask_gc_slacks(snapshot::AbstractDict)
     masked = copy(snapshot)
     for key in keys(snapshot)
         prefix = first(split(key, "__"; limit = 2))
         prefix in _GC_SLACK_PREFIXES || continue
-        name = last(split(key, "__"; limit = 3))
         table = copy(snapshot[key])
-        factor = _invoked_factor(snapshot, table.DateTime, name)
+        factor = Vector{Float64}(undef, nrow(table))
+        for (name, rows) in pairs(groupindices_by_name(table))
+            factor[rows] = _invoked_factor(snapshot, table.DateTime[rows], name)
+        end
         for c in _value_columns(table)
             table[!, c] = table[!, c] .* factor
         end
         masked[key] = table
     end
     return masked
+end
+
+# The row indices of `table` by its `name` column.
+function groupindices_by_name(table::DataFrame)
+    rows = Dict{String, Vector{Int}}()
+    for (i, name) in enumerate(table.name)
+        push!(get!(Vector{Int}, rows, String(name)), i)
+    end
+    return rows
 end
 
 # The FCAS requirement map (constraint, region, service) of a snapshot pair; the candidate's wins.
@@ -115,12 +152,13 @@ end
 # and the direction is `RAISE` or `LOWER` from the service name. Keys are `derived/fcas_sum__<direction>`.
 function _fcas_dual_sums(snapshot::AbstractDict, requirements::DataFrame)
     sums = Dict{String, Dict{Tuple{DateTime, String}, Float64}}()
+    haskey(snapshot, _FCAS_DUAL_KEY) || return Dict{String, DataFrame}()
+    rows_of = groupindices_by_name(snapshot[_FCAS_DUAL_KEY])
     for r in eachrow(requirements)
-        key = _FCAS_DUAL_PREFIX * r.constraint
-        haskey(snapshot, key) || continue
+        haskey(rows_of, r.constraint) || continue
         direction = startswith(r.service, "RAISE") ? "RAISE" : startswith(r.service, "LOWER") ? "LOWER" : r.service
         acc = get!(sums, "derived/fcas_sum__$direction", Dict{Tuple{DateTime, String}, Float64}())
-        for row in eachrow(snapshot[key])
+        for row in eachrow(snapshot[_FCAS_DUAL_KEY][rows_of[r.constraint], :])
             id = (row.DateTime, r.region)
             acc[id] = get(acc, id, 0.0) + row.value
         end
@@ -160,6 +198,8 @@ function _gate_rows(
         baseline::AbstractDict, candidate::AbstractDict; atol::Real, allow_new, allow_missing, mask_gc_slacks::Bool,
         invariants::Bool = false, report_only = Regex[],
     )
+    baseline = _aggregate_generic_constraints(baseline)
+    candidate = _aggregate_generic_constraints(candidate)
     if invariants
         requirements = _fcas_requirements(baseline, candidate)
         baseline, _ = _invariant_view(baseline, requirements)
@@ -235,6 +275,8 @@ A `Vector` of `(; key, kind, max_abs)` named tuples, `kind == "dual"`, with `max
 one side only; empty when every non-gating dual agrees.
 """
 function reported_dual_differences(baseline::AbstractDict, candidate::AbstractDict; atol::Real = 1.0e-9)
+    baseline = _aggregate_generic_constraints(baseline)
+    candidate = _aggregate_generic_constraints(candidate)
     requirements = _fcas_requirements(baseline, candidate)
     _, rb = _invariant_view(baseline, requirements)
     _, rc = _invariant_view(candidate, requirements)
@@ -259,6 +301,8 @@ The largest gap among the `parameter/` tables present in both snapshots, reporte
 `(; key, max_abs)`, with an empty `key` and `max_abs = 0.0` when no parameter table is shared.
 """
 function max_parameter_difference(baseline::AbstractDict, candidate::AbstractDict)
+    baseline = _aggregate_generic_constraints(baseline)
+    candidate = _aggregate_generic_constraints(candidate)
     best = (key = "", max_abs = -Inf)
     for key in keys(baseline)
         _kind(key) == "parameter" && haskey(candidate, key) || continue
@@ -340,7 +384,7 @@ function _compare_main(args::Vector{String})
         reported = reported_dual_differences(baseline, candidate; atol = opts.atol)
         kinds = Dict{String, Int}()
         for r in reported
-            k = replace(r.key, _FCAS_DUAL_PREFIX => "NEMConstraintLimit/", r"^dual/" => "")
+            k = replace(r.key, r"^dual/" => "")
             k = first(split(k, "__"; limit = 2))
             kinds[k] = get(kinds, k, 0) + 1
         end

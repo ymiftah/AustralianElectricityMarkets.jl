@@ -216,7 +216,7 @@ const MASK_CASES = [
                 # The masked row's dual is zero up to simplex arithmetic.
                 @test abs(new.gc) <= 1.0e-9 && abs(gc_sim[t]) <= 1.0e-9
                 # The masked row is free: its priced slack stays zero and no violation is reported.
-                slack = only(PSI.read_variable(new.results, "$(c.slack)__GenericConstraint__N_TOY_LIMIT").value)
+                slack = only(filter(:name => ==("N_TOY_LIMIT"), PSI.read_variable(new.results, "$(c.slack)__GenericConstraint")).value)
                 @test slack == 0.0
                 v = read_constraint_violations(new.results, sys)
                 @test nrow(v) == 0 || !any(==("generic_constraint"), v.family)
@@ -752,7 +752,7 @@ end
     ]
     sim, sys = stock_fcas_case(build, expected)
     # The stored generic constraint slack is already in MW.
-    slack = stock_realized(sim.results, "GenericConstraintSlackDown__GenericConstraint__F_REG", "F_REG"; parameter = false, scale = 1.0)
+    slack = stock_realized(sim.results, "GenericConstraintSlackDown__GenericConstraint", "F_REG"; parameter = false, scale = 1.0)
     @test slack ≈ [0.0, 15.0] atol = TOY_TOLERANCE
     v = read_constraint_violations(sim.results, sys)
     @test nrow(v) == 1
@@ -769,7 +769,7 @@ end
 
 # Thirty generic constraints on one unit: even ones are slack-free; odd ones require 150 MW of a 100 MW
 # unit (GE), so their down slack carries the violation in both steps.
-@testset "the batched slack read covers every slack key of a result with many" begin
+@testset "the batched slack read covers every constraint of the shared slack containers" begin
     n = 30
     add_constraint!(sys, stamps, i) = isodd(i) ?
         add_toy_generic_constraint!(sys, stamps, TOY_CHEAP, 150.0; sense = ConstraintSense.GE, name = "N_MANY_$i") :
@@ -785,10 +785,13 @@ end
     out = run_replay(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
     slack_families = Dict(AEMS._VIOLATION_FAMILIES)
     keys = [k for k in PSI.list_variable_keys(out.results) if haskey(slack_families, PSI.IS.Optimization.get_entry_type(k))]
-    @test length(keys) >= n
+    # One up and one down generic constraint slack container hold the thirty constraints.
+    generic = [k for k in keys if PSI.IS.Optimization.get_entry_type(k) in (AEMS.GenericConstraintSlackUp, AEMS.GenericConstraintSlackDown)]
+    @test length(generic) == 2
     batched = AEMS._read_variable_frames(out.results, keys)
     @test Set(Base.keys(batched)) == Set(keys)
-    violated = [k for k in keys if any(>(AEMS._VIOLATION_TOLERANCE_MW), batched[k].value)]
+    @test length(unique(reduce(vcat, [batched[k].name for k in generic]))) == n
+    violated = unique(reduce(vcat, [batched[k].name[batched[k].value .> AEMS._VIOLATION_TOLERANCE_MW] for k in generic]))
     @test length(violated) == n ÷ 2
     @test isempty(AEMS._read_variable_frames(out.results, PSI.OptimizationContainerKey[]))
 end

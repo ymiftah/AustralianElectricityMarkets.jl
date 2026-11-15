@@ -554,8 +554,8 @@ function solve_toy(
         price = dual / (base_power * interval_hours(DISPATCH_INTERVAL)),
         objective = PSI.JuMP.objective_value(PSI.get_jump_model(container)),
         constraint_price = Dict(
-            k.meta => only(read_dual(results, k).value) / (base_power * interval_hours(DISPATCH_INTERVAL))
-                for k in nem_keys
+            r.name => r.value / (base_power * interval_hours(DISPATCH_INTERVAL))
+                for k in nem_keys for r in eachrow(read_dual(results, k))
         ),
     )
 end

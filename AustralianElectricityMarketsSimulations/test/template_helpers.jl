@@ -68,13 +68,17 @@ function _fix_thermal_floor!(sys)
 end
 
 
-# `name => (DateTime => raw dual)` of every `NEMConstraintLimit` in `results`.
+# `name => (DateTime => raw dual)` of every constraint of the `NEMConstraintLimit` container in `results`.
 function stock_gc_duals(results)
     read(k) = results isa PSI.SimulationProblemResults ? only(values(PSI.read_realized_duals(results, [k]))) : PSI.read_dual(results, k)
-    return Dict(
-        k.meta => Dict(r.DateTime => r.value for r in eachrow(read(k)))
-            for k in PSI.list_dual_keys(results) if PSI.IS.Optimization.get_entry_type(k) === NEMConstraintLimit
-    )
+    out = Dict{String, Dict{DateTime, Float64}}()
+    for k in PSI.list_dual_keys(results)
+        PSI.IS.Optimization.get_entry_type(k) === NEMConstraintLimit || continue
+        for r in eachrow(read(k))
+            get!(Dict{DateTime, Float64}, out, r.name)[r.DateTime] = r.value
+        end
+    end
+    return out
 end
 
 # The exception `f()` throws, or `nothing` if it returns normally.

@@ -69,17 +69,15 @@ function read_fcas_prices(
             "read_fcas_prices: `results` do not record a resolution (a single-interval model), so pass `resolution` explicitly.",
         ),
     )
-    dual_keys = Dict(
-        k.meta => k for k in PSI.list_dual_keys(results) if PSI.IS.Optimization.get_entry_type(k) === NEMConstraintLimit
-    )
+    dual_keys = [k for k in PSI.list_dual_keys(results) if PSI.IS.Optimization.get_entry_type(k) === NEMConstraintLimit]
     scale = PSY.get_base_power(sys) * interval_hours(resolution)
     prices = Dict{Tuple{String, BidType}, DataFrame}()
     constrained = [gc for gc in PSY.get_components(GenericConstraint, sys) if !isempty(get_fcas_requirements(gc))]
-    unrecorded = [PSY.get_name(gc) for gc in constrained if !haskey(dual_keys, PSY.get_name(gc))]
-    recorded = [gc for gc in constrained if haskey(dual_keys, PSY.get_name(gc))]
-    duals = _read_dual_frames(results, [dual_keys[PSY.get_name(gc)] for gc in recorded])
+    duals = isempty(dual_keys) ? Dict{String, DataFrame}() : _constraint_dual_frames(results, only(dual_keys))
+    unrecorded = [PSY.get_name(gc) for gc in constrained if !haskey(duals, PSY.get_name(gc))]
+    recorded = [gc for gc in constrained if haskey(duals, PSY.get_name(gc))]
     for gc in recorded
-        dual = duals[dual_keys[PSY.get_name(gc)]]
+        dual = duals[PSY.get_name(gc)]
         for req in get_fcas_requirements(gc)
             id = (get_region(req), get_service(req))
             term = DataFrame(; SETTLEMENTDATE = dual.DateTime, ROP = dual.value ./ scale)

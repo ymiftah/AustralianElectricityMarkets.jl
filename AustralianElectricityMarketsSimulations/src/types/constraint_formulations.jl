@@ -31,7 +31,9 @@ struct NEMConstraintRHSParameter <: PSI.TimeSeriesParameter end
 Formulation for a [`GenericConstraint`](@ref): assembles [`NEMConstraintLHS`](@ref) from the
 constraint's own stored terms and bounds it against [`NEMConstraintRHSParameter`](@ref) with a
 [`NEMConstraintLimit`](@ref). Slack penalties are objective terms only, not part of any
-PowerSimulations cost expression.
+PowerSimulations cost expression. Every constraint of a model shares one container per role (expression,
+limit, dual, parameters and each slack direction), with the constraint name as the first axis and an empty
+key meta.
 """
 struct LinearFactorLimit <: PSI.AbstractServiceFormulation end
 

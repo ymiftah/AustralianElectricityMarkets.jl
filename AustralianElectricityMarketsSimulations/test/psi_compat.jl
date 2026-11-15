@@ -8,9 +8,11 @@ end
 
 @testset "per-step update methods only for the closed-loop model" begin
     # An open-loop replay keeps PowerSimulations' own per-step updates; only a closed-loop model recomputes state inputs.
+    # The shared generic constraint parameter containers have their own container update.
     for f in (PSI.update_container_parameter_values!, PSI._update_parameter_values!)
-        @test all(m -> parentmodule(m) !== AEMS, methods(f))
+        @test all(m -> parentmodule(m) !== AEMS || occursin("GenericConstraint", string(m.sig)), methods(f))
     end
+    @test !any(m -> parentmodule(m) === AEMS, methods(PSI._update_parameter_values!))
     ours = [m for m in methods(PSI.update_parameter_values!) if parentmodule(m) === AEMS]
     @test !isempty(ours)
     @test all(m -> occursin("NEMClosedLoopDispatchProblem", string(m.sig)), ours)

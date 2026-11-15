@@ -96,3 +96,8 @@ const _BUILD_SCRATCH = WeakKeyDict{PSI.OptimizationContainer, Dict{Any, Any}}()
 function _build_scratch(container::PSI.OptimizationContainer)
     return get!(() -> Dict{Any, Any}(), _BUILD_SCRATCH, container)
 end
+
+
+# The shared generic constraint containers (`formulations/generic_constraints.jl`) call these private PSI
+# internals: `_get_time_series_name`, `_to_is_interval`, `_time_series_parameter_eltype`,
+# `_set_parameter_at!`, `_set_multiplier_at!`, `_update_parameter_values!` and `_apply_bound_targets!`.

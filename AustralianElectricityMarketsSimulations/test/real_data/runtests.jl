@@ -372,9 +372,8 @@ end
     gcs = [gc for gc in PSY.get_components(GenericConstraint, sys) if get_gencon_id(gc) in target_gencon_ids]
     @test length(gcs) == length(target_gencon_ids)
 
-    dual_keys = Dict(
-        k.meta => k for k in PSI.list_dual_keys(results) if PSI.IS.Optimization.get_entry_type(k) === NEMConstraintLimit
-    )
+    dual_key = only(k for k in PSI.list_dual_keys(results) if PSI.IS.Optimization.get_entry_type(k) === NEMConstraintLimit)
+    all_duals = PSI.read_realized_duals(results, [dual_key])[PSI.IS.Optimization.encode_key_as_string(dual_key)]
     dc_table = read_hive(db, :DISPATCHCONSTRAINT)
     violations = read_constraint_violations(results, sys)
     for gc in gcs
@@ -388,16 +387,15 @@ end
         @info "Invoked intervals of the violation window" gencon_id n_invoked = count(invoked) n_not_invoked = count(!, invoked)
 
         slack_type = get_sense(gc) == ConstraintSense.LE ? "GenericConstraintSlackUp" : "GenericConstraintSlackDown"
-        slack_name = "$(slack_type)__GenericConstraint__$name"
-        slack_df = PSI.read_realized_variables(results, [slack_name])[slack_name]
+        slack_name = "$(slack_type)__GenericConstraint"
+        slack_df = filter(:name => ==(name), PSI.read_realized_variables(results, [slack_name])[slack_name])
         @test sort(slack_df.DateTime) == collect(VIOLATION_STEPS)
         # A non-invoked row is vacuous and its slack free, so the violation reader must not report it.
         @test any(!, invoked)
         reported = filter(r -> r.family == "generic_constraint" && r.name == name, violations).DateTime
         @test isempty(setdiff(reported, invoked_dates))
 
-        dual_key = dual_keys[name]
-        dual_df = PSI.read_realized_duals(results, [dual_key])[PSI.IS.Optimization.encode_key_as_string(dual_key)]
+        dual_df = filter(:name => ==(name), all_duals)
         published = DataFrame(
             DuckDB.execute(
                 db.db,

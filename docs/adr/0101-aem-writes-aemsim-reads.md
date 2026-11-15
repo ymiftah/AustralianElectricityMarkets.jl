@@ -117,7 +117,9 @@ The only per-step coefficient updates are the interconnector loss equation's dem
 trapezium slopes and the tie-break scales (band-width ratios, which change with rebids), through the
 fork's `ConstraintCoefficientParameter`, and the generic-constraint invocation bounds, through its
 `ConstraintBoundParameter`. All are refreshed by PSI's stock time-series update; AEMSim defines no
-`update_container_parameter_values!`, `update_parameter_values!` or `_update_parameter_values!` method.
+`update_container_parameter_values!`, `update_parameter_values!` or `_update_parameter_values!` method. The
+one exception is the shared generic constraint containers, whose update reads every constraint's
+series ([0103](0103-aggregated-generic-constraint-containers.md)).
 
 ### 7. The problem type selects the replay mode
 

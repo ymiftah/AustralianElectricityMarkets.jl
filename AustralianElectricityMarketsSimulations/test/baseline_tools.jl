@@ -68,13 +68,13 @@ end
 end
 
 function _invariant_snapshot()
-    dual(v) = DataFrame(DateTime = [BT_T1, BT_T2], name = ["SA1", "SA1"], value = v)
+    dual(v, name = "SA1") = DataFrame(DateTime = [BT_T1, BT_T2], name = [name, name], value = v)
     return Dict(
         "variable/x" => DataFrame(DateTime = [BT_T1, BT_T2], u = [1.0, 2.0]),
         "dual/CopperPlateBalanceConstraint__Area" => dual([10.0, 11.0]),
-        "dual/NEMConstraintLimit__GenericConstraint__r6" => dual([4.0, 4.0]),
-        "dual/NEMConstraintLimit__GenericConstraint__r60" => dual([5.0, 5.0]),
-        "dual/NEMConstraintLimit__GenericConstraint__l6" => dual([1.0, 1.0]),
+        "dual/NEMConstraintLimit__GenericConstraint__r6" => dual([4.0, 4.0], "r6"),
+        "dual/NEMConstraintLimit__GenericConstraint__r60" => dual([5.0, 5.0], "r60"),
+        "dual/NEMConstraintLimit__GenericConstraint__l6" => dual([1.0, 1.0], "l6"),
         "dual/FCASJointCapacityConstraint__Unit" => dual([0.5, 0.5]),
         "input/fcas_requirements" => DataFrame(
             constraint = ["r6", "r60", "l6"], region = ["SA1", "SA1", "SA1"],
@@ -170,4 +170,27 @@ end
         delete!(no_fcas, "dual/NEMConstraintLimit__GenericConstraint__$c")
     end
     @test_throws ArgumentError compare_snapshots(a, no_fcas; invariants = true)
+end
+
+@testset "per-constraint snapshots from before the shared containers compare equal to the shared form" begin
+    old = _invariant_snapshot()
+    old["variable/GenericConstraintSlackUp__GenericConstraint__r6"] = DataFrame(DateTime = [BT_T1, BT_T2], name = ["r6", "r6"], value = [0.0, 2.0])
+    old["variable/GenericConstraintSlackUp__GenericConstraint__r60"] = DataFrame(DateTime = [BT_T1, BT_T2], name = ["r60", "r60"], value = [1.0, 0.0])
+    old["input/constraint_invoked"] = DataFrame(DateTime = [BT_T1, BT_T2], r6 = [1.0, 1.0], r60 = [0.0, 1.0], l6 = [1.0, 1.0])
+    shared = Dict{String, DataFrame}(k => v for (k, v) in old if !occursin("__GenericConstraint__", k))
+    for kind in ("dual/NEMConstraintLimit", "variable/GenericConstraintSlackUp")
+        tables = [v for (k, v) in old if startswith(k, kind * "__GenericConstraint__")]
+        shared[kind * "__GenericConstraint"] = reduce(vcat, tables)
+    end
+    @test isempty(compare_snapshots(old, shared; invariants = true, mask_gc_slacks = true))
+    @test isempty(compare_snapshots(shared, old; invariants = true, mask_gc_slacks = true))
+    @test isempty(compare_snapshots(old, shared))
+    moved = deepcopy(shared)
+    moved["variable/GenericConstraintSlackUp__GenericConstraint"].value[2] += 1.0
+    @test only(compare_snapshots(old, moved)).key == "variable/GenericConstraintSlackUp__GenericConstraint"
+    # r60 is not invoked at the first interval, so its slack there is masked; r6's second interval is not.
+    masked = deepcopy(shared)
+    masked["variable/GenericConstraintSlackUp__GenericConstraint"].value[3] += 5.0
+    @test isempty(compare_snapshots(old, masked; mask_gc_slacks = true))
+    @test !isempty(compare_snapshots(old, masked))
 end

@@ -287,11 +287,9 @@ end
 
     container = PSI.get_optimization_container(model)
     ic1_name = PSY.get_name(_gc(sys, "N_IC1_LIMIT"))
-    dual_key = only(
-        k for k in PSI.get_constraint_keys(container) if ISOPT.get_entry_type(k) === AEMS.NEMConstraintLimit && k.meta == ic1_name
-    )
+    dual_key = only(k for k in PSI.get_constraint_keys(container) if ISOPT.get_entry_type(k) === AEMS.NEMConstraintLimit)
     res = PSI.OptimizationProblemResults(model)
-    dual_df = PSI.read_dual(res, dual_key)
+    dual_df = subset(PSI.read_dual(res, dual_key), :name => ByRow(==(ic1_name)))
     dual_at(t) = only(subset(dual_df, :DateTime => ByRow(==(t)))).value
     flow = PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange")
     thermal = PSI.read_variable(res, "ActivePowerVariable__ThermalStandard")
@@ -307,7 +305,7 @@ end
 # The bounds of the row `name` at interval `t` as the optimizer holds them.
 _row_bounds(container, name, t) = PSI.JuMP.MOI.get(
     PSI.get_jump_model(container), PSI.JuMP.MOI.ConstraintSet(),
-    PSI.get_constraint(container, NEMConstraintLimit(), GenericConstraint, name)[name, t],
+    PSI.get_constraint(container, NEMConstraintLimit(), GenericConstraint)[name, t],
 )
 
 @testset "a non-invoked generic constraint row is free, an invoked one pays CVP x MPC, and a step update toggles the row" begin
@@ -329,7 +327,7 @@ _row_bounds(container, name, t) = PSI.JuMP.MOI.get(
         @test PSI.get_base_power(container) == 100.0
         @test PSI.get_resolution(container) == Hour(1)
 
-        key = PSI.ParameterKey(AEMS.GenericConstraintInvocationParameter, GenericConstraint, name)
+        key = PSI.ParameterKey(AEMS.GenericConstraintInvocationParameter, GenericConstraint)
         invoked = () -> PSI.get_parameter_column_refs(PSI.get_parameter(container, key), name)
         @test invoked()[1:2] == [0.0, 1.0]
         free = PSI.JuMP.MOI.Interval(-Inf, Inf)
@@ -342,9 +340,9 @@ _row_bounds(container, name, t) = PSI.JuMP.MOI.get(
             invariant = PSI.get_invariant_terms(PSI.get_objective_expression(container))
             slack_var = only(
                 s for s in (AEMS.GenericConstraintSlackUp, AEMS.GenericConstraintSlackDown)
-                    if PSI.has_container_key(container, s, GenericConstraint, name)
+                    if PSI.has_container_key(container, s, GenericConstraint)
             )
-            slack = PSI.get_variable(container, slack_var(), GenericConstraint, name)
+            slack = PSI.get_variable(container, slack_var(), GenericConstraint)
             for t in 1:2
                 @test PSI.JuMP.coefficient(invariant, slack[name, t]) ≈ expected
             end
@@ -352,12 +350,13 @@ _row_bounds(container, name, t) = PSI.JuMP.MOI.get(
             PSI.solve!(model)
             @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
             res = PSI.OptimizationProblemResults(model)
-            slack_df = PSI.read_variable(res, "$(nameof(slack_var))__GenericConstraint__$name")
+            slack_df = subset(PSI.read_variable(res, "$(nameof(slack_var))__GenericConstraint"), :name => ByRow(==(name)))
             t1, t2 = sort(unique(slack_df.DateTime))[1:2]
             @test only(subset(slack_df, :DateTime => ByRow(==(t1)))).value == 0.0
             @test only(subset(slack_df, :DateTime => ByRow(==(t2)))).value > 0.0
-            dual_key = only(k for k in PSI.get_constraint_keys(container) if ISOPT.get_entry_type(k) === AEMS.NEMConstraintLimit && k.meta == name)
-            @test only(subset(PSI.read_dual(res, dual_key), :DateTime => ByRow(==(t1)))).value == 0.0
+            dual_key = only(k for k in PSI.get_constraint_keys(container) if ISOPT.get_entry_type(k) === AEMS.NEMConstraintLimit)
+            dual_df = subset(PSI.read_dual(res, dual_key), :name => ByRow(==(name)))
+            @test only(subset(dual_df, :DateTime => ByRow(==(t1)))).value == 0.0
         end
 
         # A simulation step from the second interval re-reads the invoked series and re-applies the bounds.
@@ -425,7 +424,8 @@ end
         k for k in PSI.get_constraint_keys(container)
             if ISOPT.get_entry_type(k) === AEMS.NEMConstraintLimit
     ]
-    @test Set(k.meta for k in nem_keys) == Set(PSY.get_name.(buildable))
+    @test length(nem_keys) == 1
+    @test Set(PSI.get_constraint(container, only(nem_keys)).axes[1]) == Set(PSY.get_name.(buildable))
 
     # A constraint made unavailable, as the build does for one whose contributing devices are all unavailable,
     # is not diagnosed and gets no model.
@@ -601,9 +601,9 @@ end
     expected = PSI.get_base_power(container) *
         interval_cost_coefficient(weight * test_mpc, PSI.get_resolution(container))
     for name in ("ZERO_NEG", "ZERO_POS")
-        slack = PSI.get_variable(container, AEMS.GenericConstraintSlackUp(), GenericConstraint, name)
+        slack = PSI.get_variable(container, AEMS.GenericConstraintSlackUp(), GenericConstraint)
         @test all(t -> objective_terms[slack[name, t]] ≈ expected, PSI.get_time_steps(container))
-        @test !PSI.has_container_key(container, AEMS.GenericConstraintSlackDown, GenericConstraint, name)
+        @test !PSI.has_container_key(container, AEMS.GenericConstraintSlackDown, GenericConstraint)
     end
 end
 

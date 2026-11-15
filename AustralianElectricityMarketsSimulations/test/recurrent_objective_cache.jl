@@ -40,10 +40,10 @@ end
             @test PSI.build!(model; output_dir = joinpath(folder, "model")) == PSI.ModelBuildStatus.BUILT
             container = PSI.get_optimization_container(model)
             keys = [k for k in Base.keys(PSI.get_parameters(model)) if PSI.IS.Optimization.get_entry_type(k) === AEMS.GenericConstraintInvocationParameter]
-            invoked_key = only(k for k in keys if k.meta == "F_REG")
+            invoked_key = only(keys)
             _update_objective_cache_parameters!(model, keys, 0)
             @test PSI.get_parameter_column_refs(PSI.get_parameter(container, invoked_key), "F_REG")[1] == 1.0
-            slack = PSI.get_variable(container, GenericConstraintSlackDown(), GenericConstraint, "F_REG")["F_REG", 1]
+            slack = PSI.get_variable(container, GenericConstraintSlackDown(), GenericConstraint)["F_REG", 1]
             gc = PSY.get_component(GenericConstraint, sys, "F_REG")
             penalty = PSI.get_base_power(container) * interval_cost_coefficient(AustralianElectricityMarkets.constraint_cvp_factor(gc), PSI.get_resolution(container))
             @test PSI.JuMP.coefficient(PSI.get_invariant_terms(PSI.get_objective_expression(container)), slack) == 12345.0 * penalty

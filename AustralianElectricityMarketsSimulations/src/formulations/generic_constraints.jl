@@ -307,7 +307,7 @@ function PSI.add_to_expression!(
         sys::Union{PSY.System, _ConstraintComponentLookup},
     )
     name = PSY.get_name(gc)
-    expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint, name)
+    expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint)
     device = _checked_device(container, sys, gc, term)
     _add_device_terms!(container, expr, sys, gc, device, get_bid_type(term), get_factor(term))
     return
@@ -323,7 +323,7 @@ function PSI.add_to_expression!(
         sys::Union{PSY.System, _ConstraintComponentLookup},
     )
     name = PSY.get_name(gc)
-    expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint, name)
+    expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint)
     for device in _checked_devices(container, sys, gc, term)
         _add_device_terms!(container, expr, sys, gc, device, get_bid_type(term), get_factor(term))
     end
@@ -340,7 +340,7 @@ function PSI.add_to_expression!(
         sys::Union{PSY.System, _ConstraintComponentLookup},
     )
     name = PSY.get_name(gc)
-    expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint, name)
+    expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint)
     device = _checked_interconnector(container, sys, gc, term)
     PSY.get_available(device) || return  # no flow variable: contributes zero
     var = PSI.get_variable(container, PSI.FlowActivePowerVariable(), PSY.AreaInterchange)
@@ -355,8 +355,8 @@ end
 """
     _add_gc_slack_variables!(container, gc, model)
 
-Builds [`GenericConstraintSlackUp`](@ref)/[`GenericConstraintSlackDown`](@ref) for `gc` when
-`PSI.get_use_slacks(model)`, one side per `get_sense(gc)` (`LE` → up only, `GE` → down only,
+Fills [`GenericConstraintSlackUp`](@ref)/[`GenericConstraintSlackDown`](@ref) for `gc` in the shared slack
+containers when `PSI.get_use_slacks(model)`, one side per `get_sense(gc)` (`LE` → up only, `GE` → down only,
 `EQ` → both), and merges each into [`NEMConstraintLHS`](@ref): `-slack_up` on the `LE` side,
 `+slack_down` on the `GE` side, so `add_constraints!`'s stored bound becomes satisfiable by
 relaxing it rather than infeasible.
@@ -369,15 +369,17 @@ function _add_gc_slack_variables!(
     PSI.get_use_slacks(model) || return
     name = PSY.get_name(gc)
     time_steps = PSI.get_time_steps(container)
-    expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint, name)
+    expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint)
     sense = get_sense(gc)
+    jm = PSI.get_jump_model(container)
     for (var_type, side, coefficient) in (
             (GenericConstraintSlackUp, ConstraintSense.LE, -1.0),
             (GenericConstraintSlackDown, ConstraintSense.GE, 1.0),
         )
         sense in (side, ConstraintSense.EQ) || continue
-        slack = _add_slack_variables!(container, var_type, GenericConstraint, [name], time_steps; meta = name)
+        slack = PSI.get_variable(container, var_type(), GenericConstraint)
         for t in time_steps
+            slack[name, t] = JuMP.@variable(jm, base_name = "$(nameof(var_type))_{$name,$t}", lower_bound = 0.0)
             JuMP.add_to_expression!(expr[name, t], coefficient, slack[name, t])
         end
     end
@@ -391,16 +393,13 @@ function PSI.add_constraints!(
         container::PSI.OptimizationContainer,
         ::Type{NEMConstraintLimit},
         gc::GenericConstraint,
-        model::PSI.ServiceModel{GenericConstraint, LinearFactorLimit},
+        ::PSI.ServiceModel{GenericConstraint, LinearFactorLimit},
     )
     name = PSY.get_name(gc)
-    expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint, name)
+    expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint)
     time_steps = PSI.get_time_steps(container)
-    # One container per constraint (`meta = name`), as each `GenericConstraint` has its own `ServiceModel`.
-    con = PSI.lazy_container_addition!(
-        container, NEMConstraintLimit(), GenericConstraint, [name], time_steps; meta = name,
-    )
-    rhs_param = PSI.get_parameter(container, NEMConstraintRHSParameter(), GenericConstraint, name)
+    con = PSI.get_constraint(container, NEMConstraintLimit(), GenericConstraint)
+    rhs_param = PSI.get_parameter(container, NEMConstraintRHSParameter(), GenericConstraint)
     rhs_refs = PSI.get_parameter_column_refs(rhs_param, name)
     rhs_mult = PSI.get_multiplier_array(rhs_param)
     _constraint_key(gc, :rhs, NEM_CONSTRAINT_SERIES.rhs)
@@ -416,7 +415,7 @@ function PSI.add_constraints!(
     else
         JuMP.MOI.Interval(0.0, 0.0)
     end
-    invoked_key = PSI.ParameterKey(GenericConstraintInvocationParameter, GenericConstraint, name)
+    invoked_key = PSI.ParameterKey(GenericConstraintInvocationParameter, GenericConstraint)
     for t in time_steps
         rhs = rhs_refs[t] * rhs_mult[name, t] / base_power
         con[name, t] = JuMP.@constraint(jm, expr[name, t] - rhs in bounds)
@@ -427,8 +426,116 @@ function PSI.add_constraints!(
 end
 
 
+# --- Shared containers: one per role for every generic constraint of the model ---
+
+# One constraint's parameter inputs, held from the argument stage until the shared containers exist: per
+# parameter type the series UUID and the (1 x time) row of values (`Float64`, or the `JuMP` parameter variables,
+# which are created here so they keep the position a per-constraint container gave them).
+const _ConstraintParameterRow = @NamedTuple{name::String, series::Dict{DataType, @NamedTuple{uuid::String, row::Matrix}}}
+
+const _CONSTRAINT_PARAMETER_TYPES = (NEMConstraintRHSParameter, GenericConstraintInvocationParameter)
+
+function _stash_constraint_parameters!(
+        container::PSI.OptimizationContainer, gc::GenericConstraint,
+        model::PSI.ServiceModel{GenericConstraint, LinearFactorLimit},
+    )
+    ts_type = PSI.get_default_time_series_type(container)
+    ts_type <: Union{PSY.AbstractDeterministic, PSY.StaticTimeSeries} || throw(
+        ArgumentError("generic constraint parameters are not compatible with the time series type $ts_type."),
+    )
+    interval = PSI.get_interval(PSI.get_settings(container))
+    jm = PSI.get_jump_model(container)
+    time_steps = PSI.get_time_steps(container)
+    series = Dict{DataType, @NamedTuple{uuid::String, row::Matrix}}()
+    for T in _CONSTRAINT_PARAMETER_TYPES
+        ts_name = PSI._get_time_series_name(T(), gc, model)
+        uuid = string(IS.get_time_series_uuid(ts_type, gc, ts_name; interval = PSI._to_is_interval(interval)))
+        values = PSI.get_time_series_initial_values!(container, ts_type, gc, ts_name; interval = interval)
+        row = Matrix{PSI._time_series_parameter_eltype(container, T)}(undef, 1, length(time_steps))
+        for t in time_steps
+            PSI._set_parameter_at!(row, jm, values[t], 1, t)
+        end
+        series[T] = (; uuid, row)
+    end
+    scratch = _build_scratch(container)
+    if pop!(scratch, :constraints_built, false)
+        delete!(scratch, :constraint_parameters)
+    end
+    push!(get!(Vector{_ConstraintParameterRow}, scratch, :constraint_parameters), (; name = PSY.get_name(gc), series))
+    return
+end
+
+
+# Adds the single parameter container of `T` over every stashed constraint: the series UUIDs on the first
+# axis, the constraint names on the multiplier's, and the time steps on the second.
+function _add_constraint_parameters!(
+        container::PSI.OptimizationContainer, ::Type{T}, stash::Vector{_ConstraintParameterRow}, gc::GenericConstraint,
+        model::PSI.ServiceModel{GenericConstraint, LinearFactorLimit},
+    ) where {T <: PSI.TimeSeriesParameter}
+    ts_type = PSI.get_default_time_series_type(container)
+    ts_name = PSI._get_time_series_name(T(), gc, model)
+    names = String[r.name for r in stash]
+    uuids = unique(String[r.series[T].uuid for r in stash])
+    param_container = PSI.add_param_container!(
+        container, T(), GenericConstraint, ts_type, ts_name, uuids, names, (), PSI.get_time_steps(container),
+    )
+    PSI.set_subsystem!(PSI.get_attributes(param_container), PSI.get_subsystem(model))
+    parent_param = PSI.get_parameter_array_data(param_container)
+    parent_mult = PSI.get_multiplier_array_data(param_container)
+    row_of = Dict(uuid => i for (i, uuid) in enumerate(uuids))
+    multiplier = Float64(PSI.get_multiplier_value(T(), gc, PSI.get_formulation(model)()))
+    for (i, r) in enumerate(stash)
+        series = r.series[T]
+        parent_param[row_of[series.uuid], :] = series.row[1, :]
+        PSI._set_multiplier_at!(parent_mult, multiplier, i)
+        PSI.add_component_name!(PSI.get_attributes(param_container), r.name, series.uuid)
+    end
+    return
+end
+
+
+# The names of the constraints in `gcs` that have a slack on `side`.
+function _slack_names(gcs::Vector{GenericConstraint}, side)
+    return String[PSY.get_name(gc) for gc in gcs if get_sense(gc) in (side, ConstraintSense.EQ)]
+end
+
+
+# Adds the containers shared by every generic constraint of the model, over the constraints the argument
+# stage stashed; the model stage of each constraint then fills its own rows.
+function _add_generic_constraint_containers!(
+        container::PSI.OptimizationContainer, sys::PSY.System, stash::Vector{_ConstraintParameterRow},
+        model::PSI.ServiceModel{GenericConstraint, LinearFactorLimit},
+    )
+    names = String[r.name for r in stash]
+    gcs = GenericConstraint[PSY.get_component(GenericConstraint, sys, name) for name in names]
+    time_steps = PSI.get_time_steps(container)
+    for T in _CONSTRAINT_PARAMETER_TYPES
+        _add_constraint_parameters!(container, T, stash, first(gcs), model)
+    end
+    PSI.lazy_container_addition!(container, NEMConstraintLHS(), GenericConstraint, names, time_steps)
+    PSI.add_constraints_container!(container, NEMConstraintLimit(), GenericConstraint, names, time_steps)
+    if PSI.get_use_slacks(model)
+        for (var_type, side) in (
+                (GenericConstraintSlackUp, ConstraintSense.LE), (GenericConstraintSlackDown, ConstraintSense.GE),
+            )
+            slack_names = _slack_names(gcs, side)
+            isempty(slack_names) || PSI.add_variable_container!(container, var_type(), GenericConstraint, slack_names, time_steps)
+        end
+    end
+    # Not `PSI.add_constraint_dual!(container, sys, model)`: `add_dual_container!` directly is
+    # exactly what that method's scalar-`D<:PSY.Service` branch does internally.
+    for constraint_type in PSI.get_duals(model)
+        PSI.add_dual_container!(container, constraint_type, GenericConstraint, names, time_steps)
+    end
+    return
+end
+
+
 # --- construct_service!: argument + model stages ---
 
+# The argument stage creates the constraint's parameter values; the first model stage adds the shared
+# containers, and each model stage then fills the rows of its own constraint, so variables and rows keep the
+# order PSI visits the service models in.
 function PSI.construct_service!(
         container::PSI.OptimizationContainer,
         sys::PSY.System,
@@ -438,14 +545,8 @@ function PSI.construct_service!(
         incompatible_device_types::Set{<:DataType},
         network_model::PSI.NetworkModel,
     )
-    name = PSI.get_service_name(model)
-    gc = PSY.get_component(GenericConstraint, sys, name)
-    PSI.lazy_container_addition!(
-        container, NEMConstraintLHS(), GenericConstraint, [name], PSI.get_time_steps(container);
-        meta = name,
-    )
-    PSI.add_parameters!(container, NEMConstraintRHSParameter, gc, model)
-    PSI.add_parameters!(container, GenericConstraintInvocationParameter, gc, model)
+    gc = PSY.get_component(GenericConstraint, sys, PSI.get_service_name(model))
+    _stash_constraint_parameters!(container, gc, model)
     return
 end
 
@@ -459,10 +560,12 @@ function PSI.construct_service!(
         incompatible_device_types::Set{<:DataType},
         network_model::PSI.NetworkModel,
     )
-    name = PSI.get_service_name(model)
-    gc = PSY.get_component(GenericConstraint, sys, name)
-    PSY.get_available(gc) || return
-
+    scratch = _build_scratch(container)
+    if !get(scratch, :constraints_built, false)
+        scratch[:constraints_built] = true
+        _add_generic_constraint_containers!(container, sys, scratch[:constraint_parameters], model)
+    end
+    gc = PSY.get_component(GenericConstraint, sys, PSI.get_service_name(model))
     lookup = _constraint_lookup(container, sys)
     for term in get_terms(gc)
         PSI.add_to_expression!(container, NEMConstraintLHS, typeof(term), gc, term, lookup)
@@ -471,21 +574,32 @@ function PSI.construct_service!(
     # Before add_constraints! reads NEMConstraintLHS: a slack must already be merged in for the
     # constraint it relaxes to be built with it, not around it.
     _add_gc_slack_variables!(container, gc, model)
-
     PSI.add_constraints!(container, NEMConstraintLimit, gc, model)
-
-    # Not `PSI.add_constraint_dual!(container, sys, model)`: `add_dual_container!` directly is
-    # exactly what that method's scalar-`D<:PSY.Service` branch does internally.
-    if !isempty(PSI.get_duals(model))
-        time_steps = PSI.get_time_steps(container)
-        for constraint_type in PSI.get_duals(model)
-            PSI.add_dual_container!(
-                container, constraint_type, GenericConstraint, [name], time_steps; meta = name,
-            )
-        end
-    end
-
     PSI.objective_function!(container, gc, model)
+    return
+end
+
+
+# --- Per-step updates of the shared parameter containers ---
+
+const _CONSTRAINT_PARAMETERS = Union{NEMConstraintRHSParameter, GenericConstraintInvocationParameter}
+
+# PSI's service update reads one service named by the key's meta; these containers hold every constraint,
+# so each constraint's series is read in turn, and the invocation rows are reset once all are read.
+function PSI.update_container_parameter_values!(
+        container::PSI.OptimizationContainer, model::PSI.OperationModel,
+        key::PSI.ParameterKey{T, GenericConstraint}, input::PSI.DatasetContainer{PSI.InMemoryDataset},
+    ) where {T <: _CONSTRAINT_PARAMETERS}
+    param_container = PSI.get_parameter(container, key)
+    array = PSI.get_parameter_array(param_container)
+    attributes = PSI.get_attributes(param_container)
+    sys = PSI.get_system(model)
+    for name in keys(attributes.component_name_to_ts_uuid)
+        gc = PSY.get_component(GenericConstraint, sys, name)
+        isnothing(gc) && error("GenericConstraint \"$name\" is no longer in the system; cannot update parameter $key")
+        PSI._update_parameter_values!(array, T(), attributes, gc, model, input)
+    end
+    T <: PSI.ConstraintBoundParameter && PSI._apply_bound_targets!(param_container)
     return
 end
 
@@ -493,7 +607,7 @@ end
 """
     PSI.objective_function!(container, gc, model::PSI.ServiceModel{GenericConstraint, LinearFactorLimit})
 
-Prices `gc`'s elastic slacks (built by [`_add_gc_slack_variables!`](@ref), a no-op unless
+Prices `gc`'s elastic slacks (filled by [`_add_gc_slack_variables!`](@ref), a no-op unless
 `PSI.get_use_slacks(model)`) at the system base power times [`constraint_cvp_factor`](@ref) per interval
 times the Market Price Cap of the service model at the build's initial time, as constants of the
 invariant objective.
@@ -515,9 +629,11 @@ function PSI.objective_function!(
     mpc = _container_market_price_cap(container, PSI.get_initial_time(container))
     scale = base_power * interval_cost_coefficient(weight, resolution) * mpc
     invariant = _invariant_objective(container)
-    for var_type in (GenericConstraintSlackUp, GenericConstraintSlackDown)
-        PSI.has_container_key(container, var_type, GenericConstraint, name) || continue
-        slack = PSI.get_variable(container, var_type(), GenericConstraint, name)
+    for (var_type, side) in (
+            (GenericConstraintSlackUp, ConstraintSense.LE), (GenericConstraintSlackDown, ConstraintSense.GE),
+        )
+        get_sense(gc) in (side, ConstraintSense.EQ) || continue
+        slack = PSI.get_variable(container, var_type(), GenericConstraint)
         for t in time_steps
             JuMP.add_to_expression!(invariant, scale, slack[name, t])
         end

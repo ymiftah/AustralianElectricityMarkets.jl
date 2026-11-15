@@ -33,3 +33,11 @@ function _read_dual_frames(results::PSI.SimulationProblemResults, keys)
     vals = PSI.read_realized_duals(results, collect(keys))
     return Dict(key => vals[PSI.IS.Optimization.encode_key_as_string(key)] for key in keys)
 end
+
+
+# The long-format frame (`DateTime`, `value`) of each generic constraint's dual, by constraint name, from the
+# one container that holds them all.
+function _constraint_dual_frames(results, key)
+    frame = _read_dual_frames(results, [key])[key]
+    return Dict{String, DataFrame}(String(k.name) => DataFrame(g; copycols = false) for (k, g) in pairs(groupby(frame, :name)))
+end

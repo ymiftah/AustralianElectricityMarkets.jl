@@ -114,7 +114,8 @@ relaxing a `<=` row and `"down"` for one relaxing a `>=` row; for `"area_balance
 
 # Returns
 A `DataFrame` with `family`, `name`, `DateTime`, `MW`, `direction` and `variable` (the slack
-variable's key as PSI encodes it in result files, e.g. `"NEMUnitSlack__HydroDispatch__unit_ramp|up"`). The
+variable's key as PSI encodes it in result files, e.g. `"NEMUnitSlack__HydroDispatch__unit_ramp|up"`; a generic
+constraint's slack key is followed by `"__"` and the constraint name). The
 unit ramp rows are those with `family == "unit_ramp"`.
 """
 function read_constraint_violations(
@@ -137,7 +138,10 @@ function read_constraint_violations(
             kind[1] == "generic_constraint" && !(r.DateTime in get!(() -> _invoked_stamps(sys, r.name), invoked, r.name)) &&
                 continue
             direction = _violation_direction(sys, type, key.meta, r.name, kind[2])
-            push!(rows, (; family = kind[1], name = r.name, DateTime = r.DateTime, MW = r.value, direction, variable = PSI.IS.Optimization.encode_key_as_string(key)))
+            variable = PSI.IS.Optimization.encode_key_as_string(key)
+            # One container holds every generic constraint; its rows name the constraint as the key's meta would.
+            kind[1] == "generic_constraint" && (variable = "$(variable)__$(r.name)")
+            push!(rows, (; family = kind[1], name = r.name, DateTime = r.DateTime, MW = r.value, direction, variable))
         end
     end
     out = DataFrame(rows)
