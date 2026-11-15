@@ -24,7 +24,7 @@ end
                 isnothing(value) && continue
                 written = only(PowerSystems.get_time_series_values(PowerSystems.SingleTimeSeries, device, name; start_time = t, len = 1))
                 @test all(isapprox.(collect(value), collect(written); atol = 1.0e-12))
-                family = first(AEM_._closed_loop_family(name))
+                family = AEM_._closed_loop_family(name).kind
                 checked[family] = get(checked, family, 0) + 1
             end
         end

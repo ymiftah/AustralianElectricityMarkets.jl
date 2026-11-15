@@ -18,6 +18,22 @@ module _PrecompileMockData
     end
 end
 
+# Builds and executes a simulation of `problem` over `steps` of `sys`, returning it.
+function _precompile_simulation(problem, template, sys, steps)
+    model = PSI.DecisionModel(problem, template, sys; optimizer = nemde_optimizer(), initial_time = first(steps), name = "dispatch")
+    models = PSI.SimulationModels(; decision_models = [model])
+    sequence = PSI.SimulationSequence(; models = models, ini_cond_chronology = PSI.InterProblemChronology())
+    simulation = PSI.Simulation(;
+        name = "replication", steps = length(steps), models = models,
+        sequence = sequence, simulation_folder = mktempdir(), initial_time = first(steps),
+    )
+    PSI.build!(simulation; store_systems_in_results = false) == PSI.SimulationBuildStatus.BUILT ||
+        error("precompile replication failed to build")
+    PSI.execute!(simulation) == PSI.RunStatus.SUCCESSFULLY_FINALIZED ||
+        error("precompile replication failed to execute")
+    return simulation
+end
+
 # Builds, executes and reads back a two-interval replay through the public API, with the inputs and
 # steps of the replay workflow (`nem_system` followed by a PSI simulation).
 function _precompile_workload()
@@ -37,19 +53,7 @@ function _precompile_workload()
         _PrecompileMockData.DuckDB.close(db.db)
     end
     template = template_nemde()
-    model = PSI.DecisionModel(
-        NEMDispatchProblem, template, sys; optimizer = nemde_optimizer(), initial_time = first(steps), name = "dispatch",
-    )
-    models = PSI.SimulationModels(; decision_models = [model])
-    sequence = PSI.SimulationSequence(; models = models, ini_cond_chronology = PSI.InterProblemChronology())
-    simulation = PSI.Simulation(;
-        name = "replication", steps = length(steps), models = models,
-        sequence = sequence, simulation_folder = mktempdir(), initial_time = first(steps),
-    )
-    PSI.build!(simulation; store_systems_in_results = false) == PSI.SimulationBuildStatus.BUILT ||
-        error("precompile replication failed to build")
-    PSI.execute!(simulation) == PSI.RunStatus.SUCCESSFULLY_FINALIZED ||
-        error("precompile replication failed to execute")
+    simulation = _precompile_simulation(NEMDispatchProblem, template, sys, steps)
     results = PSI.get_decision_problem_results(PSI.SimulationResults(simulation), "dispatch")
     # Realized reads of the dispatch variable and the area balance dual, as the replay results do.
     variable_names = [
@@ -58,6 +62,8 @@ function _precompile_workload()
     ]
     PSI.read_realized_variables(results, variable_names)
     PSI.read_realized_duals(results, [PSI.ConstraintKey(PSI.CopperPlateBalanceConstraint, PSY.Area)])
+    # The closed-loop path (state update, per-step inputs) compiles on its own two-step run.
+    _precompile_simulation(NEMClosedLoopDispatchProblem, template, sys, steps)
     return
 end
 

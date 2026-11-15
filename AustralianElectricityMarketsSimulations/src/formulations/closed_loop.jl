@@ -147,74 +147,149 @@ series, then each component whose series is state-dependent (see `is_state_depen
 function PSI.update_parameter_values!(
         model::PSI.DecisionModel{NEMClosedLoopDispatchProblem}, key::PSI.ParameterKey{P, T}, state::PSI.SimulationState,
     ) where {P <: PSI.TimeSeriesParameter, T <: PSY.Component}
-    @invoke PSI.update_parameter_values!(model::PSI.OperationModel, key::PSI.ParameterKey{P, T}, state::PSI.SimulationState)
     container = PSI.get_optimization_container(model)
     param_container = PSI.get_parameter(container, key)
     attributes = PSI.get_attributes(param_container)
-    attributes isa PSI.TimeSeriesAttributes || return
-    series = PSI.get_time_series_name(attributes)
-    AustralianElectricityMarkets.is_state_dependent_input(series) || return
-    _update_state_dependent_parameter!(model, param_container, P(), T, series, state)
+    series = attributes isa PSI.TimeSeriesAttributes ? PSI.get_time_series_name(attributes) : nothing
+    family = isnothing(series) ? nothing : AustralianElectricityMarkets._closed_loop_family(series)
+    if isnothing(family) || (family.kind == :ramp && !(T <: PSY.Storage))
+        _stock_update!(P(), model, key, state, true)
+        return
+    end
+    # The overwritten series applies the coefficient and bound targets once, after the overwrite.
+    _stock_update!(P(), model, key, state, false)
+    _update_state_dependent_parameter!(model, key, param_container, P(), T, family, series, state)
+    _apply_targets!(P(), param_container)
     return
 end
 
-# The closed-loop input values of the step at `t`, shared by the parameters that read one series (the four FCAS
-# offer parameters read one effective-offer series); a new step starts a new cache.
+# PowerSimulations' update of `key`; `targets = false` skips applying the coefficient and bound targets of the
+# parameter, which the caller applies after overwriting the values.
+function _stock_update!(::P, model, key::PSI.ParameterKey{P, T}, state::PSI.SimulationState, targets::Bool) where {P, T}
+    if targets || !(P <: Union{PSI.ConstraintCoefficientParameter, PSI.ConstraintBoundParameter})
+        @invoke PSI.update_parameter_values!(model::PSI.OperationModel, key::PSI.ParameterKey{P, T}, state::PSI.SimulationState)
+        return
+    end
+    container = PSI.get_optimization_container(model)
+    param_container = PSI.get_parameter(container, key)
+    PSI._update_parameter_values!(
+        PSI.get_parameter_array(param_container), P(), PSI.get_attributes(param_container), T, model, PSI.get_decision_states(state),
+    )
+    PSI.IS.@record :execution PSI.ParameterUpdateEvent(
+        P, T, PSI.get_parameter_attributes(container, key), PSI.get_current_timestamp(model), PSI.get_name(model),
+    )
+    return
+end
+
+# The closed-loop values of one step, shared by the parameters that read one FCAS market: the four offer parameters
+# and the ramping parameter of a market read one evaluation per device. A new step starts a new cache.
+const _FCASStepValues = Union{
+    Nothing, Tuple{NTuple{2, Union{Nothing, NTuple{15, Float64}}}, Union{Nothing, NTuple{2, Float64}}},
+}
+
+mutable struct _ClosedLoopStepCache
+    time::DateTime
+    fcas::Dict{Tuple{AustralianElectricityMarkets.ClosedLoopInputs, BidType}, _FCASStepValues}
+end
+
 function _closed_loop_cache!(model, t::DateTime)
     ext = PSI.get_ext(PSI.get_settings(model))
-    entry = get(ext, "closed_loop_cache", nothing)
-    if isnothing(entry) || first(entry) != t
-        entry = (t, Dict{Tuple{DataType, String, String}, Any}())
-        ext["closed_loop_cache"] = entry
+    cache = get!(() -> _ClosedLoopStepCache(t, Dict{Tuple{AustralianElectricityMarkets.ClosedLoopInputs, BidType}, _FCASStepValues}()), ext, "closed_loop_cache")
+    cache = cache::_ClosedLoopStepCache
+    if cache.time != t
+        empty!(cache.fcas)
+        cache.time = t
     end
-    return last(entry)
+    return cache
 end
 
 # Each device's prepared closed-loop inputs, read once for the whole simulation.
 function _closed_loop_inputs!(model, device, base::Float64)
     ext = PSI.get_ext(PSI.get_settings(model))
-    store = get!(() -> Dict{Tuple{DataType, String}, Any}(), ext, "closed_loop_inputs")
+    store = get!(() -> Dict{Tuple{DataType, String}, AustralianElectricityMarkets.ClosedLoopInputs}(), ext, "closed_loop_inputs")
+    store = store::Dict{Tuple{DataType, String}, AustralianElectricityMarkets.ClosedLoopInputs}
     return get!(() -> AustralianElectricityMarkets.closed_loop_inputs(device, base), store, (typeof(device), PSY.get_name(device)))
 end
 
-function _update_state_dependent_parameter!(model, param_container, param::P, ::Type{T}, series, state) where {P, T}
+# A device overwritten by a state-dependent parameter: its name, parameter column and closed-loop inputs, `leader`
+# the entry of the first device sharing its column (`0` for the first), and `last`, the value of the step.
+mutable struct _StateEntry
+    const name::String
+    const column::Int
+    const inputs::AustralianElectricityMarkets.ClosedLoopInputs
+    const leader::Int
+    last::Any
+end
+
+struct _StateEntries
+    family::AustralianElectricityMarkets._ClosedLoopFamily
+    entries::Vector{_StateEntry}
+end
+
+# The value of `family` for one device at `t`, from the step cache for an FCAS market; `nothing` when the device has none.
+function _step_value(cache::_ClosedLoopStepCache, inputs, family, t::DateTime, output, name::String, base::Float64)
+    if family.kind == :fcas_offer || family.kind == :fcas_ramping
+        values = get!(cache.fcas, (inputs, family.bid_type)) do
+            return AustralianElectricityMarkets._closed_loop_fcas_values(inputs, family.bid_type, t, output(name) * base)
+        end
+        return AustralianElectricityMarkets._closed_loop_fcas_select(values, family)
+    end
+    return AustralianElectricityMarkets._closed_loop_input(inputs, family, t, output(name) * base)
+end
+
+# The devices a state-dependent parameter overwrites, built on first use: those with a value for `family`.
+function _state_entries!(model, key, param_container, ::Type{T}, family, cache, t, output, base) where {T}
+    ext = PSI.get_ext(PSI.get_settings(model))
+    store = get!(() -> Dict{PSI.ParameterKey, _StateEntries}(), ext, "closed_loop_entries")
+    store = store::Dict{PSI.ParameterKey, _StateEntries}
+    return get!(store, key) do
+        attributes = PSI.get_attributes(param_container)
+        lookup = PSI.get_parameter_array(param_container).lookup[1]
+        device_model = PSI.get_model(PSI.get_template(model), T)
+        entries = _StateEntry[]
+        first_of = Dict{Int, Int}()
+        for device in PSI.get_available_components(device_model, PSI.get_system(model))
+            name = PSY.get_name(device)
+            uuid = get(attributes.component_name_to_ts_uuid, name, nothing)
+            isnothing(uuid) && continue
+            inputs = _closed_loop_inputs!(model, device, base)
+            isnothing(_step_value(cache, inputs, family, t, output, name, base)) && continue
+            column = lookup[uuid]
+            push!(entries, _StateEntry(name, column, inputs, get(first_of, column, 0), nothing))
+            haskey(first_of, column) || (first_of[column] = length(entries))
+        end
+        return _StateEntries(family, entries)
+    end
+end
+
+function _update_state_dependent_parameter!(model, key, param_container, param::P, ::Type{T}, family, series, state) where {P, T}
     container = PSI.get_optimization_container(model)
-    attributes = PSI.get_attributes(param_container)
     array = PSI.get_parameter_array(param_container)
     axes_ = PSI.lookup_additional_axes(array)
-    lookup = array.lookup[1]
     t = PSI.get_current_time(model)
     base = PSI.get_base_power(container)
     output = _solved_output(state, T)
-    device_model = PSI.get_model(PSI.get_template(model), T)
-    written = Dict{String, Tuple{String, Any}}()
     cache = _closed_loop_cache!(model, t)
-    for device in PSI.get_available_components(device_model, PSI.get_system(model))
-        name = PSY.get_name(device)
-        uuid = get(attributes.component_name_to_ts_uuid, name, nothing)
-        isnothing(uuid) && continue
-        value = get!(cache, (T, name, series)) do
-            AustralianElectricityMarkets.closed_loop_input(_closed_loop_inputs!(model, device, base), series, t, output(name) * base)
-        end
-        isnothing(value) && continue
-        if haskey(written, uuid)
-            other, previous = written[uuid]
-            previous == value || throw(
+    entries = _state_entries!(model, key, param_container, T, family, cache, t, output, base).entries
+    for (i, entry) in enumerate(entries)
+        value = _step_value(cache, entry.inputs, family, t, output, entry.name, base)
+        entry.last = value
+        if entry.leader != 0
+            leader = entries[entry.leader]
+            leader.last == value || throw(
                 ArgumentError(
-                    "closed-loop replay: \"$name\" and \"$other\" share the series behind $(series), so their state-dependent values cannot differ.",
+                    "closed-loop replay: \"$(entry.name)\" and \"$(leader.name)\" share the series behind $(series), so their state-dependent values cannot differ.",
                 ),
             )
             continue
         end
-        written[uuid] = (name, value)
         unwrapped = PSI._unwrap_for_param(param, value, axes_)
-        all(isfinite, unwrapped) || throw(ArgumentError("closed-loop replay: the $(series) value of \"$name\" at $t is not finite."))
-        PSI._set_param_value_at!(array.data, unwrapped, lookup[uuid], 1)
+        all(isfinite, unwrapped) || throw(ArgumentError("closed-loop replay: the $(series) value of \"$(entry.name)\" at $t is not finite."))
+        PSI._set_param_value_at!(array.data, unwrapped, entry.column, 1)
     end
-    _reapply_targets!(param, param_container)
     return
 end
 
-_reapply_targets!(::PSI.ConstraintCoefficientParameter, param_container) = PSI._apply_coefficient_targets!(param_container)
-_reapply_targets!(::PSI.ConstraintBoundParameter, param_container) = PSI._apply_bound_targets!(param_container)
-_reapply_targets!(::PSI.ParameterType, _) = nothing
+_apply_targets!(::PSI.ConstraintCoefficientParameter, param_container) = PSI._apply_coefficient_targets!(param_container)
+_apply_targets!(::PSI.ConstraintBoundParameter, param_container) = PSI._apply_bound_targets!(param_container)
+_apply_targets!(::PSI.ParameterType, _) = nothing

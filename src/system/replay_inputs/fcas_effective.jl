@@ -309,27 +309,6 @@ function _fcas_both_sides_enabled_at(window::_FCASWindow, device, gen::_FCASSide
 end
 
 
-# The enablement of `device`'s regulation `bid_type` at interval `t` for the unit as a whole: either side enabled for
-# `BOTH`, the one side otherwise.
-function _fcas_regulation_enabled_at(
-        window::_FCASWindow, device, bid_type::BidType, direction::FCASBidDirection, sides::Dict{Bool, _FCASSide}, energy, t::Int,
-    )
-    if direction == FCASBidDirection.BOTH
-        return |(_fcas_both_sides_enabled_at(window, device, sides[false], sides[true], energy, t)...)
-    end
-    decremental = direction == FCASBidDirection.DECREMENTAL
-    return _fcas_side_enabled_at(window, device, bid_type, decremental, sides[decremental], energy, t)
-end
-
-
-# `_fcas_regulation_enabled_at` over every interval of the window.
-function _fcas_regulation_enabled(
-        window::_FCASWindow, device, bid_type::BidType, direction::FCASBidDirection, sides::Dict{Bool, _FCASSide}, energy,
-    )
-    return [_fcas_regulation_enabled_at(window, device, bid_type, direction, sides, energy, t) for t in eachindex(window.stamps)]
-end
-
-
 """
     _FCASPrepared
 
@@ -340,15 +319,15 @@ interval is read from `window.states`, so a closed-loop replay sets it and evalu
 - `window`: the [`_FCASWindow`](@ref).
 - `energy`: the energy limits, `(; gen, load)`.
 - `direction`: the [`FCASBidDirection`](@ref) of the offer.
-- `sides`: the scaled trapeziums and band widths of each offered side, keyed by `decremental`.
+- `sides`: the scaled trapeziums and band widths of the generation and load side, `nothing` for a side not offered.
 - `inactive`: the limit of an inactive offer, per-unit.
 - `capability`, `bdu`: the regulation AGC capabilities of the joint and BDU ramping rows, zeros for a contingency market.
 """
 struct _FCASPrepared
     window::_FCASWindow
-    energy::NamedTuple
+    energy::@NamedTuple{gen::Vector{Float64}, load::Vector{Float64}}
     direction::FCASBidDirection
-    sides::Dict{Bool, _FCASSide}
+    sides::Tuple{Union{Nothing, _FCASSide}, Union{Nothing, _FCASSide}}
     inactive::Float64
     capability::Vector{Float64}
     bdu::Vector{Float64}
@@ -357,83 +336,114 @@ end
 
 function _fcas_prepare(window::_FCASWindow, device, bid_type::BidType, direction::FCASBidDirection, inactive::Float64, energy)
     n = length(window.stamps)
-    sides = Dict{Bool, _FCASSide}(dec => _fcas_side(window, device, bid_type, dec) for dec in fcas_offer_sides(direction))
+    offered = fcas_offer_sides(direction)
+    gen = false in offered ? _fcas_side(window, device, bid_type, false) : nothing
+    load = true in offered ? _fcas_side(window, device, bid_type, true) : nothing
     regulation = bid_type in FCAS_REGULATION_MARKETS
     capability = regulation ? _fcas_capability_values(_fcas_agc_capability(window, device, _fcas_ramp_rate_service(device, bid_type)), n) : zeros(n)
     bdu = regulation && direction == FCASBidDirection.BOTH ? _fcas_capability_values(_fcas_agc_capability(window, device, bid_type), n) : zeros(n)
-    return _FCASPrepared(window, energy, direction, sides, inactive, capability, bdu)
+    limits = (gen = Vector{Float64}(energy.gen), load = Vector{Float64}(energy.load))
+    return _FCASPrepared(window, limits, direction, (gen, load), inactive, capability, bdu)
 end
 
 
-# The effective offers of a prepared offer at interval `t`, keyed by `decremental`, and its regulation ramping limits
-# `(joint, bdu)` (AEMO *FCAS Model in NEMDE* §6.1, §6.4), `nothing` for a contingency market.
+# The effective offers of a prepared offer at interval `t` as `(gen, load)`, `nothing` for a side not offered, and its
+# regulation ramping limits `(joint, bdu)` (AEMO *FCAS Model in NEMDE* §6.1, §6.4), `nothing` for a contingency market.
 function _fcas_values_at(prep::_FCASPrepared, device, bid_type::BidType, t::Int)
     (; window, energy, direction, sides, inactive) = prep
+    gen, load = sides
     regulation = bid_type in FCAS_REGULATION_MARKETS
-    masks = if direction == FCASBidDirection.BOTH && device isa PSY.Storage && regulation
-        gen_enabled, load_enabled = _fcas_both_sides_enabled_at(window, device, sides[false], sides[true], energy, t)
-        Dict{Bool, Bool}(false => gen_enabled, true => load_enabled)
+    storage = device isa PSY.Storage
+    both = direction == FCASBidDirection.BOTH
+    # A regulation unit offering both sides is enabled as a whole by the combined stranded rule; a storage device's
+    # per-side masks are that rule's own result.
+    joint = if regulation && both
+        _fcas_both_sides_enabled_at(window, device, gen, load, energy, t)
     else
-        Dict{Bool, Bool}(dec => _fcas_side_enabled_at(window, device, bid_type, dec, side, energy, t) for (dec, side) in sides)
+        nothing
     end
-    offers = Dict{Bool, NTuple{15, Float64}}(
-        dec => fcas_effective_offer(sides[dec].trapeziums[t], sides[dec].widths[t], mask, inactive) for (dec, mask) in masks
+    gen_enabled = if isnothing(gen)
+        false
+    elseif storage && !isnothing(joint)
+        joint[1]
+    else
+        _fcas_side_enabled_at(window, device, bid_type, false, gen, energy, t)
+    end
+    load_enabled = if isnothing(load)
+        false
+    elseif storage && !isnothing(joint)
+        joint[2]
+    else
+        _fcas_side_enabled_at(window, device, bid_type, true, load, energy, t)
+    end
+    offers = (
+        isnothing(gen) ? nothing : fcas_effective_offer(gen.trapeziums[t], gen.widths[t], gen_enabled, inactive),
+        isnothing(load) ? nothing : fcas_effective_offer(load.trapeziums[t], load.widths[t], load_enabled, inactive),
     )
     regulation || return offers, nothing
-    enabled = _fcas_regulation_enabled_at(window, device, bid_type, direction, sides, energy, t)
+    enabled = if !isnothing(joint)
+        joint[1] | joint[2]
+    else
+        direction == FCASBidDirection.DECREMENTAL ? load_enabled : gen_enabled
+    end
     upper = bid_type == fcas_upper_regulation_service(device)
     return offers, fcas_ramping_limits(prep.capability[t], prep.bdu[t], enabled, upper, window.fast_start[t], inactive, window.states[t])
 end
 
 
-# The effective offers of `device`'s `bid_type` per interval per-unit, keyed by each offer's `decremental` flag, and the
-# regulation ramping limits (`nothing` for a contingency market).
-function _fcas_effective_values(
-        window::_FCASWindow, device, bid_type::BidType, direction::FCASBidDirection, inactive::Float64, energy,
-    )
-    prep = _fcas_prepare(window, device, bid_type, direction, inactive, energy)
-    values = [_fcas_values_at(prep, device, bid_type, t) for t in eachindex(window.stamps)]
-    offers = Dict{Bool, Vector{NTuple{15, Float64}}}(dec => [first(v)[dec] for v in values] for dec in keys(prep.sides))
-    bid_type in FCAS_REGULATION_MARKETS || return offers, nothing
-    return offers, [last(v) for v in values]
+# The effective offers of a prepared offer per interval as `(gen, load)` vectors (`nothing` for a side not offered), and
+# the regulation ramping limits (`nothing` for a contingency market).
+function _fcas_effective_values(prep::_FCASPrepared, device, bid_type::BidType)
+    values = [_fcas_values_at(prep, device, bid_type, t) for t in eachindex(prep.window.stamps)]
+    gen = isnothing(prep.sides[1]) ? nothing : [first(v)[1] for v in values]
+    load = isnothing(prep.sides[2]) ? nothing : [first(v)[2] for v in values]
+    ramping = bid_type in FCAS_REGULATION_MARKETS ? [last(v) for v in values] : nothing
+    return (gen, load), ramping
+end
+
+
+# The timestamps and resolution of `device`'s FCAS bid series for `bid_type`, from its trapezium series, for a device
+# with a bid in that market and `nothing` otherwise.
+function _fcas_bid_stamps(device::PSY.Device, bid_type::BidType)
+    direction = fcas_bid_direction(device, bid_type)
+    direction == FCASBidDirection.NONE && return nothing
+    side = direction == FCASBidDirection.DECREMENTAL ? OfferSide.LOAD : OfferSide.GEN
+    bid = _fcas_side_bid(device, bid_type, side)
+    isnothing(bid) && throw(ArgumentError("\"$(PSY.get_name(device))\" has no FCAS bid for $(string(bid_type)) on $(string(side))."))
+    name = IS.get_name(_fcas_series_key(device, bid.trapezium, :trapezium))
+    return PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, name), IS.get_resolution(PSY.get_time_series(PSY.SingleTimeSeries, device, name))
 end
 
 
 """
-    _attach_fcas_effective_series!(sys, device, bid_type, base)
+    _attach_fcas_effective_series!(sys, device, bid_type, window, energy)
 
 Adds `device`'s effective offer series for `bid_type` ([`fcas_effective_series_name`](@ref)) and, for a regulation
-market, its ramping limits ([`fcas_ramping_series_name`](@ref)), on the timestamps of its bid's trapezium series.
-Values are per-unit of `base`, the system base power in MVA. No-op for a device without a `bid_type` FCAS bid.
+market, its ramping limits ([`fcas_ramping_series_name`](@ref)), on the timestamps of `window`. Values are per-unit of
+the system base power. No-op for a device without a `bid_type` FCAS bid.
 
 # Arguments
 - `sys`: the `System` to add to.
 - `device`: the bidding device.
 - `bid_type`: the FCAS market.
-- `base`: the system base power, MVA.
+- `window`: the [`_FCASWindow`](@ref) of the device over its bid series, shared by its markets.
+- `energy`: the energy limits of the device over `window`, from `_fcas_energy_limits`.
 
 # Returns
 `nothing`.
 """
-function _attach_fcas_effective_series!(sys::PSY.System, device::PSY.Device, bid_type::BidType, base::Float64)
+function _attach_fcas_effective_series!(sys::PSY.System, device::PSY.Device, bid_type::BidType, window::_FCASWindow, energy)
     direction = fcas_bid_direction(device, bid_type)
     direction == FCASBidDirection.NONE && return
-    side = direction == FCASBidDirection.DECREMENTAL ? OfferSide.LOAD : OfferSide.GEN
-    bid = _fcas_side_bid(device, bid_type, side)
-    isnothing(bid) && throw(ArgumentError("\"$(PSY.get_name(device))\" has no FCAS bid for $(string(bid_type)) on $(string(side))."))
-    name = IS.get_name(_fcas_series_key(device, bid.trapezium, :trapezium))
-    stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, name)
-    resolution = IS.get_resolution(PSY.get_time_series(PSY.SingleTimeSeries, device, name))
-    window = _fcas_window(device, stamps, resolution, base)
-    energy = _fcas_energy_limits(window, device)
-    offers, ramping = _fcas_effective_values(window, device, bid_type, direction, FCAS_INACTIVE_LIMIT_MW / base, energy)
-    for (decremental, values) in offers
-        PSY.add_time_series!(
-            sys, device, single_series(fcas_effective_series_name(bid_type, decremental), first(stamps), values, resolution),
-        )
+    prep = _fcas_prepare(window, device, bid_type, direction, FCAS_INACTIVE_LIMIT_MW / window.base, energy)
+    (gen, load), ramping = _fcas_effective_values(prep, device, bid_type)
+    start = first(window.stamps)
+    for (decremental, values) in ((false, gen), (true, load))
+        isnothing(values) && continue
+        PSY.add_time_series!(sys, device, single_series(fcas_effective_series_name(bid_type, decremental), start, values, window.resolution))
     end
     isnothing(ramping) && return
-    PSY.add_time_series!(sys, device, single_series(fcas_ramping_series_name(bid_type), first(stamps), ramping, resolution))
+    PSY.add_time_series!(sys, device, single_series(fcas_ramping_series_name(bid_type), start, ramping, window.resolution))
     return
 end
 
@@ -453,15 +463,33 @@ of the system base. The AGC ramp rates it reads must already be written by [`_se
 """
 function _set_fcas_effective_offers!(sys::PSY.System)
     base = PSY.get_base_power(sys)
-    done = Set{Tuple{DataType, String, BidType}}()
+    index = _contributing_device_index(sys)
+    markets = Dict{Base.UUID, Vector{BidType}}()
+    devices = PSY.Device[]
     for svc in PSY.get_components(FCASService, sys)
         bid_type = get_bid_type(svc)
-        for device in PSY.get_contributing_devices(sys, svc)
-            key = (typeof(device), PSY.get_name(device), bid_type)
-            key in done && continue
-            push!(done, key)
-            PSY.get_available(device) || continue
-            _attach_fcas_effective_series!(sys, device, bid_type, base)
+        for device in get(index, IS.get_uuid(svc), PSY.Device[])
+            bid_types = get!(markets, IS.get_uuid(device)) do
+                push!(devices, device)
+                return BidType[]
+            end
+            bid_type in bid_types || push!(bid_types, bid_type)
+        end
+    end
+    for device in devices
+        PSY.get_available(device) || continue
+        window = nothing
+        energy = nothing
+        for bid_type in markets[IS.get_uuid(device)]
+            found = _fcas_bid_stamps(device, bid_type)
+            isnothing(found) && continue
+            stamps, resolution = found
+            # The window and energy limits are read once per device, and again only if a market's bid series differ.
+            if isnothing(window) || window.stamps != stamps || window.resolution != resolution
+                window = _fcas_window(device, stamps, resolution, base)
+                energy = _fcas_energy_limits(window, device)
+            end
+            _attach_fcas_effective_series!(sys, device, bid_type, window, energy)
         end
     end
     return

@@ -85,19 +85,20 @@ end
         caps = AEM._fcas_capability_values(
             AEM._fcas_agc_capability(window, device, AEM._fcas_ramp_rate_service(device, service)), length(stamps),
         )
-        # The writer's own enablement is the non-state half of its ramping rule.
         direction = fcas_bid_direction(device, service)
-        sides = Dict{Bool, AEM._FCASSide}(dec => AEM._fcas_side(window, device, service, dec) for dec in AEM.fcas_offer_sides(direction))
-        enabled = AEM._fcas_regulation_enabled(window, device, service, direction, sides, AEM._fcas_energy_limits(window, device))
+        prep = AEM._fcas_prepare(window, device, service, direction, inactive, AEM._fcas_energy_limits(window, device))
         upper = service == fcas_upper_regulation_service(device)
+        sentinel = upper ? inactive : -inactive
         written = [entry[1] for entry in _fw_written(device, name)]
         for i in eachindex(stamps)
             state = window.states[i]
-            if AEM.fcas_ramping_active(caps[i], state) && enabled[i] && !AEM.fcas_joint_ramping_exempt(state, window.fast_start[i])
+            # The evaluator's own enablement is the non-state half of the ramping rule.
+            @test last(AEM._fcas_values_at(prep, device, service, i))[1] ≈ written[i] rtol = 1.0e-12
+            if AEM.fcas_ramping_active(caps[i], state) && !AEM.fcas_joint_ramping_exempt(state, window.fast_start[i]) && !(written[i] ≈ sentinel)
                 @test AEM.fcas_ramping_limit(caps[i], upper, state) ≈ written[i] rtol = 1.0e-12
                 active_rows += 1
             else
-                @test written[i] ≈ (upper ? inactive : -inactive)
+                @test written[i] ≈ sentinel
                 inactive_rows += 1
             end
         end

@@ -1,22 +1,33 @@
 # The state-dependent replay inputs of one interval for a given starting output, computed by the same writer
 # code that derives them from AEMO's observed state. A closed-loop replay reads them each step.
 
-# The family of each state-dependent series name, `nothing` for the other series.
-const _CLOSED_LOOP_FAMILIES = Dict{String, Tuple{Symbol, Any}}()
-
-function _closed_loop_family(name::AbstractString)
-    if isempty(_CLOSED_LOOP_FAMILIES)
-        _CLOSED_LOOP_FAMILIES[NEM_SERIES.ramp_up_rate] = (:ramp, :up)
-        _CLOSED_LOOP_FAMILIES[NEM_SERIES.ramp_down_rate] = (:ramp, :down)
-        _CLOSED_LOOP_FAMILIES[NEM_STATE_INPUT_SERIES.fixed_load] = (:fixed_load, :target)
-        _CLOSED_LOOP_FAMILIES[NEM_STATE_INPUT_SERIES.fixed_load_invoked] = (:fixed_load, :invoked)
-        for bid_type in instances(BidType), decremental in (false, true)
-            _CLOSED_LOOP_FAMILIES[fcas_effective_series_name(bid_type, decremental)] = (:fcas_offer, (bid_type, decremental))
-            _CLOSED_LOOP_FAMILIES[fcas_ramping_series_name(bid_type)] = (:fcas_ramping, bid_type)
-        end
-    end
-    return get(_CLOSED_LOOP_FAMILIES, name, nothing)
+# The kind of a state-dependent series: `kind` is `:ramp` (`flag` set for the up rate), `:fixed_load` (`flag` set for the
+# target, clear for the invocation), `:fcas_offer` (`flag` is `decremental`) or `:fcas_ramping`; `bid_type` is the FCAS market.
+struct _ClosedLoopFamily
+    kind::Symbol
+    flag::Bool
+    bid_type::BidType
 end
+
+# The family of each state-dependent series name; the other series have none.
+function _closed_loop_families()
+    none = first(instances(BidType))
+    families = Dict{String, _ClosedLoopFamily}(
+        NEM_SERIES.ramp_up_rate => _ClosedLoopFamily(:ramp, true, none),
+        NEM_SERIES.ramp_down_rate => _ClosedLoopFamily(:ramp, false, none),
+        NEM_STATE_INPUT_SERIES.fixed_load => _ClosedLoopFamily(:fixed_load, true, none),
+        NEM_STATE_INPUT_SERIES.fixed_load_invoked => _ClosedLoopFamily(:fixed_load, false, none),
+    )
+    for bid_type in instances(BidType), decremental in (false, true)
+        families[fcas_effective_series_name(bid_type, decremental)] = _ClosedLoopFamily(:fcas_offer, decremental, bid_type)
+        families[fcas_ramping_series_name(bid_type)] = _ClosedLoopFamily(:fcas_ramping, false, bid_type)
+    end
+    return families
+end
+
+const _CLOSED_LOOP_FAMILIES = _closed_loop_families()
+
+_closed_loop_family(name::AbstractString) = get(_CLOSED_LOOP_FAMILIES, name, nothing)
 
 
 """
@@ -56,6 +67,31 @@ function closed_loop_unit_state(device, t::DateTime, initial_mw::Real)
 end
 
 
+# The storage ramp inputs of one device over the System's range, as `_storage_ramp_at` reads them.
+struct _ClosedLoopRamp
+    minutes::Float64
+    gen_up::Vector{Float64}
+    gen_down::Vector{Float64}
+    load_up::Vector{Float64}
+    load_down::Vector{Float64}
+    up::Vector{Float64}
+    down::Vector{Float64}
+end
+
+function _ClosedLoopRamp(r)
+    return _ClosedLoopRamp(
+        Float64(r.minutes), Vector{Float64}(r.gen_up), Vector{Float64}(r.gen_down), Vector{Float64}(r.load_up),
+        Vector{Float64}(r.load_down), Vector{Float64}(r.up), Vector{Float64}(r.down),
+    )
+end
+
+# The fixed loading in MW of one device on each side over the System's range.
+struct _ClosedLoopFixedLoad
+    gen::Vector{Float64}
+    load::Vector{Float64}
+end
+
+
 """
     ClosedLoopInputs
 
@@ -70,10 +106,10 @@ mutable struct ClosedLoopInputs
     resolution::Dates.Period
     index::Dict{DateTime, Int}
     observed::Union{Nothing, Vector{NEMUnitState}}
-    ramp::Any
-    fixed_load::Any
-    fcas_window::Any
-    fcas::Dict{BidType, Any}
+    ramp::Union{Nothing, _ClosedLoopRamp}
+    fixed_load::Union{Nothing, _ClosedLoopFixedLoad}
+    fcas_window::Union{Nothing, _FCASWindow}
+    fcas::Dict{BidType, Union{Nothing, _FCASPrepared}}
 end
 
 
@@ -97,7 +133,10 @@ function closed_loop_inputs(device, base::Real)
     ts = IS.get_time_series(device, key)
     stamps = collect(PSY.TimeSeries.timestamp(PSY.get_time_series_array(device, ts)))
     index = Dict(t => i for (i, t) in enumerate(stamps))
-    return ClosedLoopInputs(device, Float64(base), stamps, IS.get_resolution(ts), index, nothing, nothing, nothing, nothing, Dict{BidType, Any}())
+    return ClosedLoopInputs(
+        device, Float64(base), stamps, IS.get_resolution(ts), index, nothing, nothing, nothing, nothing,
+        Dict{BidType, Union{Nothing, _FCASPrepared}}(),
+    )
 end
 
 
@@ -116,7 +155,7 @@ function _ramp_inputs!(inputs::ClosedLoopInputs)
         telemetry = _nem_unit_data(inputs.device).telemetry
         up = _bid_series(inputs.device, telemetry.ramp_up_limit, :ramp_up_limit)
         hours = Dates.value(Millisecond(up.resolution)) / 3_600_000
-        inputs.ramp = _storage_ramp_inputs(inputs.device, up, hours)
+        inputs.ramp = _ClosedLoopRamp(_storage_ramp_inputs(inputs.device, up, hours))
     end
     return inputs.ramp
 end
@@ -124,9 +163,9 @@ end
 
 function _fixed_load_inputs!(inputs::ClosedLoopInputs)
     if isnothing(inputs.fixed_load)
-        inputs.fixed_load = (;
-            gen = _fixed_load_mw_series(inputs.device, OfferSide.GEN, inputs.stamps),
-            load = _fixed_load_mw_series(inputs.device, OfferSide.LOAD, inputs.stamps),
+        inputs.fixed_load = _ClosedLoopFixedLoad(
+            _fixed_load_mw_series(inputs.device, OfferSide.GEN, inputs.stamps),
+            _fixed_load_mw_series(inputs.device, OfferSide.LOAD, inputs.stamps),
         )
     end
     return inputs.fixed_load
@@ -142,8 +181,21 @@ function _fcas_inputs!(inputs::ClosedLoopInputs, bid_type::BidType)
             inputs.fcas_window = _fcas_window(inputs.device, inputs.stamps, inputs.resolution, inputs.base; states = _observed_states!(inputs))
         end
         window = inputs.fcas_window
-        _fcas_prepare(window, inputs.device, bid_type, direction, FCAS_INACTIVE_LIMIT_MW / inputs.base, _fcas_energy_limits(window, inputs.device))
+        return _fcas_prepare(window, inputs.device, bid_type, direction, FCAS_INACTIVE_LIMIT_MW / inputs.base, _fcas_energy_limits(window, inputs.device))
     end
+end
+
+
+# The effective FCAS offers `(gen, load)` and regulation ramping limits of the device in `bid_type` at the interval
+# beginning at `t` when it starts the interval at `initial_mw`, or `nothing` when it does not offer the market. One call
+# serves both offer sides and the ramping limits of the market.
+function _closed_loop_fcas_values(inputs::ClosedLoopInputs, bid_type::BidType, t::DateTime, initial_mw::Real)
+    i = inputs.index[t]
+    prep = _fcas_inputs!(inputs, bid_type)
+    isnothing(prep) && return nothing
+    state = _closed_loop_state(inputs, i, initial_mw)
+    prep.window.states[i] = NEMUnitState(state.initial_mw / inputs.base, state.dispatch_mode)
+    return _fcas_values_at(prep, inputs.device, bid_type, i)
 end
 
 
@@ -169,28 +221,34 @@ non-storage device, a series name that is not state-dependent, an FCAS market th
 function closed_loop_input(inputs::ClosedLoopInputs, series_name::AbstractString, t::DateTime, initial_mw::Real)
     family = _closed_loop_family(series_name)
     isnothing(family) && return nothing
-    kind, arg = family
+    return _closed_loop_input(inputs, family, t, initial_mw)
+end
+
+# The value of the series of `family`; the FCAS families read `_closed_loop_fcas_values`.
+function _closed_loop_input(inputs::ClosedLoopInputs, family::_ClosedLoopFamily, t::DateTime, initial_mw::Real)
+    kind = family.kind
     device = inputs.device
     i = inputs.index[t]
     if kind == :ramp
         device isa PSY.Storage || return nothing
         up, down = _storage_ramp_at(_ramp_inputs!(inputs), i, initial_mw)
-        value = arg == :up ? up : down
+        value = family.flag ? up : down
         return isnan(value) ? 0.0 : value / 60 / inputs.base
     end
-    state = _closed_loop_state(inputs, i, initial_mw)
     if kind == :fixed_load
+        state = _closed_loop_state(inputs, i, initial_mw)
         fixed = _fixed_load_inputs!(inputs)
         step = _fixed_load_step_at(fixed.gen[i], fixed.load[i], state, device isa PSY.Storage)
-        return arg == :target ? step.target / inputs.base : (step.invoked ? 1.0 : 0.0)
+        return family.flag ? step.target / inputs.base : (step.invoked ? 1.0 : 0.0)
     end
-    bid_type = kind == :fcas_offer ? first(arg) : arg
-    prep = _fcas_inputs!(inputs, bid_type)
-    isnothing(prep) && return nothing
-    prep.window.states[i] = NEMUnitState(state.initial_mw / inputs.base, state.dispatch_mode)
-    offers, ramping = _fcas_values_at(prep, device, bid_type, i)
-    kind == :fcas_ramping && return ramping
-    return get(offers, last(arg), nothing)
+    return _closed_loop_fcas_select(_closed_loop_fcas_values(inputs, family.bid_type, t, initial_mw), family)
+end
+
+# The series of an FCAS `family` from the values of its market: the ramping limits, or the offer of its side.
+_closed_loop_fcas_select(::Nothing, ::_ClosedLoopFamily) = nothing
+function _closed_loop_fcas_select(values, family::_ClosedLoopFamily)
+    family.kind == :fcas_ramping && return values[2]
+    return values[1][family.flag ? 2 : 1]
 end
 
 closed_loop_input(device, series_name::AbstractString, t::DateTime, initial_mw::Real, base::Real) =
