@@ -1,40 +1,11 @@
-# 0025. Single-interval replication pipeline
+# 0025 Replication result conventions
 
 ## Status
 
-Accepted. Package ownership and replay entry points are superseded by
-[0065](0065-replay-system-package-boundary.md). The `replication_template` entry point and its
-public API are superseded by [0088](0088-data-free-replay-template.md). Other model and execution
-decisions remain in force.
+Accepted as to the conventions below. The single-interval pipeline and its entry points (`replication_system`, `replication_template`, `replicate_interval`) are gone: see [0052](0052-one-step-replication-horizon.md), [0061](0061-replay-core-stock-simulation.md), [0065](0065-replay-system-package-boundary.md) and [0088](0088-data-free-replay-template.md).
 
-## Context
+## What
 
-Phase 2 builds a `System` with `ConstrainedNetworkConfiguration` and a template of NEM
-formulations. Checking them against AEMO's published outcome for one dispatch interval needs a
-reproducible entry point that wires both together and reads the published results.
-
-## Decision
-
-- **Two-interval window (superseded in part by [0052](0052-one-step-replication-horizon.md)).**
-  `replication_system` builds the interval and the one after it, but the model solves only the
-  interval. PSY
-  rejects a single-point `Deterministic` forecast ("Forecast arrays must have a length of at
-  least 2"), so a one-interval range cannot be built. Only the first interval is reported, and
-  the cache must hold data one interval past `settlement_date`.
-- **ROP, not RRP, for energy prices.** The solved regional balance dual is the price before
-  scaling, capping or an administered price, which is what `ROP` is. `RRP` differs from `ROP`
-  only when `APCFLAG != 0`, so the comparison reports published `ROP` against solved and carries
-  `RRP` alongside.
-- **Lives in `src/`.** The pipeline is in `AustralianElectricityMarketsSimulations/src/replication/`
-  rather than a separate scripts project, so it is tested on the mock hive in CI and DuckDB
-  reads stay in `replication/inputs.jl`. A thin script in `scripts/` prints the comparison.
-- **Public API.** `replication_system`, `replication_template`, `replicate_interval` and
-  `read_published_interval` are exported: they are the supported way to run one interval, and
-  validation tooling outside the package builds on them. *Amended by
-  [0061](0061-replay-core-stock-simulation.md):* `replicate_interval` is removed; `replicate_range`
-  replays any range, one interval included, through a model built once and stepped.
-- **Unavailable components in constraints.** A generic constraint term on an unavailable device
-  or interconnector contributes zero, as FCAS terms already do, because PSI creates variables
-  only for available components.
-- **Comparison keeps every published row.** Solved values are `missing` where the model has no
-  value (for example an unavailable unit), instead of rows disappearing in an inner join.
+- Energy prices compare against published `ROP`, not `RRP`. The solved regional balance dual is the price before scaling, capping or an administered price, which is what `ROP` is; `RRP` differs only when `APCFLAG != 0`.
+- A generic constraint term on an unavailable device or interconnector contributes zero (PSI makes variables only for available components), as FCAS terms do ([0024](0024-fcas-terms-in-generic-constraints.md)).
+- Comparison keeps every published row: solved values are `missing` where the model has no value (for example an unavailable unit), instead of rows vanishing in an inner join (`compare_intervals`, `comparison_summary` count them as `n_missing`).

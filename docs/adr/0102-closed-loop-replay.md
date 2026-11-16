@@ -71,7 +71,7 @@ closed-loop values could not differ, and the update throws rather than write one
 - **The §5 checks run as in dispatch.** AEMO applies the stranded check in dispatch to the telemetered
   `InitialMW`. A closed-loop interval applies it to the previous solved target, as if telemetry followed the
   target; in AEMO's pre-dispatch, where later intervals also start from the model's own target, §5 skips the
-  check after the first interval (see [0017](0017-fcas-market-formulation.md)). This is a modelling choice of the
+  check after the first interval. This is a modelling choice of the
   closed loop, not an AEMO rule.
 
 ## Consequences

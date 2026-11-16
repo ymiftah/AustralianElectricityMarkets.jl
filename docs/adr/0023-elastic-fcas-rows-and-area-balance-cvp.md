@@ -1,73 +1,35 @@
-# 0023. Elastic FCAS joint rows, and the area-balance slack at its own CVP rate
+# 0023 Elastic FCAS rows, and the area-balance slack at its own CVP rate
 
 ## Status
 
-Accepted
+Accepted. The slack types are merged into `FCASSlack` by [0100](0100-one-key-type-per-family-and-role.md); MaxAvail and BDU SCADA rows were made elastic by [0037](0037-elastic-rows-remaining-families.md).
 
-## Context
+## What
 
-`FCASJointCapacityConstraint` (AEMO `xxUpperDeficit`/`xxLowerSurplus`, EnablementMin/Max) and
-`FCASJointRampingConstraint` (AEMO `R5REJointRampDeficit`/`L5REJointRampDeficit`, *FCAS Model in
-NEMDE* section 6.1) were hard rows, so a unit whose published dispatch breaches its trapezium or
-its AGC ramp made the LP infeasible. NEMDE gives both rows deficit/surplus terms priced at CVP
-factors (ADR 0021 covers `GenericConstraint`; this ADR covers the FCAS rows).
+- FCAS rows are soft when the `FCASMarket` `PSI.ServiceModel` has `use_slacks = true`, each priced at `cvp_factor x Market Price Cap` (AEMO *Schedule of Constraint Violation Penalty Factors* v8.0, Table 1):
 
-AEMO's *Schedule of Constraint Violation Penalty Factors* v8.0 (nem-expert
-`constraint-violation-penalty-factors/`): item 20 (FCAS Joint Ramping) factor 155, item 24 (FCAS
-EnablementMin/Max) factor 70, items 22 and 23 (regional demand-supply balance, `DeficitGen`/
-`SurplusGen`) factor 150. The resulting order, ramping 155 > balance 150 > enablement 70, is the
-priority order AEMO documents (item 24: enablement limits "should be untrapped (violated) before
-violating Regional Demand Supply Balance").
+| Row | AEMO variable | Item | Factor |
+| --- | --- | --- | --- |
+| Joint ramping (*FCAS Model in NEMDE* section 6.1) | `R5REJointRampDeficit`/`L5REJointRampDeficit` | 20 | `FCAS_RAMPING_CVP_FACTOR` = 155 |
+| Joint capacity, EnablementMin/Max | `xxUpperDeficit`/`xxLowerSurplus` | 24 | `FCAS_CAPACITY_CVP_FACTOR` = 70 |
+| Regional demand-supply balance | `DeficitGen`/`SurplusGen` | 22, 23 | `AREA_BALANCE_CVP_FACTOR` = 150 |
 
-nempy (`elastic_constraints.py`) builds deficit variables for its generic constraints and its
-regional balance; it has no joint-ramping row and its FCAS enablement rows are hard, so there is no
-nempy counterpart to this change for the FCAS rows.
+- Resulting order, ramping 155 > balance 150 > enablement 70, is AEMO's: item 24 says enablement limits "should be untrapped (violated) before violating Regional Demand Supply Balance".
 
-## Decision
+## How
 
-- `FCASJointCapacitySlack`/`FCASJointRampingSlack` variables, built when the `FCASMarket`
-  `PSI.ServiceModel` has `use_slacks = true`, one per `(unit, t)` and row. The row's sense fixes
-  the slack's sign (`<=` rows subtract it, `>=` rows add it), so a single non-negative variable
-  per row suffices; there is no up/down pair as for an `EQ` `GenericConstraint`. Capacity slacks
-  merge into `FCASJointCapacityLHS`; the ramping slack enters its row directly.
-- Priced at `cvp_factor x Market Price Cap x base_power`, in `$/MW` per dispatch interval, with the
-  Market Price Cap resolved by `_market_price_cap`: the service model's `"market_price_cap"`
-  attribute (ADR 0021), else the `"market_price_cap"` entry of the model's
-  `PSI.get_ext(PSI.get_settings(model))`, else the financial-year table. Factors: `FCAS_CAPACITY_CVP_FACTOR = 70`,
-  `FCAS_RAMPING_CVP_FACTOR = 155`.
-- PSI's `AreaBalancePowerModel` slack (`SystemBalanceSlackUp`/`Down`) is repriced at
-  `AREA_BALANCE_CVP_FACTOR = 150` x Market Price Cap by a more specific
-  `PSI.objective_function!` method for `NetworkModel{AreaBalancePowerModel}` in `psi_compat.jl`,
-  using the same settings entry or table. `AreaPTDFPowerModel` keeps PSI's flat cost.
-- The capacity slack enters the constraint row, as the ramping slack does, so the stored
-  `FCASJointCapacityLHS` expression stays AEMO's left-hand side.
-  This closes the gap ADR 0021 lists: a Secure Network Limit Thermal `GenericConstraint` (factor
-  30-35) now prices below the area balance, as AEMO ranks them.
-- `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` gains FY2024-25 ($17,500/MWh, AEMC's 2024-25 schedule) so
-  the mock-data fixtures dated January 2025 are priced.
+- One non-negative `FCASSlack` variable per `(unit, t)` and row (meta variants `joint_capacity`, `joint_ramping`). The row sense fixes its sign (`<=` rows subtract, `>=` rows add), so no up/down pair is needed.
+- The slack enters the constraint row, so the stored `FCASJointCapacityLHS` expression stays AEMO's left-hand side.
+- The area-balance slack is the `AreaBalancePowerModel` network model's `slack_cost` (`_area_balance_network_model`): `AREA_BALANCE_CVP_FACTOR x cap` per MW of one interval times base power, replacing PSI's flat cost. A secure-network-limit `GenericConstraint` (factor 30-35) therefore prices below the balance, as AEMO ranks them.
+- The cap is the settings `"market_price_cap"` entry, else `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` ([0085](0085-build-time-market-price-cap.md)). A year absent from the table with no override throws, since falling back to PSI's flat cost would invert the CVP order.
 
 ## Departures from AEMO
 
-- Rows that NEMDE does not build (placeholder `0 <= 1` rows for disabled intervals) still receive
-  slack variables; they cost nothing and stay at zero. Skipping them would leave undefined entries
-  in the variable containers that PSI reads back when exporting results.
-- Regional balance: AEMO has separate `DeficitGen`/`SurplusGen` variables, both factor 150; PSI's
-  up/down pair maps to them one-to-one.
-- A financial year absent from the table, with no override, throws for the area-balance slack
-  too. A silent fallback to PSI's flat cost would invert the CVP order against the FCAS and
-  `GenericConstraint` slacks. PSI case-builder fixtures dated outside the table set the settings
-  entry (test helper `_decision_model`). Earlier financial years (FY2021-22 to FY2023-24) are not
-  added because they could not be verified against the nem-expert references.
-- Not made elastic here: the `FCASBDURampingConstraint` (item 21, factor 155) and the FCAS
-  MaxAvail rows (item 19, factor 155); both stay hard.
-- FY2024-25's $17,500 is not in the nem-expert reliability-settings reference (it starts at
-  FY2025-26); it is taken from AEMC's published 2024-25 schedule.
+- Placeholder `0 <= 1` rows for intervals NEMDE builds no row for still get slack variables; they cost nothing and stay zero. Skipping them would leave undefined container entries PSI reads on export.
+- The regional balance maps PSI's up/down slack pair one-to-one onto `DeficitGen`/`SurplusGen` (both factor 150).
+- FY2024-25's $17,500/MWh is taken from AEMC's 2024-25 schedule, not the nem-expert reliability-settings reference (which starts at FY2025-26).
 
-## Consequences
+## Why
 
-- `use_slacks = false` (PSI's default) leaves every FCAS row exactly as before.
-- Every `AreaBalancePowerModel` network with `use_slacks = true` changes objective value where the
-  slack is nonzero: the rate is now `150 x MPC` per MWh (about $2.6M at FY2024-25) rather than
-  PSI's flat `BALANCE_SLACK_COST` per per-unit.
-- The FCAS requirement terms linking generic constraints to regional FCAS prices (Phase 2.6) are
-  unaffected.
+- Hard FCAS rows make an interval infeasible whenever published dispatch breaches its trapezium or AGC ramp, where NEMDE relaxes at the CVP.
+- nempy has no joint-ramping row and hard enablement rows, so there is no reference to copy.
