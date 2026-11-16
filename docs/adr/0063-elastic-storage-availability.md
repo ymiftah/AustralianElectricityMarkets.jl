@@ -59,7 +59,7 @@ Source: AEMO, Bid convexity and monotonically increasing validation, modified 30
 
 ## Scope
 
-This replaces the storage availability treatment in 0048. Offered energy bands still bound
+This replaces the earlier hard directional bounds on storage variables. Offered energy bands still bound
 dispatch in this change; their separate CVP1135 treatment is independent follow-up work.
 No state-of-charge constraint is introduced into real-time dispatch. Existing FCAS constraints,
 bid prices and net ramp rows remain in force, so violation priorities combine when several
