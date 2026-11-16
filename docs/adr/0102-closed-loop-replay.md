@@ -1,122 +1,34 @@
-# 0102. Closed-loop replay through initial conditions and recomputed state inputs
+# 0102 Closed-loop replay through initial conditions and recomputed state inputs
 
 ## Status
 
-Accepted. Builds on [0101](0101-aem-writes-aemsim-reads.md), which reserved `NEMClosedLoopDispatchProblem` and
-the closed-loop branch of the two state accessors for this milestone.
+Accepted. Builds on [0101](0101-aem-writes-aemsim-reads.md), which reserved `NEMClosedLoopDispatchProblem` and the closed-loop branch of the state accessors.
 
-## Context
+## What
 
-An open-loop replay (`NEMDispatchProblem`) starts every dispatch interval from AEMO's observed state, as NEMDE
-does: the unit's metered `INITIALMW` from `DISPATCHLOAD` and the MNSP's metered flow. A closed-loop replay
-starts each interval after the first from the replay's own previous solve instead, so the replay evolves its
-own trajectory. It answers counterfactual questions (what dispatch would follow from a changed offer or a
-changed network) that an open-loop replay cannot, because the open loop snaps back to AEMO's state every five
-minutes.
+- `DecisionModel(NEMClosedLoopDispatchProblem, template, sys; ...)` builds a closed-loop model on the same template and System as an open-loop one; the model records `ext["closed_loop"] = true`. Each interval after the first starts from the replay's own previous solve instead of AEMO's metered state, so it answers counterfactuals; the open-loop replay stays the NEMDE comparison.
+- The raw state is a PSI initial condition: `NEMInitialPower` (system-base per-unit, net of charging for a battery) and `NEMInitialFlow` (MW, per MNSP). They replace `InitialPowerTimeSeriesParameter` and the MNSP `initial_flow` parameter, seeded with the observed value at the build's initial time. `requires_initialization` stays `false`.
+- Derived inputs that depend on the starting output are recomputed each step: the battery composite cross-zero ramp rates (AEMO Dispatch Procedure SO_OP_3705 Appendix C), fixed-loading invocation and target, FCAS effective offers (enablement and stranding rules, *FCAS Model in NEMDE* s5) and regulation ramping limits `InitialMW +/- capability` (s6.1, s6.4).
 
-The starting output enters the model in two ways:
+## How
 
-1. **Directly**, as the base of the unit ramp rows and of the MNSP ramp rows.
-2. **Through derived inputs** that AEM writes from the observed state in `nem_system`: a battery's composite
-   cross-zero ramp rates (AEMO Dispatch Procedure SO_OP_3705, Appendix C), the invocation of a fixed loading,
-   the FCAS enablement and stranding rules (AEMO *FCAS Model in NEMDE* §5) inside each effective offer, and the
-   regulation ramping limits `InitialMW ± capability` (§6.1, §6.4).
+- `_initial_mw_accessor` and `_mnsp_initial_flow_accessor` return the initial condition, so the ramp rows are unchanged. PSI's `InterProblemChronology` updates the conditions after each solve from the system state (`ActivePowerVariable`, or `ActivePowerOutVariable - ActivePowerInVariable` for a battery, and the interchange `FlowActivePowerVariable`).
+- `closed_loop_input(device, series_name, t, initial_mw, base)` runs AEM's own writer on one interval with the closed-loop state; `is_state_dependent_input(series_name)` names the covered series. A root test checks that it reproduces every series `nem_system` wrote at the observed state.
+- AEMSim's `update_parameter_values!` on `DecisionModel{NEMClosedLoopDispatchProblem}` runs PSI's stock update, then overwrites each state-dependent cell with `closed_loop_input` at the previous interval's solved output (read from the system state), then re-applies coefficient and bound targets. It is read-only on the System. The model's first execution keeps the build-time observed series, since the system state is still NaN. It throws if two devices share one state-dependent series and their values differ.
+- Ramp rates of non-storage devices stay stock: their ramp rows read the initial condition directly.
 
-## Decision
+## Why
 
-### 1. The problem type is the only switch
-
-`DecisionModel(NEMClosedLoopDispatchProblem, template, sys; ...)` builds the closed-loop model on the same
-template and the same System as an open-loop one. The model records `ext["closed_loop"] = true`, which the
-formulations read once per build step.
-
-### 2. The raw state is a PowerSimulations initial condition
-
-- `NEMInitialPower` holds each unit's starting output in system-base per-unit, net of charging for a battery.
-- `NEMInitialFlow` holds each MNSP's starting flow in MW.
-
-Both are created in the argument stage, seeded with the observed value at the build's initial time, so the
-first interval of a closed-loop replay is the open-loop interval. In a closed-loop model they replace the
-`InitialPowerTimeSeriesParameter` and the MNSP `initial_flow` operating parameter. The accessors
-`_initial_mw_accessor` and `_mnsp_initial_flow_accessor` return the initial condition in place of the
-parameter, so the ramp rows are unchanged.
-
-PowerSimulations' `InterProblemChronology` updates them after each solve with methods of
-`update_initial_conditions!` that read the simulation's system state: `ActivePowerVariable` (or
-`ActivePowerOutVariable - ActivePowerInVariable` for a battery) and the interchange's `FlowActivePowerVariable`.
-`requires_initialization` stays `false`, so no initialisation model is built.
-
-### 3. Derived inputs are recomputed with AEM's own writer code
-
-AEM's writers take the state as an optional argument (observed by default), and
-`closed_loop_input(device, series_name, t, initial_mw, base)` runs a writer on one interval with the
-closed-loop state. `is_state_dependent_input(series_name)` names the series it covers. A root test checks that
-`closed_loop_input` with the observed starting output reproduces every series `nem_system` wrote, so no state
-rule has a second implementation.
-
-AEMSim's `update_parameter_values!` on `DecisionModel{NEMClosedLoopDispatchProblem}` runs PowerSimulations'
-own time-series update, then replaces each state-dependent cell with `closed_loop_input` at the previous
-interval's solved output, read from the system state (not from the initial conditions, which PowerSimulations
-updates after the parameters). Coefficient and bound targets are re-applied after the overwrite. The update is
-read-only on the System.
-
-A parameter column belongs to a time series; if two devices shared one state-dependent series, their
-closed-loop values could not differ, and the update throws rather than write one device's value for both.
-
-### 4. What stays observed
-
-- **Fast-start dispatch mode.** Fast-start inflexibility profiles are not modelled, so the dispatch mode in the
-  closed-loop state is AEMO's observed mode at the interval.
-- **AGC status, UIGF, telemetered limits and every bid.** These are exogenous inputs, not state.
-- **The §5 checks run as in dispatch.** AEMO applies the stranded check in dispatch to the telemetered
-  `InitialMW`. A closed-loop interval applies it to the previous solved target, as if telemetry followed the
-  target; in AEMO's pre-dispatch, where later intervals also start from the model's own target, §5 skips the
-  check after the first interval. This is a modelling choice of the
-  closed loop, not an AEMO rule.
-
-## Consequences
-
-- A closed-loop replay is a counterfactual tool. Its distance to NEMDE grows with the gap between the solved
-  and the metered trajectory, and is not the replay's accuracy measure; the open-loop replay remains the NEMDE
-  comparison.
-- Each closed-loop step recomputes the state-dependent inputs of every affected device (one interval's window
-  per device and series). The per-step cost is higher than the open loop's.
-- Departure from [0101](0101-aem-writes-aemsim-reads.md) section 6: a closed-loop model defines per-step
-  parameter updates in AEMSim. They are read-only on the System and use AEM's code, as that ADR's milestone 2
-  planned.
-- Milestone-2 work left: battery state of charge is not modelled (no energy limit carries across intervals),
-  and fast-start profiles are not tracked.
+- No state rule has a second implementation: the closed loop calls the code that wrote the observed inputs.
 
 ## Market correctness
 
-No bound, constraint or cost term changes. The closed loop changes which starting state feeds the existing
-rules: the unit and MNSP ramp rows, the composite battery ramp (SO_OP_3705 Appendix C), the fixed-loading
-invocation, the FCAS enablement and stranding pre-conditions (*FCAS Model in NEMDE* §5) and the regulation
-ramping limits (§6.1, §6.4). The departure from AEMO is the starting state itself (the previous solve rather
-than SCADA), section 4.
+No bound, constraint or cost term changes; the closed loop changes which starting state feeds the existing rules (unit and MNSP ramp rows, SO_OP_3705 composite battery ramp, fixed-loading invocation, FCAS s5 preconditions, s6.1 and s6.4 ramping limits).
 
-## Verification
+- Departure from AEMO: the starting state is the previous solve rather than SCADA. The s5 stranded check, which AEMO applies to telemetered `InitialMW` in dispatch, is applied to the previous solved target, as if telemetry followed the target.
+- Fast-start dispatch mode and time in mode stay AEMO's observed values; AGC status, UIGF, telemetered limits and bids are exogenous.
 
-- Toy simulations: a closed-loop step 1 equals the open-loop step 1; a unit whose observed start jumps between
-  intervals ramps from its solved output instead (70 MW against 110 MW open loop); step 2's FCAS ramping limits
-  equal `closed_loop_input` at the step-1 solve.
-- Root test: `closed_loop_input` at the observed state equals the written series for ramp, fixed-load, FCAS
-  offer and FCAS ramping series of the mock cache.
-- Real trading day 2026-06-04 (288 intervals, batch runner, `8e7d0e8`): the closed loop completes, executing in
-  716 s against 662 s open loop (each step evaluates prepared inputs; a first version that re-read every series
-  per step took about 6.5 minutes per interval).
+## Known limits
 
-| Absolute gap to NEMDE, MAE | Open loop | Closed loop | Closed against open, max |
-| --- | --- | --- | --- |
-| Unit dispatch (MW) | 0.012 | 0.268 | 128.1 |
-| Energy price (\$/MWh) | 0.033 | 0.651 | 27.4 |
-| FCAS price (\$/MWh) | 0.0009 | 0.207 | 941.6 |
-| Interconnector flow (MW) | 0.230 | 2.95 | 126.2 |
-
-The drift stays bounded: the hourly dispatch MAE against the open loop is 0.011 MW in the first hour and between
-0.08 and 0.72 MW afterwards. Unit ramp violations fall from 34 (open loop, where AEMO's metered start can sit
-outside the ramp envelope) to none. MaxAvail and UIGF violations rise (DDPS1 from 4 to 66 intervals, HUMENSW from
-114 to 220, 59 UIGF rows on semi-scheduled units): the closed-loop trajectory can sit above an availability AEMO
-set for the real trajectory, and the unit's ramp-down limit holds it there for a few intervals. The largest FCAS
-difference is a shifted SA1 RAISE60SEC scarcity: about \$990/MWh at 13:55 in the closed loop against 14:20 in
-NEMDE and the open loop.
+- Battery state of charge is not carried across intervals, and fast-start mode is not tracked ([0106](0106-fast-start-two-run-dispatch.md)).
+- Distance to NEMDE grows with the gap between the solved and metered trajectory, so it is not a replay accuracy measure.
