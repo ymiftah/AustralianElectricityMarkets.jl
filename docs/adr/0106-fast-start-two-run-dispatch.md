@@ -2,8 +2,8 @@
 
 ## Status
 
-Accepted. Supersedes [0060](0060-fast-start-fixed-loadings.md) for the inflexibility profile and the commitment of
-fast-start units.
+Accepted. Replaces the earlier fixed-loading-only treatment of fast-start units: the inflexibility profile and the
+commitment of fast-start units are modelled here.
 
 ## Context
 
@@ -17,8 +17,8 @@ outliers were checked by fixing those units to AEMO's targets, and the published
 | 2024-12-13 07:35 | PUMP2 (mode 0 to 1, 0 MW, the replay dispatched 245 MW) | QLD +68 |
 | 2024-12-15 16:30 | URANQ12/13/14 (mode 0 to 1, 0 MW, the replay dispatched 165 MW) | NSW +65, VIC -55 |
 
-Solver tolerances were ruled out in all three. The gap is the departure [0060](0060-fast-start-fixed-loadings.md)
-records: the profile is not modelled.
+Solver tolerances were ruled out in all three. The gap is that the profile was not modelled and the replay read
+`DISPATCHMODE` as a pre-solve input.
 
 AEMO's *Fast Start Inflexibility Profile* (FSIP, June 2021) defines the profile of a unit with offered times `T1`
 to `T4` and minimum loading `M` (`BIDDAYOFFER_D.MINIMUMLOAD`): mode 0 offline, mode 1 synchronising at 0 MW for
@@ -203,8 +203,7 @@ The two residuals of the per-day offer were inputs, not rules: the offer version
 - Two builds and solves per interval, roughly twice the runtime.
 - `NEMObservedState` gains `dispatch_mode_time` and `NEMUnitState` gains `time_in_mode`; both default to 0, so
   existing constructors keep working.
-- The profile part of [0060](0060-fast-start-fixed-loadings.md) is superseded. Its fixed-loading rule stands until
-  run 2 lands.
+- Fixed loadings of fast-start units are dropped in modes 1 and 2 (section 5) until run 2's profile rows govern them.
 
 ## Sources
 

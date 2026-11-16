@@ -43,7 +43,7 @@ Some model structure is fixed at build and cannot follow a step:
   has no step hook for adding or removing constraints.
 - `replication_system` transforms its series into one-interval forecast windows, one per stamp: a
   simulation step reads a window of exactly the model horizon, and the former two-interval windows
-  of [0052](0052-one-step-replication-horizon.md) fail at the first update.
+  fail at the first update.
 - **The pre-flight checks still run per chunk** and throw before the build: `check_tie_break_pairs`
   (with `:tie_breaks`), one Market Price Cap, `check_fcas_services` and `check_dispatch_envelope`
   over the chunk's intervals. The last replaces the build-time envelope check that a recurrent build
