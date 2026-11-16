@@ -153,7 +153,7 @@ does for the mode. The next interval's starting state is the previous interval's
 
 `read_fixed_loads` flags `IN_PROFILE` from `DISPATCHMODE` at the interval, while the fixed-loading series
 `nem_system` writes drop a loading from the starting mode (the previous interval's mode). The flag feeds only
-`_set_nem_fixed_loads!`, which is dead in production ([0096](0096-per-step-state-updates.md)), so the two do not
+`_set_nem_fixed_loads!`, which no production build calls (only test fixtures do), so the two do not
 meet in a replay. The starting mode is the pre-solve input, which is what NEMDE has before its first run. With the
 profile in run 2 at CVP 1130 above the fixed loading's 380 (Energy Inflexible Offer, Table 1 item 13), the
 profile governs a unit on it, and dropping the fixed loading in modes 1 and 2 can be revisited when run 2 lands.

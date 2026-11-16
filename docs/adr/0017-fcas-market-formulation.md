@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted; reads and units amended by [0098](0098-precomputed-observed-state-inputs.md) and [0101](0101-aem-writes-aemsim-reads.md), the AGC ramp by [0087](0087-agc-ramp-rate-from-mmsdm.md), load FCAS by [0038](0038-load-fcas-offers.md), elastic rows by [0023](0023-elastic-fcas-rows-and-area-balance-cvp.md). Source: AEMO *FCAS Model in NEMDE* v3.0.
+Accepted; reads and units amended by [0101](0101-aem-writes-aemsim-reads.md), the AGC ramp by [0087](0087-agc-ramp-rate-from-mmsdm.md), load FCAS by [0038](0038-load-fcas-offers.md), elastic rows by [0023](0023-elastic-fcas-rows-and-area-balance-cvp.md). Source: AEMO *FCAS Model in NEMDE* v3.0.
 
 ## What
 

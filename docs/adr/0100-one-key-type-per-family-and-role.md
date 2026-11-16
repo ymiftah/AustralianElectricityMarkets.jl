@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. Builds on [0097](0097-stock-devices-for-replay.md) and [0096](0096-per-step-state-updates.md).
+Accepted. Builds on [0097](0097-stock-devices-for-replay.md).
 
 ## Context
 

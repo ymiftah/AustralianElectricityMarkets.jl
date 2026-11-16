@@ -2,9 +2,9 @@
 
 ## Status
 
-Accepted. Supersedes the derived-input parts of [0095](0095-typed-nem-system.md) (`NEMDispatchInputs`
-written by AEMSim), [0096](0096-per-step-state-updates.md) (custom per-step parameter updates) and
-[0098](0098-precomputed-observed-state-inputs.md) (series precomputed by AEMSim before the build). The
+Accepted. Supersedes the earlier design in which AEMSim wrote derived inputs (`NEMDispatchInputs`,
+series precomputed before the build) and ran custom per-step parameter updates; the typed-system rules of
+[0095](0095-typed-nem-system.md) otherwise stand. The
 replay interface of [0092](0092-psi-shaped-replay-interface.md) and the key types of
 [0100](0100-one-key-type-per-family-and-role.md) stay in force.
 

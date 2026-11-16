@@ -21,4 +21,5 @@ Accepted. Extends [0037](0037-elastic-rows-remaining-families.md); always on per
 ## Why
 
 - `DISPATCHLOAD.AVAILABILITY` equals UIGF for a semi-scheduled unit, while bid MAXAVAIL can be larger. With a hard availability bound, an invoked non-conformance constraint (CVP 1160) could not pull a unit to its `INITIALMW` above UIGF, though NEMDE does and pays the 385 penalty.
+- A unit held above its MaxAvail by its ramp-down floor takes the MaxAvail slack (item 14, 370), which is cheaper than the ramp slack (item 3, 1155), as NEMDE does. The MaxAvail row is never raised to the floor.
 - Violation costs sum across rows, so conflicts between limits are resolved by total penalty, not by lexicographic choice.

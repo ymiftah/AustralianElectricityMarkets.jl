@@ -562,8 +562,8 @@ needs AEMSim to own the System.
    - PSI carries solve-to-solve state through **initial conditions** fed from the system state (A9).
    - AEMSim instead derives state-dependent inputs (storage composite ramps, FCAS trapezium
      enablement, fixed-load invoked flags, seeds) from the observed `NEMUnitState` and writes them as
-     series (ADR 0098). Its simulated-state plan replaces those series with custom parameter updates
-     (ADR 0096).
+     series (the design before ADR 0101). Its simulated-state plan replaced those series with custom
+     parameter updates (dropped in ADR 0101).
    - Upstream has no mechanism for "parameter value = f(previous solve)" except initial conditions and
      feedforwards.
 2. **Coefficient and cost updates.**
@@ -601,7 +601,7 @@ These are stated, not answered. Each one changes what gets built.
 4. **Scope as template.** Should exclusions become per-name service models or `filter_function`
    attributes, so that `available` stays the System's own data?
 5. **Per-step cost budget.** With the cache off and the objective re-set every step, is the update
-   path measured against the 0.24 s per interval in ADR 0098? Would `time_series_in_memory = false`
+   path measured against the 0.24 s per interval of the old stock-update path? Would `time_series_in_memory = false`
    (cache on, forward-only reads) or `MOI.Parameter`-style updates matter at NEM size?
 
 ---
