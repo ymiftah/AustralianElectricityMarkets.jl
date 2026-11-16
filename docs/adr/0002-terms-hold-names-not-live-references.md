@@ -1,29 +1,20 @@
-# 0002. `ConstraintTerm`/`FCASRequirement` hold names, not live `Component` references
+# 0002 Constraint terms hold names, not live components
 
 ## Status
 
 Accepted
 
-## Context
+## What
 
-`UnitTerm`/`RegionTerm`/`InterconnectorTerm`/`FCASRequirement` each reference a device, area, or
-interconnector by name (`String`), resolved against a `System` only at use time (see
-`resolve_term_devices`). Holding a live `PSY.Component` reference instead was considered and
-rejected, based on a directly confirmed serialization test: a `PSY.Component` field nested
-inside a custom `PSY.DeviceParameter` does not get PSY's UUID cross-referencing.
-`IS.serialize` embeds the referenced component's entire field set — every field, not a `{"uuid":
-...}` pointer — so the same component appears twice in a `System`'s JSON: once as the canonical
-registered component, once again duplicated inside the parameter.
+- `UnitTerm`, `RegionTerm`, `InterconnectorTerm` and `FCASRequirement` store plain `String` names, never a `PSY.Component`.
+- Any future `DeviceParameter` in this package that refers to a component follows the same by-name pattern.
 
-## Decision
+## How
 
-`ConstraintTerm`/`FCASRequirement` subtypes store plain `String` names. Resolution to a live
-component happens once, at ingestion (`resolve_term_devices`), never stored on the term itself.
+- Names are resolved against a `System` at use time by `resolve_term_devices`, once at ingestion.
 
-## Consequences
+## Why
 
-- JSON round-trips stay exact: a term's name re-resolves against whatever component the reloaded
-  `System` actually has, rather than carrying a stale embedded snapshot.
-- Any future `DeviceParameter` in this package holding another component must follow the same
-  by-name pattern. This is settled; do not reopen without a new PSY-side serialization behavior
-  to point to.
+- A `PSY.Component` field nested inside a custom `DeviceParameter` gets no PSY UUID cross-referencing: `IS.serialize` embeds the component's full field set, so it appears twice in the `System` JSON.
+- By-name terms round-trip exactly and re-resolve against whatever the reloaded `System` holds.
+- Do not reopen without a new PSY-side serialization behaviour to point to.
