@@ -520,7 +520,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `NEMTelemetry` and `NEMObservedState` hold a dispatch unit's telemetered limits and its observed starting state as typed fields, each a static value or a time-series key: AGC status, UIGF, the ramp up and down limits, the regulation enablement and maximum availability per side, and the `INITIALMW` and fast-start dispatch mode. `get_telemetry` and `get_observed_state` read them and `set_telemetry!` and `set_observed_state!` attach them, alongside `get_registration` / `set_registration!` for `NEMRegistration`.
 
-- The state-dependent dispatch inputs are pure functions of a `NEMUnitState`: `max_active_power_floor`, `in_fast_start_profile`, `fixed_load_invoked` and `effective_fixed_load`, `fcas_state_stranded_ok` and `fcas_both_sides_stranded_ok`, `fcas_ramping_active` and `fcas_ramping_limit`, `mnsp_ramp_envelope`, and `composite_ramp_rates` for the composite of a bidirectional unit's generation- and load-side ramp rates across zero.
+- The state-dependent dispatch inputs are pure functions of a `NEMUnitState`: `in_fast_start_profile`, `fixed_load_invoked` and `effective_fixed_load`, `fcas_state_stranded_ok` and `fcas_both_sides_stranded_ok`, `fcas_ramping_active` and `fcas_ramping_limit`, `mnsp_ramp_envelope`, and `composite_ramp_rates` for the composite of a bidirectional unit's generation- and load-side ramp rates across zero.
 
 - New cached table `BIDDAYOFFER` (MMSDM, every rebid version, `ENERGY` rows only): `DUID`, `SETTLEMENTDATE`, `OFFERDATE`, `VERSIONNO`, `BIDTYPE`, `DIRECTION`, `MINIMUMLOAD`, `T1` to `T4` and `ENTRYTYPE`. It is a required table of `table_requirements(NEMDEConfiguration())`; populate it with `populate(db, :BIDDAYOFFER, from, to)`. Table specs take an optional `row_filter = column => value`, and `DataSource` a matching `row_filter` field, that keeps only the matching rows when a month is populated.
 
@@ -534,7 +534,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The FCAS kernels `fcas_preconditions_ok`, `fcas_effective_offer` and `fcas_ramping_limits` take MW inputs and are exported from `AustralianElectricityMarkets`. `FCAS_BAND_COUNT`, `FCAS_INACTIVE_LIMIT_MW`, `fcas_effective_series_name`, `fcas_ramping_series_name`, `fcas_offer_sides` and `fcas_upper_regulation_service` move there from `AustralianElectricityMarketsSimulations`, which imports them. `fcas_state_stranded_ok` takes its `storage` flag as a positional argument.
 
-- `NEMUnitState` and the state rules (`max_active_power_floor`, `in_fast_start_profile`, `fixed_load_invoked`, `effective_fixed_load`, `fcas_state_stranded_ok`, `fcas_both_sides_stranded_ok`, `fcas_ramping_active`, `fcas_ramping_limit`, `fcas_joint_ramping_exempt`, `mnsp_ramp_envelope`, `composite_ramp_rates`) move from `AustralianElectricityMarketsSimulations` to `AustralianElectricityMarkets` and are exported there; `AustralianElectricityMarketsSimulations` no longer exports them. `nem_system` calls a private replay input stage, `_set_replay_inputs!`, before its input checks; it writes nothing yet.
+- `NEMUnitState` and the state rules (`in_fast_start_profile`, `fixed_load_invoked`, `effective_fixed_load`, `fcas_state_stranded_ok`, `fcas_both_sides_stranded_ok`, `fcas_ramping_active`, `fcas_ramping_limit`, `fcas_joint_ramping_exempt`, `mnsp_ramp_envelope`, `composite_ramp_rates`) move from `AustralianElectricityMarketsSimulations` to `AustralianElectricityMarkets` and are exported there; `AustralianElectricityMarketsSimulations` no longer exports them. `nem_system` calls a private replay input stage, `_set_replay_inputs!`, before its input checks; it writes nothing yet.
 
 - Under `ObservedState`, the per-step updates of the 13 state-dependent parameters (initial power, ramp
   rates, fixed loading, the five FCAS parameters and the MNSP initial flow and ramp rates) read the series
@@ -951,6 +951,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `energy_max_avail_series_name`: the energy availability series are named by
   `energy_availability_series_name` (AEMSim) and held by the device's `NEMDispatchInputs`.
+
+- `max_active_power_floor`, `_max_active_power`, the unused `_set_nem_fixed_loads!` and the `IN_PROFILE` column of `read_fixed_loads`: the replay drops fixed loadings by the starting mode through `in_fast_start_profile`.
 
 - `check_replay_inputs`: `nem_system` validates the same inputs while it builds the system, from the built structures rather than the cache.
 

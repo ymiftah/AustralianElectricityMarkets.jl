@@ -1,47 +1,4 @@
 """
-    _max_active_power(availability, initial_mw, ramp_down_rate, Δ) -> Float64
-
-The upper dispatch limit of one unit in one interval: its `availability`, raised to the ramp-down
-floor `initial_mw - ramp_down_rate × Δ` when that floor is higher.
-
-# Arguments
-- `availability`: the dispatch envelope upper bound, in MW or per unit of the base.
-- `initial_mw`: the unit's metered output at the start of the interval, in the same unit.
-- `ramp_down_rate`: the ramp-down rate per hour, in the same unit.
-- `Δ`: the interval length in hours.
-
-# Returns
-A `Float64` in the same unit as `availability`.
-"""
-function _max_active_power(availability::Real, initial_mw::Real, ramp_down_rate::Real, Δ::Real)
-    return max(availability, initial_mw - ramp_down_rate * Δ)
-end
-
-"""
-    max_active_power_floor(availability, ramp_down_rate, interval_hours, state::NEMUnitState) -> Float64
-
-The upper dispatch limit of one unit in one interval: `availability`, raised to the ramp-down floor
-`state.initial_mw - ramp_down_rate × interval_hours` when that floor is higher
-([`_max_active_power`](@ref)). `availability`, `ramp_down_rate` and `state.initial_mw` are in the same
-unit, and the result is in that unit.
-
-# Arguments
-- `availability`: the dispatch envelope upper bound.
-- `ramp_down_rate`: the ramp-down rate per hour.
-- `interval_hours`: the interval length in hours.
-- `state`: the [`NEMUnitState`](@ref) at the start of the interval.
-
-# Returns
-A `Float64`.
-"""
-function max_active_power_floor(
-        availability::Real, ramp_down_rate::Real, interval_hours::Real, state::NEMUnitState,
-    )
-    return _max_active_power(availability, state.initial_mw, ramp_down_rate, interval_hours)
-end
-
-
-"""
     in_fast_start_profile(state::NEMUnitState) -> Bool
 
 Whether the unit is in the part of its fast-start inflexibility profile that fixes its dispatch,

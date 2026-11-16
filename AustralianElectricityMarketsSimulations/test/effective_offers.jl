@@ -115,13 +115,6 @@ end
         @test !any(startswith("fcas_effective_"), [get_name(k) for k in get_time_series_keys(cheap)])
     end
 
-    @testset "the max_active_power floor rises with Initial MW" begin
-        # 60 MW/h over one 5-minute interval is a 5 MW ramp-down allowance.
-        @test max_active_power_floor(100.0, 60.0, Δ, NEMUnitState(50.0, 4)) == 100.0
-        @test max_active_power_floor(0.0, 60.0, Δ, NEMUnitState(50.0, 4)) == 45.0
-        @test max_active_power_floor(0.0, 60.0, Δ, NEMUnitState(100.0, 4)) == 95.0
-    end
-
     @testset "fixed loading is invoked outside the fast-start profile" begin
         @test in_fast_start_profile(NEMUnitState(10.0, 1))
         @test in_fast_start_profile(NEMUnitState(10.0, 2))

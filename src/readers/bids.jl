@@ -41,25 +41,22 @@ end
 
 Reads participant-entered energy fixed loadings from `BIDPEROFFER_D`: one row per
 `(INTERVAL_DATETIME, DUID, DIRECTION)` whose latest offer version carries `FIXEDLOAD > 0`
-(zero means no fixed load). `IN_PROFILE` is `true` where the `DISPATCHLOAD.DISPATCHMODE` of the
-unit at the interval is 1 or 2, the fast-start modes in which the inflexibility profile fixes dispatch.
+(zero means no fixed load).
 
 # Arguments
 - `db`: an `AEMDB` connection.
 - `date_range`: the dispatch interval labels; rows with `first <= INTERVAL_DATETIME < last` are kept.
-- `intervention`: the `DISPATCHLOAD.INTERVENTION` value the dispatch modes are read at (default `0`).
 
 # Returns
-A `DataFrame` with `INTERVAL_DATETIME`, `DUID`, `DIRECTION` (`GEN` or `LOAD`), `FIXEDLOAD` (MW,
-positive) and `IN_PROFILE` (`Bool`).
+A `DataFrame` with `INTERVAL_DATETIME`, `DUID`, `DIRECTION` (`GEN` or `LOAD`) and `FIXEDLOAD` (MW,
+positive).
 """
-function read_fixed_loads(db, date_range; intervention = 0)
+function read_fixed_loads(db, date_range)
     start_datetime = first(date_range)
     end_datetime = last(date_range)
     days = _offer_days(start_datetime, end_datetime)
     offers = read_hive(db, :BIDPEROFFER_D, (start_datetime - Day(1), end_datetime + Day(1)))
-    dispatch = read_hive(db, :DISPATCHLOAD, (start_datetime, end_datetime))
-    fixed_loads = _query(
+    return _query(
         db,
         """
         WITH latest AS (
@@ -69,24 +66,14 @@ function read_fixed_loads(db, date_range; intervention = 0)
             QUALIFY row_number() OVER (
                 PARTITION BY SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION ORDER BY VERSIONNO DESC
             ) = 1
-        ),
-        dispatch_mode AS (
-            SELECT SETTLEMENTDATE, DUID, DISPATCHMODE
-            FROM $dispatch
-            WHERE INTERVENTION = ? AND SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ?
-            QUALIFY row_number() OVER (PARTITION BY SETTLEMENTDATE, DUID ORDER BY RUNNO DESC) = 1
         )
-        SELECT l.INTERVAL_DATETIME, l.DUID, l.DIRECTION, l.FIXEDLOAD,
-            coalesce(m.DISPATCHMODE IN (1, 2), false) AS IN_PROFILE
-        FROM latest l
-        LEFT JOIN dispatch_mode m ON m.SETTLEMENTDATE = l.INTERVAL_DATETIME AND m.DUID = l.DUID
-        WHERE l.FIXEDLOAD > 0 AND l.INTERVAL_DATETIME >= ? AND l.INTERVAL_DATETIME < ?
-        ORDER BY l.INTERVAL_DATETIME, l.DUID, l.DIRECTION
+        SELECT INTERVAL_DATETIME, DUID, DIRECTION, FIXEDLOAD
+        FROM latest
+        WHERE FIXEDLOAD > 0 AND INTERVAL_DATETIME >= ? AND INTERVAL_DATETIME < ?
+        ORDER BY INTERVAL_DATETIME, DUID, DIRECTION
         """,
-        [days; intervention; start_datetime; end_datetime; start_datetime; end_datetime],
+        [days; start_datetime; end_datetime],
     )
-    fixed_loads.IN_PROFILE = convert(Vector{Bool}, fixed_loads.IN_PROFILE)
-    return fixed_loads
 end
 
 

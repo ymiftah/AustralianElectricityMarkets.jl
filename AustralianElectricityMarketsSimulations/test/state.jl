@@ -119,55 +119,6 @@ end
 end
 
 
-@testset "the build's fixed-load series and the per-step derivation agree" begin
-    # One FIXEDLOAD row per device and interval feeds the build's series; the same MW in the bids
-    # feeds the per-step derivation. They must agree on the netting and invocation rules.
-    derivation_range = TOY_START:TOY_RESOLUTION:(TOY_START + 2 * TOY_RESOLUTION)
-    sys = nem_toy_system(
-        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)],
-        60.0; horizon = TOY_RESOLUTION,
-        batteries = [TOY_BATTERY => toy_battery(50.0, 30.0, 50.0, 0.0; initial = 5.0, ramp_up = 100.0)],
-        mutate! = function (sys, stamps)
-            alta = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
-            _toy_energy_bid!(
-                sys, alta, AustralianElectricityMarkets.BidDirection.GEN, stamps,
-                fill(_toy_offer([(100.0, 20.0)]), length(stamps)), fill(100.0, length(stamps));
-                fixed_load = fill(40.0, length(stamps)),
-            )
-            battery = PSY.get_component(EnergyReservoirStorage, sys, TOY_BATTERY)
-            _toy_energy_bid!(
-                sys, battery, AustralianElectricityMarkets.BidDirection.GEN, stamps,
-                fill(PSY.PiecewiseStepData([0.0, 50.0], [30.0]), length(stamps)), fill(50.0, length(stamps));
-                fixed_load = fill(10.0, length(stamps)),
-            )
-            _toy_energy_bid!(
-                sys, battery, AustralianElectricityMarkets.BidDirection.LOAD, stamps,
-                fill(PSY.PiecewiseStepData([0.0, 50.0], [0.0]), length(stamps)), fill(50.0, length(stamps));
-                fixed_load = fill(4.0, length(stamps)),
-            )
-            rows = DataFrame(
-                DUID = [TOY_CHEAP, TOY_CHEAP, TOY_BATTERY, TOY_BATTERY, TOY_BATTERY, TOY_BATTERY],
-                DIRECTION = ["GEN", "GEN", "GEN", "GEN", "LOAD", "LOAD"],
-                FIXEDLOAD = [40.0, 40.0, 10.0, 10.0, 4.0, 4.0],
-                INTERVAL_DATETIME = [stamps; stamps; stamps],
-                IN_PROFILE = fill(false, 6),
-            )
-            AustralianElectricityMarkets._set_nem_fixed_loads!(sys, rows, derivation_range)
-
-            base_power = PSY.get_base_power(sys)
-            for device in (alta, battery)
-                series = PSY.get_time_series(PSY.SingleTimeSeries, device, "fixed_load")
-                derived = collect(values(PSY.get_time_series_array(device, series)))
-                per_step = [step.target / base_power for step in AustralianElectricityMarkets._fixed_load_step_series(device, stamps)]
-                @test derived ≈ per_step
-                @test !all(iszero, derived)
-            end
-            return
-        end,
-    )
-end
-
-
 @testset "a starting output at the enablement maximum keeps the offer enabled" begin
     # Park City's starting output equals its RAISE6SEC enablement maximum (95 MW), which the stranded
     # pre-condition keeps enabled (`EnablementMin <= output <= EnablementMax`). The build seed must

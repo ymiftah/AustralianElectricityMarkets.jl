@@ -42,7 +42,7 @@ julia --project=AustralianElectricityMarketsSimulations/test \
     AustralianElectricityMarketsSimulations/test/real_data/runtests.jl [hive_location]
 ```
 
-All four suites run on generated mock parquet data and never hit the network. Each package has
+All four suites run on generated test data and never hit the network. Each package has
 its own CI workflow with native `paths` filters including its source dependencies and shared
 fixtures. Dependency or test CI changes and tags run all packages. Manual dispatch tests the
 selected workflow's package. See the README's continuous integration section.
@@ -53,7 +53,7 @@ names (listed in `TEST_GROUPS` at the top of each `runtests.jl`; no arguments ru
 ```bash
 julia --project -e 'using Pkg; Pkg.test(; test_args = ["fcas", "timeseries_setters"])'
 julia --project=AustralianElectricityMarketsSimulations/test \
-    AustralianElectricityMarketsSimulations/test/runtests.jl fcas_market preprocessing
+    AustralianElectricityMarketsSimulations/test/runtests.jl fcas_market fcas_preprocessing
 ```
 
 Pick the groups whose test file covers the source you edited (e.g. `src/types/fcas.jl` → `fcas`,
@@ -61,7 +61,7 @@ Pick the groups whose test file covers the source you edited (e.g. `src/types/fc
 suites only for cross-cutting changes (shared fixtures, runner, dependencies, a change in one
 package that the next one consumes) or before opening a PR. Use absolute paths when launching Julia
 from a backgrounded subshell. Shared fixtures: `test/fixtures/mock_data.jl`
-(all three suites), `test/integration/pscb_*.jl` (root and Simulations), and
+(root and Simulations), `test/integration/pscb_*.jl` (root and Simulations), and
 `…Simulations/test/toy_fixture.jl` / `template_helpers.jl`; each runner loads its fixtures up
 front, so every group runs on its own.
 
@@ -72,20 +72,23 @@ front, so every group runs on its own.
 | `…Cache/src/tables.jl` | `_TABLE_SPECS`, table lookup and supported-table metadata |
 | `…Data/src/nemweb_load/column_types.jl` | `COLUMN_TYPES`; unlisted columns silently become `VARCHAR` |
 | `src/AustralianElectricityMarkets.jl` | exports, includes, `@doc` re-binding of Readers/Cache/RegionModel names |
-| `src/types/` | Domain types, constructors, field accessors and type-specific calculations |
+| `src/types/` | Domain types, constructors, field accessors and type-specific calculations (`NEMUnitData`, `NEMUnitState`, bids, FCAS, generic constraints, losses, tie-break) |
 | `src/readers/` | Readers submodule; one file per external-data category |
 | `src/system/` | System construction and modification; RegionModel submodule |
-| `src/accessors/` | Attached component data and time-series lookup |
-| `…Simulations/src/types/`, `…Simulations/src/formulations/` | PSI types and dispatch, FCAS, constraint and loss formulations |
-| `…Simulations/src/types/state.jl` | The telemetry and observed-state accessors of a replay unit, read by the dispatch pre-flight checks |
-| `src/derivations/` | Scalar replay-input kernels (state, energy, ramps, FCAS, tie-break, loss demand): `Float64` inputs and an `NEMUnitState`, no System access |
 | `src/system/replay_inputs.jl`, `src/system/replay_inputs/` | `_set_replay_inputs!`, the last stage of `nem_system(db, NEMDEConfiguration(); date_range)`: one writer per input family, the forecast transform and the availability record |
+| `src/derivations/` | Scalar replay-input kernels (state, energy, ramps, FCAS, fast-start, tie-break, loss demand): `Float64` inputs and an `NEMUnitState`, no System access |
+| `src/network_configurations/` | `NetworkConfiguration` and its `RegionalNetworkConfiguration` and `NEMDEConfiguration` variants |
+| `src/accessors/` | Attached component data and time-series lookup |
+| `…Simulations/src/types/` | PSI parameter, variable, constraint and slack types and formulation structs; `state.jl` holds the initial-condition types and the telemetry and observed-state accessors of a replay unit |
+| `…Simulations/src/formulations/` | `AbstractNEMDispatch` device formulations, FCAS, generic-constraint, loss, MNSP, slack and tie-break formulations |
 | `…Simulations/src/offers/derivation.jl` | The energy `MAXAVAIL` series name the dispatch parameters register |
-| `…Simulations/src/results/` | Solved and violation readers of PSI results: `read_solved_interval`, `read_constraint_violations`, and the `read_prices` / `read_fcas_prices` methods |
-| `…Simulations/src/checks/<what_is_checked>.jl` | pre-flight checks run before a build |
+| `…Simulations/src/templates/` | `template_nemde`, the replication template |
+| `…Simulations/src/problems/` | `NEMDispatchProblem`, the closed-loop sequence and the HiGHS optimizer settings |
+| `…Simulations/src/results/` | Solved and violation readers of PSI results: `read_solved_interval`, `read_constraint_violations`, the `read_prices` / `read_fcas_prices` methods, and the comparison against published outcomes |
+| `…Simulations/src/checks/` | Pre-flight checks run before a build, one file per thing checked |
 | `…Simulations/src/psi_compat.jl` | shims over the pinned PowerSimulations fork |
-| `scripts/replay_batch.jl` | overnight batch replay of random trading days on the AEMSim replay API |
-| `docs/adr/` | architecture decisions — design rationale goes here |
+| `scripts/replay_batch.jl` | overnight batch replay of random trading days or sampled intervals on the AEMSim replay API |
+| `docs/adr/` | architecture decisions; design rationale goes here |
 | `docs/superpowers/plans/` | implementation plans; follow-up work is recorded here or in an ADR |
 
 ## Standards
@@ -137,7 +140,8 @@ bound, constraint and cost term. Record any departure from AEMO in an ADR.
   module: `IS.get_module` only resolves top-level package names, so submodule-nested types break
   `System` JSON round-trips.
 - Simulations depends on a **pinned PowerSimulations fork** (`[sources]` in its `Project.toml`);
-  check PSI behaviour against that revision, not upstream. PowerSystems is the registered release.
+  check PSI behaviour against that revision, not upstream. The root `Project.toml` also pins forks of
+  InfrastructureSystems and HDF5. PowerSystems is the registered release.
 - Replay systems use stock PowerSystems devices (`NEM_DISPATCH_DEVICE_TYPES`) each carrying a
   `NEMUnitData` supplemental attribute (offer, registration, telemetry, observed state); a device is a
   replay unit when `has_nem_unit_data` holds, never by its type. Regional systems carry none.

@@ -632,8 +632,6 @@ end
         # Both directions are read: the GEN and LOAD loadings of BW01 (raw reader values are covered in readers/raw.jl).
         loads = read_fixed_loads(fixed_db, fixed_range)
         @test Set(loads.DIRECTION) == Set(["GEN", "LOAD"])
-        @test loads.IN_PROFILE[loads.DUID .== "BW02"] == [true, true, false]
-        @test !any(loads.IN_PROFILE[loads.DUID .== "BW01"])
 
         fixed_sys = nem_system(fixed_db, RegionalNetworkConfiguration())
         added_f = nothing
@@ -644,22 +642,9 @@ end
         @test !any(startswith("\$"), added_f)
         skipped_names = get_skipped_constraints(fixed_sys).constraint
         @test !any(startswith("\$BW01"), skipped_names)
-        # BW02 has an in-profile row at 00:10 and an attached one at 00:20; both are fixed-load rows, neither built nor reported.
+        # BW02 has fixed-load rows at 00:10 to 00:20: neither built nor reported.
         @test !any(startswith("\$BW02"), skipped_names)
         @test any(startswith("\$NOSUCH1"), skipped_names)
-
-        attach_fixed_loads!(fixed_sys, fixed_db, fixed_range)
-        bw01 = get_component(Device, fixed_sys, "BW01")
-        base = get_base_power(fixed_sys)
-        series(device, name) = get_time_series_values(SingleTimeSeries, device, name)
-        @test findall(isone, series(bw01, "fixed_load_invoked")) == 3:5  # intervals 00:10, 00:15, 00:20
-        # BW01 is a battery: its 30 MW generation and 20 MW charging targets net to 10 MW injection.
-        @test series(bw01, "fixed_load")[3:5] == fill(10.0 / base, 3)
-        @test all(iszero, series(bw01, "fixed_load")[[1, 2, 6]])
-        # BW02 is attached only at its non-profile interval 00:20 (index 5), not at in-profile 00:10 and 00:15.
-        bw02 = get_component(Device, fixed_sys, "BW02")
-        @test findall(isone, series(bw02, "fixed_load_invoked")) == [5]
-        @test series(bw02, "fixed_load")[5] == 40.0 / base
 
         # A missing bid table fails with the documented error.
         missing_bids_hive = mktempdir()
@@ -675,8 +660,6 @@ end
         set_available!(get_component(Device, unavailable_sys, "BW01"), false)
         build_constraints!(unavailable_sys, fixed_db, fixed_range)
         @test any(startswith("\$BW01"), get_skipped_constraints(unavailable_sys).constraint)
-        attach_fixed_loads!(unavailable_sys, fixed_db, fixed_range)
-        @test !has_time_series(get_component(Device, unavailable_sys, "BW01"), SingleTimeSeries, "fixed_load")
     end
 
     @testset "_versions_without_definition handles missing effective date" begin

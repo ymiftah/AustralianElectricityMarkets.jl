@@ -4,10 +4,6 @@ function build_constraints!(sys, db, date_range; intervention = 0)
     return AustralianElectricityMarkets._add_nem_constraints!(sys, db, date_range, invoked, fixed; intervention)
 end
 
-function attach_fixed_loads!(sys, db, date_range)
-    return AustralianElectricityMarkets._set_nem_fixed_loads!(sys, AustralianElectricityMarkets.read_fixed_loads(db, date_range), date_range)
-end
-
 function attach_demand!(sys, db, date_range; resolution = Minute(5))
     demand = AustralianElectricityMarkets.read_demand(db, date_range; resolution)
     return AustralianElectricityMarkets._set_demand!(sys, demand, date_range; resolution)

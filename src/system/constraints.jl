@@ -229,7 +229,7 @@ function _read_constraint_inputs(db, date_range; intervention = 0)
         _require_cached(db, table; context = "the constraint build reads FIXEDLOAD and T1 from it.")
     end
     invoked = read_invoked_constraints(db, date_range; intervention)
-    fixed = read_fixed_loads(db, date_range; intervention)
+    fixed = read_fixed_loads(db, date_range)
     return invoked, fixed
 end
 
@@ -256,7 +256,7 @@ terms are read back with [`get_dropped_terms`](@ref).
 
 A unit's participant fixed loading (`\$<DUID>`) is not a generic constraint: its `DISPATCHCONSTRAINT`
 row is neither added nor reported as skipped at intervals with a fixed-loading row for an available
-device in `sys`. Such rows include those flagged `IN_PROFILE`. Devices that are unavailable or absent
+device in `sys`. Devices that are unavailable or absent
 from `sys` are still reported as skipped.
 
 Each skipped version is also recorded on `sys`; read it with [`get_skipped_constraints`](@ref). The
@@ -278,7 +278,7 @@ the throw leaves `sys` unmodified.
 function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; intervention = 0)
     start_date = first(date_range)
     missing_intervals = setdiff(collect(date_range)[1:(end - 1)], invoked_all.SETTLEMENTDATE)
-    # Fixed loadings are unit offer data (_set_nem_fixed_loads!), so their `$DUID` rows are not generic constraints.
+    # Fixed loadings are unit offer data, so their `$DUID` rows are not generic constraints.
     targets = _fixed_load_series(sys, fixed)
     if DataFrames.isempty(invoked_all) && DataFrames.isempty(targets)
         set_build_report!(sys, NEMBuildReport(; missing_constraint_intervals = missing_intervals))
