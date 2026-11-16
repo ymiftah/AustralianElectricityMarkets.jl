@@ -2,14 +2,14 @@
 
 ## Status
 
-Accepted. Supersedes 0040.
+Accepted.
 
 ## Context
 
 `RAISE1SEC` and `LOWER1SEC` (very fast raise and lower, from 9 October 2023) were excluded from
 `FCAS_BID_TYPES`. Their requirement rows were dropped by `read_fcas_requirements`, no
 `FCASService` existed for them, and the generic constraints that carry them (`F_*_R1`, `F_*_L1`)
-were built with their 1-second terms contributing zero (0040). Batteries, about 60 percent of
+were built with their 1-second terms contributing zero, leaving an always-violated requirement row. Batteries, about 60 percent of
 enabled raise MW in June 2026, were also unconstrained by the 1-second trapezium that binds them in
 NEMDE.
 
@@ -34,7 +34,7 @@ the contingency ones, and a battery's contingency trapezium stays on the net-MW 
 - The `F_*_R1`/`F_*_L1` requirement rows are built like every other requirement row, with their
   `GENERICCONSTRAINTWEIGHT` (CVP items 39 and 40, factor 9, above the 6-second requirement CVP).
   `compute_fcas_prices` prices `RAISE1SEC`/`LOWER1SEC` from their duals unchanged.
-- The pre-flight guard of 0040 is removed: with every non-energy `BidType` modelled, the existing
+- No pre-flight guard for unmodelled FCAS markets is needed: with every non-energy `BidType` modelled, the existing
   `:unmodeled_fcas_service` reason (a service with devices and no `FCASMarket` model) covers the
   remaining case.
 
