@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted as to the conventions below. The single-interval pipeline and its entry points (`replication_system`, `replication_template`, `replicate_interval`) are gone: see [0061](0061-replay-core-stock-simulation.md), [0065](0065-replay-system-package-boundary.md) and [0088](0088-data-free-replay-template.md).
+Accepted as to the conventions below. The single-interval pipeline and its entry points (`replication_system`, `replication_template`, `replicate_interval`) are gone: see [0061](0061-replay-core-stock-simulation.md), [0101](0101-aem-writes-aemsim-reads.md) and [0088](0088-data-free-replay-template.md).
 
 ## What
 

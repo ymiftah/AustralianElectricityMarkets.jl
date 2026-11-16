@@ -2,8 +2,7 @@
 
 ## Status
 
-Accepted. Supersedes [0070](0070-per-slack-market-price-cap-parameters.md) and
-[0065](0065-market-price-cap-repricing.md): penalties are no longer re-priced at each step.
+Accepted. Replaces the earlier per-step re-pricing of penalties (removed ADRs 0065 and 0070).
 
 ## Context
 
