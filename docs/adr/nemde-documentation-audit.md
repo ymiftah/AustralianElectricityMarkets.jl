@@ -361,7 +361,7 @@ NEM, after rebasing on `v0.2` at `a7aae2b`, and rewritten. Decisions taken:
 - **The fast-start ramp envelope derived for #184 was removed.** AEMO does not publish it, and the
   chapter now states only what the Fast Start Inflexibility Profile document says.
 
-Deviation notes were checked against the ADRs and `v0.2` sources: 0016 and 0037 (availability and
+Deviation notes were checked against the ADRs and `v0.2` sources: 0037 (availability and
 UIGF as raised hard limits), 0020 (battery directions), 0027 (loss-equation demand), 0031 (ordered
 loss segments by integer variables, prices at fixed integers), 0032 (dropped unit terms, wholesale
 demand response), 0035 (MNSP hard bounds, direction binary, Basslink loss share), 0036 (tie-break

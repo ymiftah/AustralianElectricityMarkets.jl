@@ -34,7 +34,7 @@ ramping (155) before interconnector flow (1150) before unit ramp (1155).
 - Storage ramp rows carry `UnitRampUpSlack`/`UnitRampDownSlack` at 1155 x MPC, built by the same
   helper as the generator rows. The build-time storage envelope check is removed. Under
   `NEMReplayDispatch` the per-direction availability ceilings are raised to the ramp envelope
-  (ADR 0016) and, new here, so are the output and input variables' upper bounds (the device
+  and, new here, so are the output and input variables' upper bounds (the device
   rating): NEMDE breaks MaxAvail (370) and the rating before the ramp row (1155), so a battery
   whose `INITIALMW` and ramp rate put the floor above its registered output is dispatched at the
   floor with zero ramp slack. The storage ramp slack therefore stays zero under replay and only
@@ -76,7 +76,7 @@ availability row would have a slack that is zero in every case the data does not
 (`0 <= power <= availability` is never infeasible once the ramp row is elastic), so it would add
 a variable per unit and interval without changing a solution. Making it soft would only matter
 if the raise were removed from the setter, which would change `max_active_power` for every
-consumer and ADRs 0013 and 0016; that is a data-model change, not a G10 row. `_check_dispatch_envelope`
+consumer and ADR 0013; that is a data-model change, not a G10 row. `_check_dispatch_envelope`
 is kept for the same reason as in ADR 0030: it only fires on data that bypassed the setter.
 
 ## Consequences
