@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. Its `EnergyTieBreak` and CVP-factor placement are superseded by [0084](0084-native-sienna-recurrent-updates.md); ownership of replay inputs is in [0101](0101-aem-writes-aemsim-reads.md).
+Accepted. Its `EnergyTieBreak` and CVP-factor placement now live in AEM; ownership of replay inputs is in [0101](0101-aem-writes-aemsim-reads.md).
 
 ## What
 

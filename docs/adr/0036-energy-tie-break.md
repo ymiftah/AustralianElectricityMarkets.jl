@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. `EnergyTieBreak` lives in the top-level package and its scales are written by `nem_system` ([0084](0084-native-sienna-recurrent-updates.md), [0101](0101-aem-writes-aemsim-reads.md)).
+Accepted. `EnergyTieBreak` lives in the top-level package and its scales are written by `nem_system` ([0101](0101-aem-writes-aemsim-reads.md)).
 
 ## What
 

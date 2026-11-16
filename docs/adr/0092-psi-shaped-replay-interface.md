@@ -3,8 +3,7 @@
 ## Status
 
 Accepted. Removes the replay orchestration in `scripts/` (`ReplaySimulation`, `ReplayResults`,
-`ReplayWorkflow`) that 0088 and 0090 still referred to. The template decisions of 0088 and 0090
-remain in force.
+`ReplayWorkflow`) that 0090 still referred to. The template decision of 0090 remains in force.
 
 ## Context
 

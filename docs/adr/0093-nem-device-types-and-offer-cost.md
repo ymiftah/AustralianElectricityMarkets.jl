@@ -3,8 +3,7 @@
 ## Status
 
 Accepted; its device-type decision is superseded by
-[0097](0097-stock-devices-for-replay.md), while `NEMOfferCost` and band pricing stand. Supersedes parts of [0067](0067-nem-offer-views.md) and
-[0084](0084-native-sienna-recurrent-updates.md), listed under Supersedes.
+[0097](0097-stock-devices-for-replay.md), while `NEMOfferCost` and band pricing stand. Supersedes parts of [0067](0067-nem-offer-views.md), listed under Supersedes.
 
 ## Context
 
@@ -100,9 +99,6 @@ Replay systems serialize without the PowerSystems fork. There is no new departur
   still device-owned named series, but `get_energy_offer` and `get_fcas_offer` read through the
   keys of `NEMOfferCost`. The rejection of an `OperationalCost` subtype on stock devices is
   replaced by the NEM device types.
-- 0084: the PSY fork row (decremental service bids, device-scaled service bids, independent
-  lookups) and "Energy offers: PSI's native `MarketBidCost` path". FCAS offers are no longer PSY
-  service bids; energy bands are priced by AEMSim.
 
 ## Follow-up
 
