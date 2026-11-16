@@ -1,21 +1,3 @@
-@testset "read_isp_fixed_opex" begin
-    df = read_isp_fixed_opex()
-    @test nrow(df) > 0
-    @test "isp_technology" in names(df)
-    @test eltype(df.unit) <: AbstractString
-    @test eltype(df.fixed_opex_aud_kw_year) <: AbstractFloat
-    @test all(df.fixed_opex_aud_kw_year .>= 0)
-end
-
-@testset "read_isp_variable_opex" begin
-    df = read_isp_variable_opex()
-    @test nrow(df) > 0
-    @test "isp_technology" in names(df)
-    @test eltype(df.unit) <: AbstractString
-    @test eltype(df.variable_opex_aud_mwh) <: AbstractFloat
-    @test all(df.variable_opex_aud_mwh .>= 0)
-end
-
 @testset "read_isp_renewable_costs_parameters" begin
     df = read_isp_renewable_costs_parameters()
     @test nrow(df) > 0

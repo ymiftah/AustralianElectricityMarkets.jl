@@ -11,6 +11,7 @@ end
     AEM_ = AustralianElectricityMarkets
     base = PowerSystems.get_base_power(sys)
     checked = Dict{Symbol, Int}()
+    mismatched = Tuple{String, String, DateTime}[]
     for device in AEM_.nem_dispatch_devices(sys)
         observed = AEM_.get_observed_state(device)
         observed.initial_mw isa PowerSystems.IS.StaticTimeSeriesKey || continue
@@ -23,12 +24,13 @@ end
                 value = closed_loop_input(device, name, t, initial, base)
                 isnothing(value) && continue
                 written = only(PowerSystems.get_time_series_values(PowerSystems.SingleTimeSeries, device, name; start_time = t, len = 1))
-                @test all(isapprox.(collect(value), collect(written); atol = 1.0e-12))
+                all(isapprox.(collect(value), collect(written); atol = 1.0e-12)) || push!(mismatched, (get_name(device), name, t))
                 family = AEM_._closed_loop_family(name).kind
                 checked[family] = get(checked, family, 0) + 1
             end
         end
     end
+    @test isempty(mismatched)
     @test get(checked, :fcas_offer, 0) > 0
     @test get(checked, :fcas_ramping, 0) > 0
     @test get(checked, :ramp, 0) > 0

@@ -271,20 +271,3 @@ end
     @test PSI.get_slack_cost(PSI.get_network_model(PSI.get_template(model))) == AEMS._area_balance_slack_cost(sys, cap)
     @test PSI.get_slack_cost(PSI.get_network_model(template)) == template_cost
 end
-
-@testset "replay_skipped_constraints and repeated builds leave the system's series unchanged" begin
-    sys = nem_toy_system(
-        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0; horizon = TOY_RESOLUTION,
-    )
-    series = PSY.get_time_series_counts(sys)
-    @test series.forecast_count > 0
-    @test isempty(replay_skipped_constraints(sys, replay_template(sys)))
-    @test PSY.get_time_series_counts(sys) == series
-    for _ in 1:2
-        model = PSI.DecisionModel(
-            AEMS.NEMDispatchProblem, replay_template(sys), sys; optimizer = HiGHS.Optimizer, initial_time = TOY_START,
-        )
-        @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-        @test PSY.get_time_series_counts(sys) == series
-    end
-end

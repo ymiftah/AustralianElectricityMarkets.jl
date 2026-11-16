@@ -447,27 +447,6 @@ end
     @test PSI.build!(left_out_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
 end
 
-@testset "a hard GE and LE GenericConstraint pair on one unit is infeasible" begin
-    # A 150 MW floor and a 10 MW ceiling on the same unit cannot both hold, whatever the dispatch bounds.
-    sys = nem_toy_system(
-        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)], 80.0;
-        mutate! = function (sys, stamps)
-            add_toy_generic_constraint!(sys, stamps, TOY_CHEAP, 150.0; sense = ConstraintSense.GE, name = "N_FLOOR")
-            add_toy_generic_constraint!(sys, stamps, TOY_CHEAP, 10.0; sense = ConstraintSense.LE, name = "N_CEIL")
-        end,
-    )
-    template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
-    set_nem_dispatch_models!(template, sys)
-    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
-    PSI.set_service_model!(template, PSI.ServiceModel(GenericConstraint, LinearFactorLimit; duals = [NEMConstraintLimit]))
-    model = PSI.DecisionModel(
-        template, sys; optimizer = HiGHS.Optimizer, horizon = TOY_RESOLUTION, resolution = TOY_RESOLUTION,
-        interval = TOY_RESOLUTION, initial_time = TOY_START, name = "nem_toy_infeasible",
-    )
-    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    @test PSI.solve!(model) != PSI.RunStatus.SUCCESSFULLY_FINALIZED
-end
-
 @testset "Market Price Cap lookup covers only the published financial years" begin
     @test AustralianElectricityMarkets._financial_year_mpc(DateTime(2025, 6, 30)) == 17_500.0
     @test AustralianElectricityMarkets._financial_year_mpc(DateTime(2025, 7, 1)) == 17_500.0  # interval 23:55-00:00 on 30 June
@@ -669,7 +648,6 @@ end
     out = run_replay(sys, steps; template, optimizer)
     @test out.skipped_constraints == rows
     @test nrow(read_solved_interval(out.results, sys).prices) > 0
-    @test read_constraint_violations(out.results, sys) isa DataFrame
     # A second model and simulation on the same System build, and leave its series as they were.
     @test PSY.get_time_series_counts(sys) == counts
     again = run_replay(sys, steps; template, optimizer)

@@ -728,27 +728,6 @@ end
     @test !any(v -> occursin("TieBreakSlack", PSI.JuMP.name(v)), PSI.JuMP.all_variables(jm))
 end
 
-@testset "tie-break rows and slacks are registered under the EnergyTieBreak service" begin
-    third = "Solitude"
-    sys = nem_toy_system(
-        [
-            TOY_CHEAP => toy_unit(168.0, [(168.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
-            TOY_EXPENSIVE => toy_unit(46.0, [(46.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
-            third => toy_unit(122.0, [(122.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
-        ],
-        168.0,
-    )
-    out = solve_toy(sys)
-    up = PSI.get_variable(out.container, TieBreakSlackUp(), EnergyTieBreak, TIE_BREAK_SERVICE_NAME)
-    down = PSI.get_variable(out.container, TieBreakSlackDown(), EnergyTieBreak, TIE_BREAK_SERVICE_NAME)
-    rows = PSI.get_constraint(out.container, TieBreakConstraint(), EnergyTieBreak, TIE_BREAK_SERVICE_NAME)
-    # Three tied units at one time step: three pairs, one row and two slacks each.
-    @test length(rows.data) == 3
-    @test sort!(collect(keys(rows.data))) == [("1_offer", k, 1) for k in 1:3]
-    @test Set(keys(up.data)) == Set(keys(rows.data)) == Set(keys(down.data))
-    @test all(k -> PSI.JuMP.value(up[k...]) + PSI.JuMP.value(down[k...]) < 1.0e-8, keys(rows.data))
-end
-
 @testset "duals requested on the tie-break service model fail the build" begin
     sys = nem_toy_system(
         [

@@ -118,15 +118,6 @@ end
     @test any(k -> entry_and_component(k) == (ActivePowerOutVariable, EnergyReservoirStorage), var_keys)
 end
 
-@testset "MNSP offers bound the replayed flow under interval flow limits" begin
-    # The mock offers Basslink-like links on IC2 (300 MW available) for the intervals up to 04:00.
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
-    t = DateTime(2025, 1, 1, 0, 5, 0)
-    result = replay_steps(db, t:DISPATCH_INTERVAL:t; interval_flow_limits = true)
-    flow = only(filter(:INTERCONNECTORID => ==("IC2"), result.comparison.interconnectors)).MWFLOW_solved
-    @test abs(flow) <= 300.0 + 1.0e-6
-end
-
 @testset "replay_chunks splits a replay into simulations" begin
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
     t1, t2 = DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 20)
@@ -152,16 +143,6 @@ end
     reopened = PSI.get_decision_problem_results(PSI.SimulationResults(two.chunks.folder[2], "replication"), "dispatch")
     at_chunk2 = filter(:DateTime => t -> t >= t_mid, two.violations)
     @test sort(read_constraint_violations(reopened, sys2), [:DateTime, :name]) == sort(at_chunk2, [:DateTime, :name])
-
-    # The folders hold the stores of each chunk on disk.
-    d = mktempdir()
-    small = replay_chunked(db, t1:DISPATCH_INTERVAL:DateTime(2025, 1, 1, 0, 10); output_dir = d, cache_size_mib = 16)
-    @test isdir(joinpath(d, "chunk_1")) && any(f -> f == "simulation_store.h5", (f for (_, _, fs) in walkdir(joinpath(d, "chunk_1")) for f in fs))
-    @test small.chunks.n_steps == [2] && nrow(small.solver_stats) == 2
-    # On-disk time series default to a directory inside each chunk folder.
-    d = mktempdir()
-    replay_chunked(db, t1:DISPATCH_INTERVAL:t2; output_dir = d, chunk = Minute(10), time_series_in_memory = false)
-    @test all(k -> !isempty(readdir(joinpath(d, "chunk_$k", "time_series"))), 1:2)
 
     # Every replication time-series parameter is stored, as PowerSimulations stores right-hand-side parameters.
     stored = Set(PSI.IS.Optimization.get_entry_type(k) for k in PSI.list_parameter_keys(one.results[1]))

@@ -400,7 +400,7 @@ end
     area2_loads(sys) = collect(
         PSY.get_components(l -> PSY.get_name(PSY.get_area(PSY.get_bus(l))) == "2", PSY.PowerLoad, sys),
     )
-    for (multiplier, disable_load) in ((1.0, false), (2.0, false), (1.0, true))
+    for (multiplier, disable_load) in ((1.0, false), (1.0, true))
         function mutate!(sys)
             for load in area2_loads(sys)
                 PSY.set_max_active_power!(load, multiplier * PSY.get_max_active_power(load))

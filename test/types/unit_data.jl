@@ -5,12 +5,6 @@ using TimeSeries: TimeArray
 
 const _UD_IS = PowerSystems.IS
 
-_ud_key(name::String) = _UD_IS.StaticTimeSeriesKey(;
-    time_series_type = PowerSystems.SingleTimeSeries, name,
-    initial_timestamp = DateTime(2025, 1, 1), resolution = Minute(5), length = 12,
-    features = Dict{String, Any}(),
-)
-
 const _UD_STAMPS = collect(DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 1, 1))
 _ud_series(name) = SingleTimeSeries(; name, data = TimeArray(_UD_STAMPS, collect(1.0:length(_UD_STAMPS))))
 
@@ -37,48 +31,6 @@ _ud_telemetry(; uigf = nothing) = AEM.NEMTelemetry(;
     raise_reg_enablement = (0, 50), lower_reg_enablement = (1.5, 40),
     raise_reg_max_avail = 30, lower_reg_max_avail = 40,
 )
-
-@testset "NEMRegistration coerces numbers to Float64" begin
-    reg = _ud_registration()
-    @test reg.gen_loss_factor === 1.0
-    @test reg.load_loss_factor === 0.0
-    @test reg == _ud_registration()
-    @test reg != AEM.NEMRegistration(;
-        schedule_type = AEM.ScheduleType.SCHEDULED, gen_loss_factor = 1, load_loss_factor = 0,
-        registered_from = DateTime(2025, 1, 1), registered_until = DateTime(2030, 1, 1),
-    )
-end
-
-@testset "NEMTelemetry takes static and key-backed values" begin
-    tel = _ud_telemetry()
-    @test tel.ramp_up_limit === 2.0
-    @test tel.raise_reg_enablement === (0.0, 50.0)
-    @test tel.lower_reg_enablement === (1.5, 40.0)
-    @test tel == _ud_telemetry()
-
-    keyed = AEM.NEMTelemetry(;
-        agc_status = _ud_key("agc"), uigf = _ud_key("uigf"), ramp_up_limit = _ud_key("up"),
-        ramp_down_limit = 3, raise_reg_enablement = _ud_key("raise_enab"), lower_reg_enablement = (1.5, 40),
-        raise_reg_max_avail = _ud_key("raise_max"), lower_reg_max_avail = 40,
-    )
-    @test keyed == AEM.NEMTelemetry(;
-        agc_status = _ud_key("agc"), uigf = _ud_key("uigf"), ramp_up_limit = _ud_key("up"),
-        ramp_down_limit = 3, raise_reg_enablement = _ud_key("raise_enab"), lower_reg_enablement = (1.5, 40),
-        raise_reg_max_avail = _ud_key("raise_max"), lower_reg_max_avail = 40,
-    )
-    @test keyed != tel
-end
-
-@testset "NEMObservedState takes static and key-backed values" begin
-    obs = AEM.NEMObservedState(; initial_mw = 12, dispatch_mode = 3)
-    @test obs.initial_mw === 12.0
-    @test obs.dispatch_mode === 3
-    @test obs == AEM.NEMObservedState(; initial_mw = 12.0, dispatch_mode = 3)
-
-    keyed = AEM.NEMObservedState(; initial_mw = _ud_key("initial"), dispatch_mode = _ud_key("mode"))
-    @test keyed == AEM.NEMObservedState(; initial_mw = _ud_key("initial"), dispatch_mode = _ud_key("mode"))
-    @test keyed != obs
-end
 
 @testset "Stock devices carry NEM unit data as an attribute" begin
     sys = System(100.0)

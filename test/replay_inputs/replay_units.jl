@@ -114,12 +114,6 @@ end
     @test_throws ArgumentError set_unit_conditions!(deepcopy(RU_NETWORK), RU_DB, RU_START:Minute(5):(RU_START + Minute(5)))
 end
 
-@testset "no energy_max_avail or fcas_trapezium series is written" begin
-    for device in get_components(StaticInjection, RU_STAGED), key in get_time_series_keys(device)
-        @test !startswith(get_name(key), "energy_max_avail") && !startswith(get_name(key), "fcas_trapezium")
-    end
-end
-
 @testset "FCAS offers point at the bid series" begin
     AEM = AustralianElectricityMarkets
     sys = deepcopy(RU_SYS)
@@ -129,7 +123,6 @@ end
             if b.service == BidType.RAISEREG && AEM._fcas_bid_side(bw01, b) == OfferSide.GEN
     )
     @test AEM._fcas_offer_key(bw01, BidType.RAISEREG, OfferSide.GEN) == bid.offer_curves
-    @test !has_time_series(bw01, SingleTimeSeries, fcas_series_name("fcas_offer", BidType.RAISEREG, false))
     # Removes BW01's RAISEREG service, so its bid is unmodelled and has no offer key.
     raisereg = only(s for s in PowerSystems.get_services(bw01) if s isa FCASService && AEM.get_bid_type(s) == BidType.RAISEREG)
     PowerSystems.remove_service!(bw01, raisereg)

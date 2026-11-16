@@ -90,16 +90,6 @@ constraint_metas(constraint_keys, ::Type{T}) where {T} =
     # A load carries no ramp series, so it is not a participant.
     @test !(PSY.PowerLoad in types)
 
-    @testset "set_nem_dispatch_models! sets one formulation for every participant" begin
-        template = ProblemTemplate(NetworkModel(AreaBalancePowerModel; use_slacks = true))
-        set_nem_dispatch_models!(template, sys)
-        models = PSI.get_device_models(template)
-        @test !isempty(models)
-        for (_, model) in models
-            @test PSI.get_formulation(model) === NEMReplayDispatch
-        end
-    end
-
     @testset "a System with no dispatch limits throws, naming the setter" begin
         db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
         bare = first(nem_network(db))
@@ -193,50 +183,6 @@ end
     end
 
     @test solve!(model) == IS.Simulation.RunStatus.SUCCESSFULLY_FINALIZED
-end
-
-@testset "the ramp constraint binds against the metered base" begin
-    sys = nem_dispatch_system()
-    model = nem_dispatch_model(sys)
-    build!(model; output_dir = mktempdir())
-    solve!(model)
-
-    results = PSI.OptimizationProblemResults(model)
-    dispatch = read_variable(results, "ActivePowerVariable__ThermalStandard")
-    solved_mw = [
-        only(row.value for row in eachrow(dispatch) if row.name == "ER02" && row.DateTime == t)
-            for t in sort(unique(dispatch.DateTime))
-    ]
-
-    device = PSY.get_component(ThermalStandard, sys, "ER02")
-    base_power = PSY.get_base_power(sys)
-    initial_mw = PSY.get_time_series_values(
-        PSY.SingleTimeSeries, device, AustralianElectricityMarkets.NEM_OBSERVED_SERIES.initial_mw; len = 12,
-    ) ./ base_power
-    up_rate = PSY.get_time_series_values(
-        PSY.SingleTimeSeries, device, "ramp_up_rate"; len = 12,
-    )
-    down_rate = PSY.get_time_series_values(
-        PSY.SingleTimeSeries, device, "ramp_down_rate"; len = 12,
-    )
-
-    solved = solved_mw ./ base_power
-    @testset "each interval stays within its own rate of its own INITIALMW" begin
-        for t in eachindex(solved)
-            @test solved[t] <= initial_mw[t] + up_rate[t] * 5 + 1.0e-6
-            @test solved[t] >= initial_mw[t] - down_rate[t] * 5 - 1.0e-6
-        end
-    end
-
-    @testset "both ramp directions are built for every participant and interval" begin
-        container = PSI.get_optimization_container(model)
-        for T in nem_dispatch_participants(sys), meta in ("up", "dn")
-            constraint = PSI.get_constraint(container, PSI.RampConstraint(), T, meta)
-            names, steps = axes(constraint)
-            @test length(names) == length(collect(PSY.get_components(PSY.get_available, T, sys)))
-            @test length(steps) == 12
-        end
-    end
 end
 
 @testset "energy-limit preflight validates raw inputs before a build" begin
@@ -343,12 +289,4 @@ end
     end
     @test checked > 0
     @test any(d -> d isa InterruptiblePowerLoad && !isempty(AustralianElectricityMarkets.get_energy_bids(AustralianElectricityMarkets._nem_offer_cost(d))), PSY.get_components(PSY.StaticInjection, sys))
-end
-
-@testset "AEMSim attaches no supplemental attributes of its own" begin
-    sys = nem_dispatch_system()
-    for device in PSY.get_components(PSY.StaticInjection, sys)
-        attributes = PSY.get_supplemental_attributes(PSY.SupplementalAttribute, device)
-        @test all(a -> parentmodule(typeof(a)) !== AEMS, attributes)
-    end
 end

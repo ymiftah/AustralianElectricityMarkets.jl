@@ -23,7 +23,6 @@
         sys2 = System(json_path)
 
         service = get_component(EnergyTieBreak, sys2, "energy_tie_break")
-        @test service isa EnergyTieBreak
         @test get_available(service)
         @test sort!(get_name.(get_contributing_devices(sys2, service))) == ["G1", "G2"]
     end

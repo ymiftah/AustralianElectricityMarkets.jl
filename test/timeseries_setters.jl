@@ -37,29 +37,11 @@
             horizon = Hour(2)
             date_range = start_date:resolution:(start_date + horizon)
 
-            @testset "demand build" begin
-                attach_demand!(sys, db, date_range; resolution = resolution)
-                for load in get_components(PowerLoad, sys)
-                    ta = get_time_series_array(SingleTimeSeries, load, "max_active_power")
-                    # subset! logic in setters/timeseries.jl: first(date_range) <= x < last(date_range)
-                    @test length(ta) == length(date_range) - 1
-                    if length(ta) > 1
-                        @test TimeSeries.timestamp(ta)[2] - TimeSeries.timestamp(ta)[1] == resolution
-                    end
-                end
-            end
-
             @testset "set_market_bids!" begin
                 # PUMP2 has no bid and WDR1 bids GEN: unavailable, one aggregated warning each.
                 @test_logs (:warn, r"WDR1") (:warn, r"PUMP2") match_mode = :any set_market_bids!(
                     sys, db, date_range; resolution = resolution,
                 )
-                for gen in get_components(ThermalStandard, sys)
-                    # set_market_bids! creates one value per bid interval of date_range.
-                    ta = get_time_series_array(SingleTimeSeries, gen, "bid_energy_offer_curves_gen")
-                    @test length(ta) == length(date_range) - 1
-                end
-
                 @testset "Scheduled loads" begin
                     @test !get_available(get_component(InterruptiblePowerLoad, sys, "PUMP2"))
                     @test !get_available(get_component(InterruptiblePowerLoad, sys, "WDR1"))

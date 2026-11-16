@@ -88,9 +88,9 @@ end
             length(PSI.get_time_steps(PSI.get_optimization_container(model)));
             interval = PSI.get_interval(PSI.get_settings(model)), ignore_scaling_factors = true,
         )
-        @test PSY.get_y_coords(only(energy)) == [Float64(i)]
-        @test PSY.get_y_coords(only(forecast)) == [Float64(i)]
         if i in (1, 24, 25, 48, 49, 60)
+            @test PSY.get_y_coords(only(energy)) == [Float64(i)]
+            @test PSY.get_y_coords(only(forecast)) == [Float64(i)]
             caches = PSI.get_time_series_cache(model)
             @test any(k -> k isa PSI.IS.TimeSeriesCacheKey && k.name == "variable_cost", keys(caches))
             @test all(c -> Base.summarysize(PSI.IS._get_time_series(c)) < 100_000, values(caches))

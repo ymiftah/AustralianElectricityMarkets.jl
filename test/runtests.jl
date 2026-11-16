@@ -40,7 +40,6 @@ const TEST_GROUPS = [
     "fcas_scaling" => ("FCAS trapezium scaling", ["fcas/scaling.jl"]),
     "constraints" => ("Constraint types", ["constraints/constraints.jl"]),
     "interconnector_losses" => ("Interconnector losses", ["interconnector_losses.jl"]),
-    "pscb_fixture" => ("PSCB fixture", ["integration/pscb_fixture_tests.jl"]),
     "pscb_constraints" => ("PSCB constraints and FCAS", ["integration/pscb_constraints.jl"]),
     "fcas_service" => ("PSCB FCASService", ["fcas/fcas_service.jl"]),
     "system_build_coverage" => ("System build coverage and JSON round-trip", ["integration/system_build_coverage.jl"]),

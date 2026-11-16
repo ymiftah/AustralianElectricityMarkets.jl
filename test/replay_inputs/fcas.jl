@@ -31,6 +31,8 @@ end
     base = get_base_power(sys)
     inactive = FCAS_INACTIVE_LIMIT_MW / base
     checked = 0
+    # (device, series, interval, field) of every written value that departs from the rule.
+    bad = Tuple{String, String, Int, Symbol}[]
     for device in AEM._bidding_devices(sys), bid_type in FCAS_CONTINGENCY_MARKETS, decremental in (false, true)
         name = fcas_effective_series_name(bid_type, decremental)
         has_time_series(device, SingleTimeSeries, name) || continue
@@ -38,7 +40,7 @@ end
         stamps = get_time_series_timestamps(SingleTimeSeries, device, PowerSystems.IS.get_name(bid.trapezium))
         n = length(stamps)
         written = _fw_written(device, name)
-        @test length(written) == n
+        length(written) == n || push!(bad, (get_name(device), name, 0, :length))
         points = PowerSystems.IS.get_time_series_values(device, bid.trapezium; start_time = first(stamps), len = n)
         max_avail = PowerSystems.IS.get_time_series_values(device, bid.max_avail; start_time = first(stamps), len = n)
         curves = PowerSystems.IS.get_time_series_values(device, bid.offer_curves; start_time = first(stamps), len = n)
@@ -47,26 +49,26 @@ end
             entry = written[t]
             if iszero(entry[1])
                 # A disabled offer has zero MaxAvail and no bands, and enablement limits at the inactive limit.
-                @test entry[2] ≈ -inactive
-                @test entry[3] ≈ inactive
-                @test all(iszero, entry[4:15])
+                (entry[2] ≈ -inactive && entry[3] ≈ inactive && all(iszero, entry[4:15])) ||
+                    push!(bad, (get_name(device), name, t, :disabled))
                 continue
             end
             checked += 1
             # The effective trapezium of an enabled contingency offer is the bid's own, in per-unit of the base,
             # except that a semi-scheduled unit's EnablementMax is limited by its UIGF.
-            @test entry[1] * base ≈ max_avail[t]
-            @test entry[2] * base ≈ points[t][1]
+            entry[1] * base ≈ max_avail[t] || push!(bad, (get_name(device), name, t, :max_avail))
+            entry[2] * base ≈ points[t][1] || push!(bad, (get_name(device), name, t, :enablement_min))
             maximum_enablement = points[t][4]
             if !isnothing(uigf) && !isnan(uigf[t])
                 maximum_enablement = min(maximum_enablement, uigf[t])
             end
-            @test entry[3] * base ≈ maximum_enablement
+            entry[3] * base ≈ maximum_enablement || push!(bad, (get_name(device), name, t, :enablement_max))
             # The band widths are the offer curve's quantities in per-unit of the base, zero-padded.
             xs = get_x_coords(curves[t])
-            @test sum(entry[6:15]) * base ≈ last(xs) - first(xs)
+            sum(entry[6:15]) * base ≈ last(xs) - first(xs) || push!(bad, (get_name(device), name, t, :band_widths))
         end
     end
+    @test isempty(bad)
     @test checked > 0
 end
 
@@ -77,6 +79,7 @@ end
     inactive = FCAS_INACTIVE_LIMIT_MW / base
     active_rows = 0
     inactive_rows = 0
+    bad = Tuple{String, String, Int, Symbol}[]
     for device in nem_dispatch_devices(sys), service in (BidType.RAISEREG, BidType.LOWERREG)
         name = fcas_ramping_series_name(service)
         has_time_series(device, SingleTimeSeries, name) || continue
@@ -93,16 +96,19 @@ end
         for i in eachindex(stamps)
             state = window.states[i]
             # The evaluator's own enablement is the non-state half of the ramping rule.
-            @test last(AEM._fcas_values_at(prep, device, service, i))[1] ≈ written[i] rtol = 1.0e-12
+            isapprox(last(AEM._fcas_values_at(prep, device, service, i))[1], written[i]; rtol = 1.0e-12) ||
+                push!(bad, (get_name(device), name, i, :evaluator))
             if AEM.fcas_ramping_active(caps[i], state) && !AEM.fcas_joint_ramping_exempt(state, window.fast_start[i]) && !(written[i] ≈ sentinel)
-                @test AEM.fcas_ramping_limit(caps[i], upper, state) ≈ written[i] rtol = 1.0e-12
+                isapprox(AEM.fcas_ramping_limit(caps[i], upper, state), written[i]; rtol = 1.0e-12) ||
+                    push!(bad, (get_name(device), name, i, :active))
                 active_rows += 1
             else
-                @test written[i] ≈ sentinel
+                written[i] ≈ sentinel || push!(bad, (get_name(device), name, i, :inactive))
                 inactive_rows += 1
             end
         end
     end
+    @test isempty(bad)
     @test active_rows > 0
     @test inactive_rows > 0
 end

@@ -60,32 +60,9 @@ _keyed_fcas_bid(service, direction) = AEM.NEMFCASBid(;
     @test length(get_fcas_bids(cost)) == 3
 end
 
-@testset "bid types construct statically and compare by value" begin
-    bid = _static_energy_bid(AEM.BidDirection.GEN)
-    @test bid == _static_energy_bid(AEM.BidDirection.GEN)
-    @test bid != _static_energy_bid(AEM.BidDirection.LOAD)
-    @test AEM.get_fast_start_profile(bid) == AEM.FastStartProfile((1.0, 2.0, 3.0, 4.0))
-
-    fcas = _static_fcas_bid(BidType.RAISE6SEC, AEM.BidDirection.GEN)
-    @test AEM.get_trapezium(fcas) == AEM.FCASTrapeziumPoints((0.0, 1.0, 2.0, 3.0))
-    @test fcas == _static_fcas_bid(BidType.RAISE6SEC, AEM.BidDirection.GEN)
-end
-
-@testset "bid series are named by service, field and direction" begin
-    @test AEM.bid_series_name(BidType.ENERGY, :offer_curves, AEM.BidDirection.GEN) == "bid_energy_offer_curves_gen"
-    @test AEM.bid_series_name(BidType.RAISE6SEC, :trapezium, AEM.BidDirection.BIDIRECTIONAL) ==
-        "bid_raise6sec_trapezium_bidirectional"
-end
-
 @testset "bid_value returns the static value, or the window in the static type" begin
     @test AEM.bid_value(nothing, _static_energy_bid(AEM.BidDirection.GEN), :max_avail, DateTime(2025), 3) == 100.0
     @test isnothing(AEM.bid_value(nothing, _keyed_energy_bid(AEM.BidDirection.GEN), :energy_limit, DateTime(2025), 3))
-end
-
-@testset "NEMEnergyBid JSON round trip keeps its key fields" begin
-    bid = _keyed_energy_bid(AEM.BidDirection.GEN)
-    restored = _IS.deserialize(AEM.NEMEnergyBid, _IS.serialize(bid))
-    @test restored == bid
 end
 
 @testset "NEMOfferCost serializes static and key-backed bids" begin

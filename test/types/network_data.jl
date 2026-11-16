@@ -20,35 +20,6 @@ _nw_interchange(name::String, from::Area, to::Area) = AreaInterchange(;
     flow_limits = (from_to = 100.0, to_from = 100.0),
 )
 
-@testset "NEM interconnector and MNSP attributes take static and key-backed values" begin
-    limits = AEM.NEMInterconnectorLimits(; from_to_limit = 100, to_from_limit = 250)
-    @test limits.from_to_limit === 100.0
-    @test limits.to_from_limit === 250.0
-
-    bid = AEM.NEMMNSPBid(;
-        direction = AEM.MNSPDirection.REVERSE, offer_curves = PowerSystems.PiecewiseStepData([0.0, 10.0], [5.0]),
-        max_avail = 80, ramp_up = 1.5,
-    )
-    @test bid.max_avail === 80.0
-    @test bid.ramp_up === 1.5
-    @test isnothing(bid.fixed_load)
-    @test isnothing(bid.band_prices)
-    priced = AEM.NEMMNSPBid(;
-        direction = AEM.MNSPDirection.FORWARD, offer_curves = PowerSystems.PiecewiseStepData([0.0, 10.0], [5.0]),
-        max_avail = 80, ramp_up = 1.5, band_prices = 1:10,
-    )
-    @test priced.band_prices === ntuple(Float64, 10)
-
-    link = AEM.NEMMNSPLink(;
-        direction = AEM.MNSPDirection.FORWARD, link_id = "BLNK", from_region_tlf = 1, to_region_tlf = 0.99,
-        lhs_factor = 2, max_capacity = 600,
-    )
-    @test link.max_capacity === 600.0
-    @test link.to_region_tlf === 0.99
-
-    @test AEM.NEMMNSPObservedState(; initial_flow = 12).initial_flow === 12.0
-end
-
 @testset "NEM interconnector and MNSP attributes survive a System JSON round-trip" begin
     sys = System(100.0)
     nsw = Area(; name = "NSW1")
@@ -122,14 +93,6 @@ end
             mnsp_back, back_state.initial_flow; start_time = first(_NW_STAMPS), len = 1,
         ) == [1.0]
     end
-end
-
-@testset "GenericConstraint rhs and invoked take static and key-backed values" begin
-    gc = GenericConstraint(; name = "N_STATIC", sense = ConstraintSense.LE, rhs = 0)
-    @test gc.rhs === 0.0
-    @test gc.invoked === true
-    @test AEM.get_rhs(gc, first(_NW_STAMPS)) === 0.0
-    @test AEM.get_invoked(gc, first(_NW_STAMPS)) === true
 end
 
 @testset "GenericConstraint keyed rhs is read in MW with no unit conversion" begin

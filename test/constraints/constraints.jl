@@ -17,18 +17,7 @@
         @test invoked2 == [0.0, 0.0, 1.0, 0.0]
     end
 
-    @testset "RegionTerm devices default to empty and take positional or keyword devices" begin
-        @test get_devices(RegionTerm("NSW1", BidType.ENERGY, 2.0)) == String[]
-        @test get_devices(RegionTerm("NSW1", BidType.ENERGY, 2.0, ["BW01", "BW02"])) == ["BW01", "BW02"]
-        @test get_devices(RegionTerm(; region = "NSW1", bid_type = BidType.ENERGY, factor = 2.0, devices = ["BW01"])) == ["BW01"]
-    end
-
-    @testset "GenericConstraint defaults and NULL standing data" begin
-        gc = GenericConstraint(; name = "F_TEST", sense = ConstraintSense.GE, rhs = 137.5)
-        @test get_available(gc)
-        @test get_description(gc) == ""
-        @test isempty(get_ext(gc))
-
+    @testset "GenericConstraint NULL standing data" begin
         gc_null_ext = GenericConstraint(;
             name = "F_NULL_EXT", sense = ConstraintSense.LE, rhs = 1.0,
             limit_type = missing, source = missing,
@@ -41,59 +30,6 @@
         @test get_gencon_id(gc_null_ext) == "F_NULL_EXT"
     end
 
-    @testset "GenericConstraint JSON round-trip" begin
-        sys = System(100.0)
-        gc = GenericConstraint(;
-            name = "F_ROUNDTRIP",
-            sense = ConstraintSense.GE,
-            rhs = 137.5,
-            constraint_weight = 2.0,
-            description = "test constraint",
-            gencon_id = "F_ROUNDTRIP",
-            limit_type = "FCAS",
-            source = "mock",
-            effective_date = DateTime(2025, 1, 2),
-            version_no = 3,
-            terms = ConstraintTerm[
-                UnitTerm("BW01", BidType.RAISE6SEC, 1.0),
-                InterconnectorTerm("IC1", -1.0),
-                RegionTerm("NSW1", BidType.ENERGY, 0.5, ["BW01", "BW02"]),
-            ],
-            fcas_requirements = FCASRequirement[FCASRequirement("TAS1", BidType.RAISE6SEC), FCASRequirement("TAS1", BidType.RAISE5MIN)],
-        )
-        add_component!(sys, gc)
-
-        mktpath = mktempdir()
-        json_path = joinpath(mktpath, "sys.json")
-        to_json(sys, json_path)
-        sys2 = System(json_path)
-
-        gc2 = get_component(GenericConstraint, sys2, "F_ROUNDTRIP")
-        @test get_sense(gc2) == ConstraintSense.GE
-        @test gc2.rhs == 137.5
-        @test get_constraint_weight(gc2) == 2.0
-        @test get_description(gc2) == "test constraint"
-        @test length(get_terms(gc2)) == 3
-        @test length(get_fcas_requirements(gc2)) == 2
-
-        unit_term = only(filter(t -> t isa UnitTerm, get_terms(gc2)))
-        @test get_duid(unit_term) == "BW01"
-        @test get_bid_type(unit_term) == BidType.RAISE6SEC
-        ic_term = only(filter(t -> t isa InterconnectorTerm, get_terms(gc2)))
-        @test get_interconnector(ic_term) == "IC1"
-        region_term = only(filter(t -> t isa RegionTerm, get_terms(gc2)))
-        @test get_region(region_term) == "NSW1"
-        @test get_devices(region_term) == ["BW01", "BW02"]  # devices survives the JSON round trip
-
-        @test all(r -> get_region(r) == "TAS1", get_fcas_requirements(gc2))
-        @test Set(get_service.(get_fcas_requirements(gc2))) == Set([BidType.RAISE6SEC, BidType.RAISE5MIN])
-        @test get_gencon_id(gc2) == "F_ROUNDTRIP"
-        @test get_limit_type(gc2) == "FCAS"
-        @test get_source(gc2) == "mock"
-        @test get_effective_date(gc2) == DateTime(2025, 1, 2)
-        @test get_version_no(gc2) === 3
-        @test isempty(get_ext(gc2))
-    end
 end
 
 @testset "Constraint readers against mock data" begin

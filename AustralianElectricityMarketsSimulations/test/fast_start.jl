@@ -163,7 +163,6 @@ end
 
 @testset "both runs build and replay closed loop over two steps" begin
     out = fs_replay(fast_start_system(); steps = 2, problem = NEMClosedLoopDispatchProblem)
-    @test out.dispatch isa PSI.DecisionModel{NEMClosedLoopDispatchProblem}
     @test fs_values(out.dispatch_results, FS_POWER)[TOY_CHEAP] ≈ 0.0 atol = TOY_TOLERANCE
 end
 

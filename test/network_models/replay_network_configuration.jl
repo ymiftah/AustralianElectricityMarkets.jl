@@ -256,16 +256,22 @@ end
         set_market_bids!(sys, db, grid; resolution = Minute(5))
         set_unit_conditions!(sys, db, grid)
     end
+    # (component, series) pairs whose values differ between the two builds.
+    differing = Tuple{String, String}[]
+    compared = 0
     for T in (PowerLoad, ThermalStandard, HydroDispatch, RenewableDispatch, EnergyReservoirStorage, InterruptiblePowerLoad), component in get_components(T, shared)
         other = get_component(T, independent, get_name(component))
         for key in PowerSystems.get_time_series_keys(component)
             name = get_name(key)
-            @test isequal(
+            compared += 1
+            isequal(
                 get_time_series_values(SingleTimeSeries, component, name; ignore_scaling_factors = true),
                 get_time_series_values(SingleTimeSeries, other, name; ignore_scaling_factors = true),
-            )
+            ) || push!(differing, (get_name(component), name))
         end
     end
+    @test compared > 0
+    @test isempty(differing)
 end
 
 # Whether every numeric term of an operation cost is zero.
@@ -323,25 +329,6 @@ end
         @test !any(has_nem_unit_data, get_components(T, sys))
     end
     @test !isempty(get_components(ThermalStandard, sys))
-end
-
-@testset "FCAS bids are recorded without derived offer series" begin
-    AEM = AustralianElectricityMarkets
-    hive = _REPLAY_HIVE
-    db = aem_connect(HiveConfiguration(hive_location = hive))
-    grid = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
-    sys, _ = constrained_system(db; date_range = grid)
-    # No stage attaches an `fcas_offer_*` series.
-    @test !any(
-        has_time_series(device, SingleTimeSeries, fcas_series_name("fcas_offer", get_bid_type(svc), dec))
-            for device in get_components(Device, sys), svc in get_components(FCASService, sys), dec in (false, true)
-    )
-    bidders = [g for g in get_components(Generator, sys) if !isempty(AustralianElectricityMarkets.get_fcas_bids(AustralianElectricityMarkets._nem_offer_cost(g)))]
-    @test !isempty(bidders)
-    for g in bidders
-        @test has_time_series(g, SingleTimeSeries, AustralianElectricityMarkets.bid_series_name(BidType.RAISE6SEC, :offer_curves, AustralianElectricityMarkets.BidDirection.GEN)) ||
-            isempty(filter(b -> b.service == BidType.RAISE6SEC, AustralianElectricityMarkets.get_fcas_bids(AustralianElectricityMarkets._nem_offer_cost(g))))
-    end
 end
 
 @testset "units registered mid-chunk are built for the whole chunk" begin

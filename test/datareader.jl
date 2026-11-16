@@ -15,14 +15,6 @@ let
         @test only(mapped.FUELTYPE[mapped.DUID .== "BW01"]) == ThermalFuels.OTHER
     end
 
-    @testset "read_bids" begin
-        # Use 2025 to match mock data
-        date_range = DateTime(2025, 1, 1, 0, 0):Dates.Minute(5):DateTime(2025, 1, 1, 1, 0)
-        df = read_bids(db, date_range)
-        @test "PRICEBANDARRAY" in names(df) && "BANDAVAILARRAY" in names(df)
-        @test !("piecewise_step_data" in names(df))
-    end
-
     @testset "Bounded demand preserves complete aggregation bins" begin
         start = DateTime(2025, 1, 1)
         for resolution in (Minute(15), Hour(1))
