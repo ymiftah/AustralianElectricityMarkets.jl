@@ -21,7 +21,7 @@ Accepted. Extends [0022](0022-interconnector-loss-formulation.md).
 
 - With a non-positive weighted price (`share * price_from + (1 - share) * price_to`) the LP fills a steep segment while a cheaper one is idle and burns energy. The 10-interval baseline showed NSW1-QLD1 loss 875 MW against 1 MW published.
 - An LP-only epigraph is exact only when loss is costly; bounding loss above for negative prices is non-convex, so any exact form needs integrality. Binaries were chosen over SOS2 because PSI already handles them. The semantics equal nempy's two-adjacent-points SOS2 weights.
-- Replay solves use a tight MIP gap (rel `1e-8`, abs `1e-10`, `NEMDE_HIGHS_OPTIONS`) because the objective is 1e6 to 1e8 once violation slacks are active.
+- Run solves use a tight MIP gap (rel `1e-8`, abs `1e-10`, `NEMDE_HIGHS_OPTIONS`) because the objective is 1e6 to 1e8 once violation slacks are active.
 
 ## Departure from nempy and NEMDE
 

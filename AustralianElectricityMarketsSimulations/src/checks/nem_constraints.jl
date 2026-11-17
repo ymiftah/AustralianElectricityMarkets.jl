@@ -209,9 +209,9 @@ end
 
 
 """
-    replay_skipped_constraints(sys, template) -> DataFrame
+    template_skipped_constraints(sys, template) -> DataFrame
 
-The `GenericConstraint`s of `sys` that a replay of `template` leaves out, without changing `sys` or
+The `GenericConstraint`s of `sys` that a run of `template` leaves out, without changing `sys` or
 `template`. The rows are the constraints unavailable from the build ([`get_unavailable_constraints`](@ref), with
 `n_missing = 0`), the available constraints the template excludes by name, with `n_missing = 0`, and
 every other available constraint the template cannot build, with the number of failing terms.
@@ -219,13 +219,13 @@ A template with no `GenericConstraint` service model reports the unavailable con
 caller's template or the expanded template of a built model alike.
 
 # Arguments
-- `sys`: the replay system built by [`nem_system`](@ref AustralianElectricityMarkets.nem_system).
-- `template`: the `PSI.ProblemTemplate` the replay builds, e.g. [`template_nemde`](@ref)().
+- `sys`: the NEMDE system built by [`nem_system`](@ref AustralianElectricityMarkets.nem_system).
+- `template`: the `PSI.ProblemTemplate` the run builds, e.g. [`template_nemde`](@ref)().
 
 # Returns
 A `DataFrame` with columns `constraint`, `reason` and `n_missing`, sorted by constraint name.
 """
-function replay_skipped_constraints(sys::PSY.System, template::PSI.ProblemTemplate)
+function template_skipped_constraints(sys::PSY.System, template::PSI.ProblemTemplate)
     rows = _ConstraintRow[
         (constraint = r.constraint, reason = r.reason, n_missing = 0) for r in eachrow(get_unavailable_constraints(sys))
     ]

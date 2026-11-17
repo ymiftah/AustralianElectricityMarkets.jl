@@ -7,13 +7,13 @@ Accepted; the lookahead mode was removed by [0069](0069-remove-lookahead-dispatc
 ## What
 
 - Every scheduled resource is the same object to NEMDE: a ten-band bid stack, a ramp limit from `INITIALMW`, and an availability envelope. Technology enters through the numbers, never the form of the constraints.
-- One formulation family, `AbstractNEMDispatch`, with one concrete subtype `NEMReplayDispatch`, replaces the stock per-type formulations (`ThermalBasicDispatch`, `RenewableFullDispatch`, `HydroDispatchRunOfRiver`), which import US-market assumptions (commitment, forecast ceilings, energy budgets).
+- One formulation family, `AbstractNEMDispatch`, with one concrete subtype `NEMDispatch`, replaces the stock per-type formulations (`ThermalBasicDispatch`, `RenewableFullDispatch`, `HydroDispatchRunOfRiver`), which import US-market assumptions (commitment, forecast ceilings, energy budgets).
 - Methods are written against `PSY.StaticInjection` with no device-type gate; the template picks the types.
 
 ## How
 
 - `nem_dispatch_participants(sys)` returns the types with at least one component carrying the dispatch-limit series (`_has_nem_dispatch_limits`). It checks the whole registered series set, not one arbitrary name: `"max_active_power"` is also written for renewables with a UIGF ceiling and would elect them falsely.
-- `set_nem_dispatch_models!(template, sys)` sets `NEMReplayDispatch` for those types. A participant missing a series fails the build, naming the device.
+- `set_nem_dispatch_models!(template, sys)` sets `NEMDispatch` for those types. A participant missing a series fails the build, naming the device.
 - Time-series parameters are read by UUID: `get_parameter_column_refs(param, name)[t] * multiplier[name, t]`. Indexing the array by device name compiles and then `KeyError`s.
 - Ramp series are per-unit per minute; `DISPATCHLOAD` publishes `RAMPUPRATE`/`RAMPDOWNRATE` in MW per hour, so AEM divides by 60 and by the base.
 - `INITIALMW` is a time series (metered at the start of each interval), never a scalar rewritten per step.

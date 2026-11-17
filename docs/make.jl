@@ -27,7 +27,7 @@ for (group, names) in [
             "formulation" => FORMULATION_PAGES,
             "overview" => ["nem"],
             "tutorials" => ["nemde_jump", "nemde_psi", "nemde_aem"],
-            "howto" => ["build_system", "economic_dispatch", "market_bids", "interchanges", "clearing-with-batteries", "replay_nemde"],
+            "howto" => ["build_system", "economic_dispatch", "market_bids", "interchanges", "clearing-with-batteries", "run_nemde"],
         ], name in names
     figure_options = name in FORMULATION_PAGES ? (; image_formats = [(MIME("image/png"), ".png")]) : (;)
     Literate.markdown(
@@ -91,8 +91,8 @@ makedocs(;
             "Market bids" => "examples/market_bids.md",
             "Interchanges" => "examples/interchanges.md",
             "Clearing with batteries" => "examples/clearing-with-batteries.md",
-            "Replay NEMDE dispatch" => "examples/replay_nemde.md",
-            "Batch replays and benchmark" => "replay_batch.md",
+            "Run NEMDE dispatch" => "examples/run_nemde.md",
+            "Batch runs and benchmark" => "batch_run.md",
         ],
         "Roadmap" => "roadmap.md",
         "Reference" => [

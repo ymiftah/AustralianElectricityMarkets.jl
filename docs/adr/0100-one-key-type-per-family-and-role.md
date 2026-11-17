@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. Builds on [0097](0097-stock-devices-for-replay.md).
+Accepted. Builds on [0097](0097-stock-devices-for-nemde.md).
 
 ## What
 
@@ -19,7 +19,7 @@ Accepted. Builds on [0097](0097-stock-devices-for-replay.md).
 
 ## Why
 
-- PSI compiles a method for each distinct container key type, so compile time scales with the number of key types. Per-variant, per-device structs had inflated the replay to about 200 key types; merging variants cut it by about a third without changing any result.
+- PSI compiles a method for each distinct container key type, so compile time scales with the number of key types. Per-variant, per-device structs had inflated the run to about 200 key types; merging variants cut it by about a third without changing any result.
 
 ## Market correctness
 

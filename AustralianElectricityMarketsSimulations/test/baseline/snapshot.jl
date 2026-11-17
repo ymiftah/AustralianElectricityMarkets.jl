@@ -1,9 +1,9 @@
-# Replay snapshots: the realized PSI results, the optimizer statistics and the invoked input of the
-# generic constraints of one replay, as name => table maps. The caller provides `PSI`, `PSY`,
+# Run snapshots: the realized PSI results, the optimizer statistics and the invoked input of the
+# generic constraints of one run, as name => table maps. The caller provides `PSI`, `PSY`,
 # `AEMS` and `DataFrame`.
 
 """
-    replay_snapshot(results, sys::PSY.System) -> Dict{String, DataFrame}
+    problem_snapshot(results, sys::PSY.System) -> Dict{String, DataFrame}
 
 Reads every realized result table of `results`, the optimizer statistics and the invoked input of
 each `GenericConstraint` of `sys` over the intervals of `results`. The keys are `"variable/<key>"`,
@@ -13,13 +13,13 @@ and one column per constraint name, and `"input/fcas_requirements"`, one row per
 service) FCAS requirement.
 
 # Arguments
-- `results`: the decision-problem results of a replay.
-- `sys`: the replay system the results were built from.
+- `results`: the decision-problem results of a run.
+- `sys`: the NEMDE system the results were built from.
 
 # Returns
 A `Dict{String, DataFrame}`.
 """
-function replay_snapshot(results, sys::PSY.System)
+function problem_snapshot(results, sys::PSY.System)
     snapshot = Dict{String, DataFrame}()
     readers = (
         "variable" => PSI.read_realized_variables,

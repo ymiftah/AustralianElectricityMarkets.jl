@@ -22,7 +22,7 @@ A non-scheduled load is pinned to zero initial output, but keeps its metered ram
 The read also covers the interval before the first, which supplies the first dispatch mode. A ramp, regulation or
 AGC status value with no row at an interval is `NaN`, and so is a dispatch mode or mode time whose previous interval
 has no row;
-the telemetry `uigf` is zero there. A registered unit with a `NaN` mode is refused by the replay state. Every problem
+the telemetry `uigf` is zero there. A registered unit with a `NaN` mode is refused by the NEMDE state. Every problem
 across every device is raised as one `ArgumentError`, and `sys` is left unmodified. A repeat call replaces each series
 it writes, and replaces the structs on the devices.
 
@@ -33,7 +33,7 @@ and registration span of a device come from its [`NEMRegistration`](@ref).
 - `sys`: the `System` to add to, after [`set_market_bids!`](@ref) has made the non-scheduled loads
   with FCAS bids available.
 - `db`: an `AEMDB` connection.
-- `date_range`: the five-minute dispatch intervals to replay, including the exclusive stop timestamp.
+- `date_range`: the five-minute dispatch intervals to run, including the exclusive stop timestamp.
 - `intervention`: the `DISPATCHLOAD` run, `0` for pricing or `1` for physical dispatch.
 
 # Returns

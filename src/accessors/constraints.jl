@@ -53,8 +53,8 @@ end
 """
     get_unavailable_constraints(sys) -> DataFrame
 
-The built constraints that the replay inputs set unavailable, and why: `:never_invoked` when the constraint is
-invoked at no replay interval, `:no_available_device` when all its contributing devices are unavailable.
+The built constraints that the NEMDE inputs set unavailable, and why: `:never_invoked` when the constraint is
+invoked at no dispatch interval, `:no_available_device` when all its contributing devices are unavailable.
 
 # Arguments
 - `sys`: a `System` built by `nem_system`.

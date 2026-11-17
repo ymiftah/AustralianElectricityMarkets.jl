@@ -50,9 +50,9 @@
 #     **AEMO:** evaluates each constraint using its applicable participant and interconnector
 #     terms. **AustralianElectricityMarkets:** drops a unit term whose unit is not in the
 #     `System` and records it in the build report. A dropped term of a unit that is not
-#     registered over the replayed range (retired or not yet registered) contributes zero. A
+#     registered over the run range (retired or not yet registered) contributes zero. A
 #     constraint whose only terms are dropped is skipped when it can never bind at its
-#     invoked intervals (reason `:vacuous_unknown_duid`). The replay checks reject every other
+#     invoked intervals (reason `:vacuous_unknown_duid`). The run checks reject every other
 #     dropped term and skipped constraint, so the model is never built on a partial left-hand
 #     side; read the records with `get_dropped_terms` and `get_skipped_constraints`.
 #

@@ -11,7 +11,7 @@ struct NEMConstraintLHS <: PSI.ExpressionType end
     NEMConstraintLimit
 
 Constraint type bounding a [`GenericConstraint`](@ref)'s [`NEMConstraintLHS`](@ref) expression
-against its replayed right-hand side.
+against its run right-hand side.
 """
 struct NEMConstraintLimit <: PSI.ConstraintType end
 

@@ -2,7 +2,7 @@
     nem_dispatch_devices(sys) -> Vector{Device}
 
 Collects every available device in `sys` whose type is in [`NEM_DISPATCH_DEVICE_TYPES`](@ref) and
-that carries a [`NEMUnitData`](@ref), the replay units that the dispatch limits apply to.
+that carries a [`NEMUnitData`](@ref), the NEMDE units that the dispatch limits apply to.
 
 # Arguments
 - `sys`: the `System` to collect from.

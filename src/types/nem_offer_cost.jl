@@ -54,7 +54,7 @@ time series that holds it on the unit, or `nothing` where AEMO publishes no valu
 - `normal_status`: `NORMALSTATUS`, `true` for `ON`.
 - `energy_limit`: `ENERGYLIMIT`, MWh.
 - `band_prices`: the ten band prices of the trading day in \$/MWh at the reference node, padded with `0.0`,
-  or `nothing` until the replay inputs are written.
+  or `nothing` until the NEMDE inputs are written.
 """
 struct NEMEnergyBid <: PSY.DeviceParameter
     direction::BidDirection
@@ -113,7 +113,7 @@ One direction of a unit's offer for one FCAS market, as AEMO bid it.
 - `max_avail`: `MAXAVAIL`, MW.
 - `trapezium`: the [`FCASTrapeziumPoints`](@ref) of the bid, MW.
 - `band_prices`: the ten band prices of the trading day in \$/MWh, padded with `0.0`, or `nothing` until the
-  replay inputs are written.
+  NEMDE inputs are written.
 """
 struct NEMFCASBid <: PSY.DeviceParameter
     service::BidType

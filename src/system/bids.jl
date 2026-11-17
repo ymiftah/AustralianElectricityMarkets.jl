@@ -29,12 +29,12 @@ end
 
 
 """
-    _replay_grid(date_range, resolution) -> Vector{DateTime}
+    _dispatch_grid(date_range, resolution) -> Vector{DateTime}
 
-The interval-ending stamps the replay setters write: from the first stamp of `date_range` up to its
+The interval-ending stamps the run setters write: from the first stamp of `date_range` up to its
 last stamp less `resolution`, the exclusive end of the range.
 """
-function _replay_grid(date_range, resolution)
+function _dispatch_grid(date_range, resolution)
     return collect(first(date_range):resolution:(last(date_range) - resolution))
 end
 
@@ -44,7 +44,7 @@ function _check_stamps_on_grid(stamps, grid, label::AbstractString)
     allunique(stamps) || throw(ArgumentError("$label has a duplicate INTERVAL_DATETIME"))
     on_grid = Set(grid)
     outside = [t for t in stamps if !(t in on_grid)]
-    isempty(outside) || throw(ArgumentError("$label has INTERVAL_DATETIME outside the replay grid, e.g. $(first(outside))"))
+    isempty(outside) || throw(ArgumentError("$label has INTERVAL_DATETIME outside the dispatch grid, e.g. $(first(outside))"))
     return
 end
 
@@ -319,7 +319,7 @@ end
 """
     set_market_bids!(sys, db, date_range; markets = NEM_MARKETS, resolution = Minute(5)) -> (; added, excluded)
 
-Stores the bids of each unit of `sys` for `date_range`. On a replay system (units carrying NEM unit
+Stores the bids of each unit of `sys` for `date_range`. On a NEMDE system (units carrying NEM unit
 data, built by [`nem_network`](@ref) or `nem_system(db, NEMDEConfiguration(); date_range)`) it is one
 [`read_offers`](@ref) read of the `markets`, written as one series per bid field
 ([`bid_series_name`](@ref)) and recorded on the unit's [`NEMOfferCost`](@ref) as
@@ -356,7 +356,7 @@ function set_market_bids!(
         sys, db, date_range;
         markets = NEM_MARKETS, resolution::Dates.Period = Minute(5),
     )
-    if !_is_replay_system(sys)
+    if !_is_nemde_system(sys)
         offers = read_offers(db, date_range; markets = (BidType.ENERGY,))
         factors = read_loss_factors(db; as_of = first(date_range), through = last(date_range) - resolution)
         return _set_regional_market_bids!(sys, offers, factors, date_range; resolution)
@@ -365,8 +365,8 @@ function set_market_bids!(
 end
 
 
-# Whether any device of `sys` carries NEM unit data, as a replay system's devices do.
-_is_replay_system(sys) = any(has_nem_unit_data, get_components(Device, sys))
+# Whether any device of `sys` carries NEM unit data, as a NEMDE system's devices do.
+_is_nemde_system(sys) = any(has_nem_unit_data, get_components(Device, sys))
 
 
 # The energy offer curve of each stamp of `grid` from `rows`, with its prices divided by `loss_factor`
@@ -395,7 +395,7 @@ without a loss factor throws an `ArgumentError`. Non-scheduled loads are left as
 """
 function _set_regional_market_bids!(sys, offers::DataFrame, factors::DataFrame, date_range; resolution::Dates.Period = Minute(5))
     start_date = first(date_range)
-    grid = _replay_grid(date_range, resolution)
+    grid = _dispatch_grid(date_range, resolution)
     offers = subset(offers, :BIDTYPE => ByRow(==(BidType.ENERGY)))
     if resolution != Minute(5)
         offers = _aggregate_offers(offers, resolution)
@@ -451,7 +451,7 @@ end
 # does. Subsets `offers` in place.
 function _set_market_bids!(sys, offers::DataFrame, date_range; markets = NEM_MARKETS, resolution::Dates.Period = Minute(5))
     start_date = first(date_range)
-    grid = _replay_grid(date_range, resolution)
+    grid = _dispatch_grid(date_range, resolution)
     if resolution != Minute(5)
         offers = _aggregate_offers(offers, resolution)
         subset!(offers, :INTERVAL_DATETIME => ByRow(t -> start_date <= t < last(date_range)))

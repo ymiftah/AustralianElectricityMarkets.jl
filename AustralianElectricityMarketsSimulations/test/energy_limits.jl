@@ -43,7 +43,7 @@ end
 
 function energy_limit_solve(sys)
     model = PSI.DecisionModel(
-        AEMS.NEMDispatchProblem, replay_template(sys), sys;
+        AEMS.NEMDispatchProblem, problem_template(sys), sys;
         optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false), initial_time = TOY_START,
     )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
@@ -112,7 +112,7 @@ end
 
 @testset "recurrent energy limits update step by step" begin
     sys = energy_limit_system(; max_avail = [100.0, 35.0], uigf = [45.0, 25.0], target = [60.0, 20.0])
-    out = run_replay(sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false))
+    out = run_problem(sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false))
     dispatch = read_solved_interval(out.results, sys).dispatch
     sort!(dispatch, :SETTLEMENTDATE)
     power = filter(:DUID => ==(TOY_CHEAP), dispatch).TOTALCLEARED
@@ -128,9 +128,9 @@ end
     sys = energy_limit_system()
     cheap = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
     clear_toy_uigf!(sys, cheap)
-    @test_throws ArgumentError replay_template(sys)
+    @test_throws ArgumentError problem_template(sys)
     invalid = energy_limit_system(; uigf = [45.0, NaN])
-    template = replay_template(invalid)
+    template = problem_template(invalid)
     @test_throws r"interval 2: invalid UIGF" check_dispatch_envelope(template, invalid)
 end
 
@@ -139,13 +139,13 @@ end
     steps = start:TOY_RESOLUTION:(start + TOY_RESOLUTION)
     optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false)
     sys = energy_limit_system(; max_avail = 40.0, start)
-    # The financial-year rule is `nem_system`'s: a range whose replay intervals cross 1 July is refused.
+    # The financial-year rule is `nem_system`'s: a range whose dispatch intervals cross 1 July is refused.
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
     crossing = (start - Minute(5)):TOY_RESOLUTION:(start + 3 * TOY_RESOLUTION)
     @test_throws r"more than one financial year" nem_system(db, NEMDEConfiguration(); date_range = crossing)
     # The max-availability slack of TOY_CHEAP: 370 CVP x Market Price Cap x 100 MW base x 5 minutes.
     for (t, expected) in ((steps[1], 370.0 * 17_500.0 * 100.0 / 12), (steps[2], 370.0 * 20_300.0 * 100.0 / 12))
-        model = PSI.DecisionModel(AEMS.NEMDispatchProblem, replay_template(sys), sys; optimizer, initial_time = t)
+        model = PSI.DecisionModel(AEMS.NEMDispatchProblem, problem_template(sys), sys; optimizer, initial_time = t)
         @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
         container = PSI.get_optimization_container(model)
         objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))

@@ -31,7 +31,7 @@ side_suffix(side::OfferSide) = side == OfferSide.LOAD ? "_decremental" : ""
 Names of the per-device `SingleTimeSeries` the setters attach, by field:
 
 - `ramp_up_rate`, `ramp_down_rate`: the dispatch ramp rates the formulation reads, system-base per-unit
-  per minute, derived by the replay input stage from the telemetry ramp limits.
+  per minute, derived by the NEMDE input stage from the telemetry ramp limits.
 - `max_active_power`: the device's upper dispatch limit, a multiplier of its `max_active_power`.
 - `fixed_load`: a unit's participant fixed loading, net injection in system-base per-unit.
 - `fixed_load_invoked`: `1` at the intervals a fixed loading applies, `0` elsewhere.
@@ -95,7 +95,7 @@ const NEM_OBSERVED_SERIES = (
 """
     NEM_FAST_START_SERIES
 
-Names of the per-device `SingleTimeSeries` that the replay input stage writes for a unit whose energy offer
+Names of the per-device `SingleTimeSeries` that the NEMDE input stage writes for a unit whose energy offer
 carries a fast-start profile, read through [`fast_start_unit_inputs`](@ref):
 
 - `flag`: `1` at the intervals the offer's profile makes the unit fast-start ([`is_fast_start`](@ref)), `0`
@@ -114,7 +114,7 @@ const NEM_FAST_START_SERIES = (
 """
     NEM_STATE_INPUT_SERIES
 
-Names of the per-device `SingleTimeSeries` that the replay input stage derives from a unit's
+Names of the per-device `SingleTimeSeries` that the NEMDE input stage derives from a unit's
 [`NEMObservedState`](@ref) and fixed loading, read by the dispatch formulation at each interval:
 
 - `initial_mw`: the output at the start of each interval, MW, zero at an interval the build does not observe.

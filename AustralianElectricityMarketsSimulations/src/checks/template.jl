@@ -5,8 +5,8 @@ Verifies that `sys` carries the inputs that `template` depends on and that `temp
 dispatch participant of `sys`. Run by `PSI.validate_template` before the model is built.
 
 # Arguments
-- `template`: the `PSI.ProblemTemplate` the replay builds, e.g. [`template_nemde`](@ref)().
-- `sys`: the replay system.
+- `template`: the `PSI.ProblemTemplate` the run builds, e.g. [`template_nemde`](@ref)().
+- `sys`: the NEMDE system.
 
 # Returns
 `nothing`. Throws `ArgumentError` naming the first failed check: an incomplete input of `sys`, a device
@@ -28,7 +28,7 @@ function check_template_against_sys(template::PSI.ProblemTemplate, sys::PSY.Syst
     # One pass of `_has_nem_dispatch_limits` per device, shared by the input check and the participants.
     cache = Dict{Base.UUID, Bool}()
     has_limits = d -> get!(() -> _has_nem_dispatch_limits(d), cache, IS.get_uuid(d))
-    _check_replay_system_inputs(sys, template; has_limits)
+    _check_nemde_system_inputs(sys, template; has_limits)
     modeled = Set(PSI.get_component_type(m) for m in values(PSI.get_device_models(template)))
     missing_types = [T for T in nem_dispatch_participants(sys; has_limits) if !(T in modeled)]
     isempty(missing_types) || throw(
@@ -47,8 +47,8 @@ end
 Verifies that every constraint `template` excludes by name is a `GenericConstraint` of `sys`.
 
 # Arguments
-- `sys`: the replay system.
-- `template`: the `PSI.ProblemTemplate` the replay builds.
+- `sys`: the NEMDE system.
+- `template`: the `PSI.ProblemTemplate` the run builds.
 
 # Returns
 `nothing`. Throws `ArgumentError` naming the unknown constraints.

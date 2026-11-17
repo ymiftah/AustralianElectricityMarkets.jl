@@ -15,4 +15,4 @@ Accepted
 
 ## Why
 
-- Replication compares values exactly: a floor bid of -1000 x MLF read back as -999.99999 under Float32, price ties are detected at 1e-6 $/MWh (below Float32 resolution at prices near 1e3), and merit-order comparisons between bands depend on the same digits.
+- NEMDE compares values exactly: a floor bid of -1000 x MLF read back as -999.99999 under Float32, price ties are detected at 1e-6 $/MWh (below Float32 resolution at prices near 1e3), and merit-order comparisons between bands depend on the same digits.

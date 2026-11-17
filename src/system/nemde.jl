@@ -6,7 +6,7 @@
 
 Returns the regional network tables plus the rebid daily energy offers (`BIDDAYOFFER`, whose version in
 force sets each interval's fast-start profile and minimum load), the price, FCAS requirement, constraint,
-interconnector loss, MNSP offer and metered-flow tables needed for replay. `DISPATCHINTERCONNECTORRES` is required for MNSP
+interconnector loss, MNSP offer and metered-flow tables needed for run. `DISPATCHINTERCONNECTORRES` is required for MNSP
 ramping even when published interval flow limits are not attached.
 
 # Returns
@@ -45,7 +45,7 @@ availability and offers nothing. A missing input inside a registration is an err
 # Arguments
 - `db`: the market cache connection.
 - `date_range`: five-minute interval-ending timestamps, including the exclusive stop; at least three stamps. The
-  replay intervals, all but the last two stamps, must fall in one trading day and one financial year.
+  dispatch intervals, all but the last two stamps, must fall in one trading day and one financial year.
 - `intervention`: `0` for pricing or `1` for physical dispatch inputs.
 - `interval_flow_limits`: attach published interval flow limits for diagnostic runs; default `false`.
   These limits are computed after dispatch and must not be used to validate simulated flows.
@@ -61,7 +61,7 @@ function AustralianElectricityMarkets.nem_system(
         time_series_directory::Union{Nothing, AbstractString} = nothing,
     )
     # 1. Validate the inputs
-    _check_replay_range(date_range)
+    _check_nemde_range(date_range)
     resolution = Minute(5)
 
     # 2. Check the required tables are cached
@@ -90,16 +90,16 @@ function AustralianElectricityMarkets.nem_system(
     set_mnsp_offers!(sys, db, date_range; intervention)
     interval_flow_limits && set_interconnector_flow_limits!(sys, db, date_range; intervention)
 
-    # 6. Derive the replay inputs, then validate the built inputs
-    AustralianElectricityMarkets._set_replay_inputs!(sys)
-    AustralianElectricityMarkets._check_nemde_replay_inputs(sys)
+    # 6. Derive the NEMDE inputs, then validate the built inputs
+    AustralianElectricityMarkets._set_nemde_inputs!(sys)
+    AustralianElectricityMarkets._check_nemde_inputs(sys)
     return sys
 end
 
 
-# Checks that `date_range` steps by five minutes over at least three stamps, and that its replay intervals (all
+# Checks that `date_range` steps by five minutes over at least three stamps, and that its dispatch intervals (all
 # but the last two stamps) fall in one trading day, ending 04:00, and one financial year.
-function _check_replay_range(date_range::StepRange{DateTime})
+function _check_nemde_range(date_range::StepRange{DateTime})
     step(date_range) == Minute(5) || throw(
         ArgumentError("NEMDEConfiguration: the date range must step by 5 minutes, got $date_range."),
     )
@@ -109,11 +109,11 @@ function _check_replay_range(date_range::StepRange{DateTime})
     intervals = date_range[1:(end - 2)]
     trading_day(stamp) = Date(stamp - Hour(4) - Minute(5))
     trading_day(first(intervals)) == trading_day(last(intervals)) || throw(
-        ArgumentError("NEMDEConfiguration: the replay intervals of $date_range span more than one trading day."),
+        ArgumentError("NEMDEConfiguration: the dispatch intervals of $date_range span more than one trading day."),
     )
     AustralianElectricityMarkets._financial_year_start(first(intervals)) ==
         AustralianElectricityMarkets._financial_year_start(last(intervals)) || throw(
-        ArgumentError("NEMDEConfiguration: the replay intervals of $date_range span more than one financial year."),
+        ArgumentError("NEMDEConfiguration: the dispatch intervals of $date_range span more than one financial year."),
     )
     return
 end
@@ -157,7 +157,7 @@ Non-scheduled units and loads are not checked.
 # Arguments
 - `sys`: the `PSY.System` whose units are checked.
 - `db`: an `AEMDB` connection.
-- `date_range`: the replay range.
+- `date_range`: the dispatch range.
 - `units`: the unit table over `date_range`, as [`nem_network`](@ref) returns it; its regions need demand.
 - `offers`: the [`read_offers`](@ref) rows of `date_range`, whose `ENERGY` rows carry the energy coverage.
 - `intervention`: the `DISPATCHLOAD` run, 0 for pricing and 1 for physical.

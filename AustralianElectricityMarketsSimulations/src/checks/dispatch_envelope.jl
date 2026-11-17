@@ -2,7 +2,7 @@
     check_dispatch_envelope(template, sys) -> Nothing
 
 Validates complete, finite, non-negative separate energy availability and UIGF inputs for
-NEM dispatch devices over the replay intervals of `sys` (`replay_intervals(sys)`). Conflicts with
+NEM dispatch devices over the dispatch intervals of `sys` (`dispatch_intervals(sys)`). Conflicts with
 ramping are resolved by the model's priced violation variables.
 
 # Arguments
@@ -10,11 +10,11 @@ ramping are resolved by the model's priced violation variables.
 - `sys`: the system built by [`nem_system`](@ref AustralianElectricityMarkets.nem_system), whose time series are checked.
 
 # Returns
-`nothing`; invalid or missing energy inputs, or a system without replay intervals, raise `ArgumentError`.
+`nothing`; invalid or missing energy inputs, or a system without dispatch intervals, raise `ArgumentError`.
 """
 function check_dispatch_envelope(template::PSI.ProblemTemplate, sys::PSY.System)
-    intervals = replay_intervals(sys)
-    isempty(intervals) && throw(ArgumentError("check_dispatch_envelope: the system has a single forecast window and no replay intervals"))
+    intervals = dispatch_intervals(sys)
+    isempty(intervals) && throw(ArgumentError("check_dispatch_envelope: the system has a single forecast window and no dispatch intervals"))
     for model in values(PSI.get_device_models(template))
         PSI.get_formulation(model) <: AbstractNEMDispatch || continue
         _check_energy_limit_series(sys, model, first(intervals), length(intervals))

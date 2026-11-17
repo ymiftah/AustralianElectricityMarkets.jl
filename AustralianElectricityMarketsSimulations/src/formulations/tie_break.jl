@@ -184,7 +184,7 @@ are within [`TIE_BREAK_CVP_FACTOR`](@ref) of one another. `x` is a band's cleare
 [`TieBreakScaleParameter`](@ref); the [`TieBreakSlackUp`](@ref) and [`TieBreakSlackDown`](@ref)
 slacks, in system-base per-unit MW, are priced at [`TIE_BREAK_CVP_FACTOR`](@ref) `\$/MWh`. FCAS
 bands are not tied. Groups are read once at build and held for every step. Containers are keyed by [`EnergyTieBreak`](@ref) with
-the service name as meta and are not added when no band is tied. Throws an `ArgumentError` unless the [`nem_system`](@ref AustralianElectricityMarkets.nem_system) replay inputs covered every
+the service name as meta and are not added when no band is tied. Throws an `ArgumentError` unless the [`nem_system`](@ref AustralianElectricityMarkets.nem_system) NEMDE inputs covered every
 tied band and every contributor carrying a scale is modelled or excluded by its device model's
 `"filter_function"`.
 

@@ -23,4 +23,4 @@ All in `src/system/interconnectors.jl`:
 - Project EnergyConnect Stage 1 uses an isolated Victorian "micro-slice" between NSW and SA, represented through VNI and V-SA. The FY2025-26 report ties the extra NSW demand term to that modelling (section 3 footnote 11; Appendix A2.6 Table 41 note C).
 - Stage 2 removes the slice and creates NSW1-SA1, a loop among NSW, Victoria and SA. The FY2026-27 report publishes separate VNI, V-SA and NSW-SA equations conditional on market establishment, assumed around October 2026 (section 3.3, Appendix A2.5.2 pp. 95-96).
 - A forecast transition date does not fix an interval's historical topology, and the report's loop-flow regression is an MLF study tool, not a dispatch constraint. FY2026-27 Basslink treatment and Stage 2 intervals need validation against the applicable network, loss equations and generic constraints before they can be trusted.
-- Replays from 1 July 2025 to 30 June 2026 use the patched V-SA equation; a later archive that carries the term takes precedence.
+- Runs from 1 July 2025 to 30 June 2026 use the patched V-SA equation; a later archive that carries the term takes precedence.

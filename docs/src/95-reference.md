@@ -20,8 +20,8 @@ Modules = [AustralianElectricityMarkets]
 
 ## AustralianElectricityMarketsSimulations
 
-NEMDE replay in PowerSimulations.jl: dispatch problems, device, FCAS, constraint and loss
-formulations, the replay template and sequence, and the readers of solved results.
+NEMDE run in PowerSimulations.jl: dispatch problems, device, FCAS, constraint and loss
+formulations, the problem template and sequence, and the readers of solved results.
 
 ```@autodocs
 Modules = [AustralianElectricityMarketsSimulations]

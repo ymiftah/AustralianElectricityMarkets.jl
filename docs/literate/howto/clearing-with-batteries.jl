@@ -20,7 +20,7 @@ end
 # discharging while respecting energy limits.
 #
 # This page uses the stock `StorageDispatchWithReserves` formulation as an energy-only illustration;
-# the NEMDE replay uses its own battery formulation.
+# the NEMDE run uses its own battery formulation.
 #
 # Batteries in the NEM play an increasingly vital role. They can perform **Arbitrage**: charging
 # when electricity prices are low (e.g., during the middle of the day when solar is abundant)

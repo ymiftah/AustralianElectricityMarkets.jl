@@ -6,7 +6,7 @@ Accepted
 
 ## What
 
-- Static tables resolve as of the replay start, not the newest cached version. For June 2026 data the newest rows are the FY26-27 versions effective 2026-07-01 (MURRAY MLF 0.9565 where 0.9819 was in force).
+- Static tables resolve as of the run start, not the newest cached version. For June 2026 data the newest rows are the FY26-27 versions effective 2026-07-01 (MURRAY MLF 0.9565 where 0.9819 was in force).
 - Per-interval published flow limits are opt-in and a diagnostic only.
 
 ## How

@@ -114,7 +114,7 @@ Compute per-device vectors over `time_steps` once, not per `t`.
 Extend `check_fcas_services` in `…Simulations/src/check/fcas.jl`: report regulation contributors
 that carry a positive `"fcas_agc_ramp_rate_*"` series but no `"initial_mw"` series. Build-time skip
 (gate 3) stays for per-interval NaN gaps. Rationale: a silent skip drops a hard AEMO constraint, and
-`NEMLookaheadDispatch` does not enforce `initial_mw` coverage (`NEMReplayDispatch` does,
+`NEMLookaheadDispatch` does not enforce `initial_mw` coverage (`NEMDispatch` does,
 `nem_dispatch.jl:330-339`). Follow the existing check's report style.
 
 ### Duals
@@ -125,11 +125,11 @@ Allow `FCASJointRampingConstraint` in `PSI.get_duals(model)` (allowlist + its er
 ### Interaction with existing rows
 
 - **Device ramp** (`AbstractNEMDispatch`) bounds `E` alone; §6.1 bites through the regulation
-  target. Under `NEMReplayDispatch`, `target = 0` is always feasible: same column, same
+  target. Under `NEMDispatch`, `target = 0` is always feasible: same column, same
   `"initial_mw"`, ceiling already raised to the ramp floor (`dispatch_limits.jl:61-72, 173`). Under
   `NEMLookaheadDispatch` at `t = 1` the device ramp base is the `DevicePower` initial condition
   (`nem_dispatch.jl:342-352`), not `"initial_mw"`; if they differ, §6.1 at `target = 0` can conflict
-  with device ramp plus availability. Accept (lookahead is beyond the replay objective), document in
+  with device ramp plus availability. Accept (lookahead is beyond the run objective), document in
   ADR 0017.
 - **§6.4** (two-sided storage): `target ≤ ramp·Δt`; §6.1 is tighter whenever energy moves in the
   service's direction. Both kept.
@@ -166,7 +166,7 @@ First: **audit existing `fcas_market` fixtures** that fix energy away from `init
 6. **Single-sided storage**: net energy, not the side's own.
 7. **Gating**: placeholder for ramp 0, ramp NaN, not enabled at `t`, `NEMLookaheadDispatch` p5min at
    `t = 2`, predispatch (30-min) at every `t`, and `InitialMW` NaN at one interval (build under
-   lookahead or a series gap; replay throws without coverage).
+   lookahead or a series gap; run throws without coverage).
 8. **Duals**: requesting `FCASJointRampingConstraint` duals builds and populates the container.
 9. **Pre-flight**: the new `check_fcas_services` case reports a regulation contributor with a ramp
    series but no `"initial_mw"`.

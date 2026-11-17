@@ -144,7 +144,7 @@
 # ## [Where this package differs](@id nemde-deviations)
 #
 # These chapters describe AEMO's dispatch. The table lists where the NEM inputs read by
-# `AustralianElectricityMarkets` and the NEM dispatch formulations and replay workflow of
+# `AustralianElectricityMarkets` and the NEM dispatch formulations and run workflow of
 # `AustralianElectricityMarketsSimulations` depart from it; other PowerSimulations
 # formulations can behave differently. The chapter notes give the details.
 # Availability, UIGF and total offered energy are enforced with separate priced violations.
@@ -156,7 +156,7 @@
 # | FCAS actual availability | Not computed; the published values can be read for comparison | [FCAS](@ref nemde-fcas) |
 # | Interconnector losses | Segments fill in order through integer variables, a mixed-integer programme; breakpoint losses are shifted to zero at zero flow; the outer breakpoints are hard flow limits | [Interconnectors](@ref nemde-interconnectors) |
 # | Market interconnector | Availability, bands, ramp rate and fixed loading are elastic as in NEMDE; a binary allows one direction per interval; no converter losses or no-go zone for Basslink, whose from-region loss share is fixed at 1.0 | [Interconnectors](@ref nemde-interconnectors) |
-# | Fast-start units | Two runs per interval as NEMDE does; NEMDE's pre-processing resets of the starting mode are not modelled, a closed-loop replay keeps the observed starting modes, and batteries have no profile | [Fast-start](@ref nemde-fast-start) |
+# | Fast-start units | Two runs per interval as NEMDE does; NEMDE's pre-processing resets of the starting mode are not modelled, a closed-loop run keeps the observed starting modes, and batteries have no profile | [Fast-start](@ref nemde-fast-start) |
 # | Generic constraints | Right-hand sides are AEMO's published values, not recomputed; terms of units not registered over the range are dropped and contribute zero | [Prices](@ref nemde-prices) |
 # | Prices | Marginal values of a re-solve with the integer decisions fixed, comparable with the ROP, without AEMO's pricing adjustments | [Prices](@ref nemde-prices) |
 #

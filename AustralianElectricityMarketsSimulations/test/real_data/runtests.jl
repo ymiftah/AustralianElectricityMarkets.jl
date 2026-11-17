@@ -6,7 +6,7 @@
 #
 # `hive_location` defaults to `~/.nemdb_cache`.
 #
-# Every solve goes through the replay API. Data AEMO did not publish (a unit without a DISPATCHLOAD
+# Every solve goes through the run API. Data AEMO did not publish (a unit without a DISPATCHLOAD
 # row, a constraint without rows) is left out of the comparisons and reported with `@info`.
 
 using Test
@@ -36,14 +36,14 @@ const VIOLATION_STEPS = VIOLATION_START:REAL_RESOLUTION:(VIOLATION_START + REAL_
 const db = aem_connect(HiveConfiguration(hive_location = REAL_HIVE))
 
 # The system over `steps` and the two intervals after them, with `nem_system` validating its inputs,
-# then the built and executed replay of `template`; throws unless both the build and the execution succeed.
-function replay_real(steps; template = template_nemde())
+# then the built and executed run of `template`; throws unless both the build and the execution succeed.
+function problem_real(steps; template = template_nemde())
     date_range = first(steps):DISPATCH_INTERVAL:(last(steps) + 2DISPATCH_INTERVAL)
     sys = nem_system(db, NEMDEConfiguration(); date_range)
     model = PSI.DecisionModel(
         NEMDispatchProblem, template, sys; optimizer = nemde_optimizer(), initial_time = first(steps), name = "dispatch",
     )
-    skipped = replay_skipped_constraints(sys, template)
+    skipped = template_skipped_constraints(sys, template)
     models = PSI.SimulationModels(; decision_models = [model])
     sequence = PSI.SimulationSequence(; models, ini_cond_chronology = PSI.InterProblemChronology())
     simulation = PSI.Simulation(;
@@ -53,11 +53,11 @@ function replay_real(steps; template = template_nemde())
     build_status = PSI.build!(simulation; store_systems_in_results = false)
     @test build_status == PSI.SimulationBuildStatus.BUILT
     build_status == PSI.SimulationBuildStatus.BUILT ||
-        error("Replay from $(first(steps)) failed to build ($build_status); see the simulation logs.")
+        error("Run from $(first(steps)) failed to build ($build_status); see the simulation logs.")
     run_status = PSI.execute!(simulation)
     @test run_status == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     run_status == PSI.RunStatus.SUCCESSFULLY_FINALIZED ||
-        error("Replay from $(first(steps)) failed to execute ($run_status); see the simulation logs.")
+        error("Run from $(first(steps)) failed to execute ($run_status); see the simulation logs.")
     results = PSI.get_decision_problem_results(PSI.SimulationResults(simulation), "dispatch")
     return (; sys, template, skipped, model, results, date_range)
 end
@@ -97,8 +97,8 @@ function joint_ramping_row(published, service, bid_type, device, settlement, rhs
 end
 
 @testset "Real NEM data, $(Date(REAL_START))" begin
-    replay = replay_real(REAL_STEPS)
-    (; sys, template, skipped, model, results, date_range) = replay
+    problem = problem_real(REAL_STEPS)
+    (; sys, template, skipped, model, results, date_range) = problem
     devices = AEM.nem_dispatch_devices(sys)
 
     @testset "the NEMDE System builds" begin
@@ -169,19 +169,19 @@ end
         @test !(:missing_component in skipped.reason)
         # Some GenericConstraint is modelled: the results record its NEMConstraintLimit dual.
         @test any(k -> PSI.IS.Optimization.get_entry_type(k) === NEMConstraintLimit, PSI.list_dual_keys(results))
-        @info "Constraints left out of the replay, by reason" counts = Dict(r => count(==(r), skipped.reason) for r in unique(skipped.reason))
+        @info "Constraints left out of the run, by reason" counts = Dict(r => count(==(r), skipped.reason) for r in unique(skipped.reason))
     end
 
     solved = read_solved_interval(results, sys)
     violations = read_constraint_violations(results, sys)
 
-    @testset "the replay builds and solves" begin
+    @testset "the run builds and solves" begin
         comparison = compare_intervals(read_published_interval(db, REAL_STEPS), solved)
         @test !isempty(comparison.prices)
         @test !isempty(comparison.dispatch)
         @test !isempty(comparison.interconnectors)
         total_area_slack_mw = sum(violations.MW[violations.family .== "area_balance"]; init = 0.0)
-        @info "Real-data replay" summary = sprint(show, comparison_summary(comparison); context = :limit => false) total_area_slack_mw
+        @info "Real-data run" summary = sprint(show, comparison_summary(comparison); context = :limit => false) total_area_slack_mw
     end
 
     @testset "interconnector loss gap" begin
@@ -364,8 +364,8 @@ end
 end
 
 @testset "Elastic GenericConstraint slack matches AEMO's published violation, $(Date(VIOLATION_START))" begin
-    replay = replay_real(VIOLATION_STEPS)
-    (; sys, results, date_range) = replay
+    problem = problem_real(VIOLATION_STEPS)
+    (; sys, results, date_range) = problem
     base_power = PSY.get_base_power(sys)
 
     target_gencon_ids = ("Q_STR_ALDSF_ZERO", "Q_BRDDSF01_1INV")

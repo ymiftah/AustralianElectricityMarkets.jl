@@ -19,7 +19,7 @@ Accepted. Commercial limits, ramps and fixed loading are amended by [0076](0076-
 
 ## Why
 
-- Replays showed Basslink flow errors of 70 to 250 MW and TAS1 price gaps under free flow.
+- Runs showed Basslink flow errors of 70 to 250 MW and TAS1 price gaps under free flow.
 - Link loss factors, not the DC-leg loss model, carry the AC-leg loss (Marginal Loss Factors 2026-27, section 5.1; nempy `interconnectors.py`). AEMO publishes no rule for referring an offer price by a loss factor, so none is applied.
 - The offer clears when `P <= to_tlf * price_to - from_tlf * price_from`.
 - Treatment of Loss Factors section 14: the MLF of each direction applies, and NEMDE's mixed-integer modelling prevents circulating flows.

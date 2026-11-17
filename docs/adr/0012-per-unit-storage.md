@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted; supersedes its original decision that `GenericConstraint` and FCAS values are stored per-unit (the replay inputs of [0101](0101-aem-writes-aemsim-reads.md) store raw MW).
+Accepted; supersedes its original decision that `GenericConstraint` and FCAS values are stored per-unit (the NEMDE inputs of [0101](0101-aem-writes-aemsim-reads.md) store raw MW).
 
 ## What
 

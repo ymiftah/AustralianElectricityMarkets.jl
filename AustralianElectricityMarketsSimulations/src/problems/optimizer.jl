@@ -1,7 +1,7 @@
 """
     NEMDE_HIGHS_OPTIONS
 
-The HiGHS options of the NEMDE replication: relative MIP gap `1e-8`, absolute MIP gap `1e-10`, and the
+The HiGHS options of the NEMDE problem: relative MIP gap `1e-8`, absolute MIP gap `1e-10`, and the
 root sub-MIP heuristics (RINS, RENS, root reduced cost and feasibility jump) turned off.
 """
 const NEMDE_HIGHS_OPTIONS = (

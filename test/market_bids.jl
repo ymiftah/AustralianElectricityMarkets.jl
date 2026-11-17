@@ -180,7 +180,7 @@
 
     @testset "a regional system gets MarketBidCost curves referred by the loss factor and capped at MAXAVAIL" begin
         sys = nem_system(db, RegionalNetworkConfiguration(); as_of = first(interval))
-        @test !AEM._is_replay_system(sys)
+        @test !AEM._is_nemde_system(sys)
         res = set_market_bids!(sys, db, interval)
         @test isempty(res.added) && isempty(res.excluded)
         @test isempty(get_components(FCASService, sys))

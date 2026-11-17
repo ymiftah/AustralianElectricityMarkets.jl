@@ -1,7 +1,7 @@
 """
     nem_dispatch_sequence(::Type{M}, template, sys; name = "dispatch", commitment_name = FAST_START_COMMITMENT_NAME, fast_start = true, ini_cond_chronology = PSI.InterProblemChronology(), kwargs...) where {M <: AbstractNEMDispatchProblem} -> NamedTuple
 
-The decision models of a NEM dispatch replay of `template` on `sys` and the `PSI.SimulationSequence` that runs
+The decision models of a NEM dispatch run of `template` on `sys` and the `PSI.SimulationSequence` that runs
 them. When an available unit of a non-battery device type that `template` models under an
 [`AbstractNEMDispatch`](@ref) formulation has a fast-start profile (`has_fast_start_profile`), every interval runs
 NEMDE's two dispatch runs at the same timestamp. The commitment run, named `commitment_name`, leaves out the energy
@@ -15,8 +15,8 @@ profile.
 # Arguments
 - `M`: [`NEMDispatchProblem`](@ref) or [`NEMClosedLoopDispatchProblem`](@ref).
 - `template`: a `PSI.ProblemTemplate`, e.g. [`template_nemde`](@ref)`()`; each model builds from its own copy.
-- `sys`: the replay system, built by `nem_system(db, NEMDEConfiguration(); date_range)`.
-- `name`: the name of the dispatch run, whose results a replay reads.
+- `sys`: the NEMDE system, built by `nem_system(db, NEMDEConfiguration(); date_range)`.
+- `name`: the name of the dispatch run, whose results a run reads.
 - `commitment_name`: the name of the commitment run.
 - `fast_start`: run NEMDE's two fast-start runs when `sys` has a fast-start unit; `false` builds the single model.
 - `ini_cond_chronology`: the initial-condition chronology of the sequence.
@@ -32,7 +32,7 @@ single model).
 ```julia
 (; models, sequence, dispatch) = nem_dispatch_sequence(NEMDispatchProblem, template_nemde(), sys;
     optimizer = nemde_optimizer(), initial_time = first(steps))
-simulation = PSI.Simulation(; name = "replay", steps = length(steps), models, sequence,
+simulation = PSI.Simulation(; name = "run", steps = length(steps), models, sequence,
     simulation_folder = mktempdir(), initial_time = first(steps))
 ```
 """

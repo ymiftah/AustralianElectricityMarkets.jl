@@ -56,7 +56,7 @@ function trading_day_steps(day::Date)
 end
 
 """
-    replay_chunks(steps::StepRange{DateTime}; chunk::Union{Symbol, Dates.Period} = :trading_day) -> Vector{StepRange{DateTime}}
+    dispatch_chunks(steps::StepRange{DateTime}; chunk::Union{Symbol, Dates.Period} = :trading_day) -> Vector{StepRange{DateTime}}
 
 Splits `steps` into consecutive chunks. Each chunk is one financial year and at most one trading day, so it
 can be one `PSI.Simulation`.
@@ -70,7 +70,7 @@ can be one `PSI.Simulation`.
 A `Vector` of `StepRange{DateTime}`, one per chunk, that partition `steps`. Throws `ArgumentError` for any
 other `chunk`.
 """
-function replay_chunks(steps::StepRange{DateTime}; chunk::Union{Symbol, Dates.Period} = :trading_day)
+function dispatch_chunks(steps::StepRange{DateTime}; chunk::Union{Symbol, Dates.Period} = :trading_day)
     _check_chunk(chunk)
     starts = DateTime[]
     for t in steps
@@ -89,7 +89,7 @@ function _check_chunk(chunk)
     fixed = chunk isa Union{Dates.Week, Dates.Day, Dates.Hour, Dates.Minute, Dates.Second, Dates.Millisecond}
     ms = fixed ? Dates.value(Dates.Millisecond(chunk)) : 0
     (fixed && ms > 0 && ms % Dates.value(Dates.Millisecond(DISPATCH_INTERVAL)) == 0) || throw(
-        ArgumentError("replay_chunks: chunk must be :trading_day or a positive multiple of $DISPATCH_INTERVAL, got $chunk."),
+        ArgumentError("dispatch_chunks: chunk must be :trading_day or a positive multiple of $DISPATCH_INTERVAL, got $chunk."),
     )
     return
 end

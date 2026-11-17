@@ -29,7 +29,7 @@ end
         mktempdir() do folder
             sys = _objective_cache_system()
             @test !PSY.stores_time_series_in_memory(sys)
-            template = replay_template(sys)
+            template = problem_template(sys)
             model = PSI.DecisionModel(
                 template, sys; horizon = TOY_RESOLUTION, resolution = TOY_RESOLUTION,
                 interval = TOY_RESOLUTION, initial_time = TOY_START,
@@ -66,7 +66,7 @@ end
 
 @testset "structured caches bound history and refill with current values" begin
     sys = fcas_toy_system()
-    template = replay_template(sys)
+    template = problem_template(sys)
     PSY.clear_time_series!(sys)
     device = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
     curves = [_toy_offer([(10.0, Float64(i))]) for i in 1:60]

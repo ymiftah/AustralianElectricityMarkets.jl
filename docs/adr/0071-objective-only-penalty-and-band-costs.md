@@ -8,7 +8,7 @@ Accepted
 
 - Violation-penalty slacks (device rows, interconnector flow, area balance, FCAS, generic constraints) and FCAS and MNSP offer bands are priced by AEMSim into the objective only.
 - `ProductionCostExpression` holds energy offer costs only and does not sum to the objective.
-- Penalty costs are read from the `constraint_violations` table of the replication results.
+- Penalty costs are read from the `constraint_violations` table of the NEMDE results.
 
 ## Why
 

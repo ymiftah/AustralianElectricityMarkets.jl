@@ -1,4 +1,4 @@
-# Historical NEM dispatch replays
+# Historical NEM dispatch runs
 
 These scripts build systems from the local NEMWEB cache, solve five-minute dispatch
 replicas, and compare them with AEMO's published NEMDE outcomes. Run commands from
@@ -6,7 +6,7 @@ the repository root, using the Simulations test environment and the installed Ju
 workspace runtime:
 
 ```sh
-julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/replay_batch.jl --help
+julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/batch_run.jl --help
 ```
 
 ## Detailed statistics from saved runs
@@ -80,7 +80,7 @@ The default `--cache-windows 24` only labels likely refill boundaries. Set it to
 the input-cache window count used by the source run; it does not change a run's
 cache. The labels identify a timing pattern, not a measured attribution to IO.
 
-Its regression tests run in the Simulations suite's `replay_scripts` group:
+Its regression tests run in the Simulations suite's `problem_scripts` group:
 
 ```sh
 julia --project=AustralianElectricityMarketsSimulations/test test/scripts/simulation_statistics.jl
@@ -97,7 +97,7 @@ construction, execution, comparisons and exports. It is checked between days;
 there is no solver time limit.
 
 ```sh
-julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/replay_batch.jl \
+julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/batch_run.jl \
     --output "$HOME/aem_validation/overnight-2026-01-to-06"
 ```
 
@@ -114,7 +114,7 @@ For an unattended run that survives closing the terminal:
 ```sh
 mkdir -p scripts/results
 nohup julia -O1 --project=AustralianElectricityMarketsSimulations/test \
-    scripts/replay_batch.jl --output "$HOME/aem_validation/overnight" \
+    scripts/batch_run.jl --output "$HOME/aem_validation/overnight" \
     > scripts/results/overnight-launch.log 2>&1 < /dev/null &
 echo $! > scripts/results/overnight.pid
 tail -f scripts/results/overnight-launch.log
@@ -128,7 +128,7 @@ An explicit configuration equivalent to the defaults:
 
 ```sh
 julia -O1 --project=AustralianElectricityMarketsSimulations/test \
-    scripts/replay_batch.jl \
+    scripts/batch_run.jl \
     --first 2026-01-01 --last 2026-06-30 --hours 10 --seed 20261026 \
     --hive "$HOME/.nemdb_cache" \
     --output $HOME/aem_validation/overnight-2026-01-to-06 \
@@ -144,26 +144,26 @@ offer carries a fast-start profile, each interval runs NEMDE's two dispatch runs
 inflexibility profile. The outputs, comparisons and violations are the dispatch run's. `--fast-start false` solves
 the single model instead, without inflexibility profiles; each day's `provenance.toml` records `fast_start`.
 
-`--closed-loop true` replays each interval after the first from the previous interval's solved output instead
+`--closed-loop true` runs each interval after the first from the previous interval's solved output instead
 of AEMO's observed state (`NEMClosedLoopDispatchProblem`). It is a counterfactual run: its gap to NEMDE grows with
 the gap between the solved and metered trajectories. Each day's `provenance.toml` records `closed_loop`, and the
 statistics report never pools closed-loop with open-loop days.
 
-`--start` and `--intervals` replay one range of consecutive intervals instead of whole trading days.
+`--start` and `--intervals` run one range of consecutive intervals instead of whole trading days.
 `--start` is an interval-ending time on a five-minute boundary, and the range must end within the
 trading day of `--start`. Both options must be given together, and they replace `--first`, `--last`
-and `--seed` for scheduling. This replays 10 intervals from 2026-06-04T04:05:00:
+and `--seed` for scheduling. This runs 10 intervals from 2026-06-04T04:05:00:
 
 ```sh
 julia -O1 --project=AustralianElectricityMarketsSimulations/test \
-    scripts/replay_batch.jl \
+    scripts/batch_run.jl \
     --start 2026-06-04T04:05:00 --intervals 10 \
     --output $HOME/aem_validation/range-2026-06-04-10
 ```
 
 ### Selected intervals (benchmark mode)
 
-`--intervals-file PATH` replays the intervals of a CSV (header `interval`, one interval-ending ISO timestamp
+`--intervals-file PATH` runs the intervals of a CSV (header `interval`, one interval-ending ISO timestamp
 per row, on the five-minute grid) instead of whole days. `--sample N` draws `N` distinct intervals uniformly
 at random over `--first` 04:05 through `--last` plus one day 04:00, seeded by `--seed`. The options, and
 `--start`, are alternatives, and `--closed-loop true` is rejected because it needs consecutive intervals.
@@ -171,7 +171,7 @@ at random over `--first` 04:05 through `--last` plus one day 04:00, seeded by `-
 random subset.
 
 ```sh
-julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/replay_batch.jl \
+julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/batch_run.jl \
     --sample 1000 --first 2026-01-01 --last 2026-06-30 --seed 1 --hours 14 \
     --output "$HOME/aem_validation/sample-1000"
 ```
@@ -206,7 +206,7 @@ and PowerSystems 5.12.4
 ([`03f9639`](https://github.com/ymiftah/PowerSystems.jl/commit/03f9639648cc01c62df26836bdc620f2382521ff)).
 After updating the checkout, compare `Pkg.status` with these revisions. A root
 `Pkg.resolve()` applies root source pins only; for a stale subproject pin, run
-`Pkg.add(url = ..., rev = ...)` with that project active. Existing frozen replay
+`Pkg.add(url = ..., rev = ...)` with that project active. Existing frozen run
 launches retain their own dependency versions.
 
 - HiGHS with `mip_rel_gap = 1e-8` and `mip_abs_gap = 1e-10`.
@@ -312,13 +312,13 @@ Prices are in $/MWh and power quantities are in MW. Compare solved prices with
 published **ROP**, the unadjusted dispatch price; published RRP can differ under
 administered pricing. CSV comparison tables retain published rows without a
 solved counterpart as empty cells. Missing rows do not count as zero error.
-The summary covers the published keys retained by the existing replay workflow;
+The summary covers the published keys retained by the existing run workflow;
 it is a diagnostic, not a claim that the replica exactly matches NEMDE.
 
 ## Consecutive days or selected intervals
 
-For consecutive intervals, use the AEMSim replay API directly. This example replays
-one trading day in the chunks of `replay_chunks`, keeps the native PSI stores under
+For consecutive intervals, use the AEMSim run API directly. This example runs
+one trading day in the chunks of `dispatch_chunks`, keeps the native PSI stores under
 `folder`, and compares each chunk with the published outcome in memory:
 
 ```julia
@@ -331,7 +331,7 @@ optimizer = nemde_optimizer(; threads = 1, output_flag = false)
 template = template_nemde()
 folder = "$HOME/aem_validation/consecutive-days"
 
-for (k, steps) in enumerate(replay_chunks(trading_day_steps(Date(2026, 1, 1))))
+for (k, steps) in enumerate(dispatch_chunks(trading_day_steps(Date(2026, 1, 1))))
     chunk_folder = joinpath(folder, "chunk_$k")
     horizon = first(steps):DISPATCH_INTERVAL:(last(steps) + 2DISPATCH_INTERVAL)
     sys = nem_system(
@@ -341,11 +341,11 @@ for (k, steps) in enumerate(replay_chunks(trading_day_steps(Date(2026, 1, 1))))
     model = PSI.DecisionModel(
         NEMDispatchProblem, template, sys; optimizer, initial_time = first(steps), name = "dispatch",
     )
-    skipped = replay_skipped_constraints(sys, template)
+    skipped = template_skipped_constraints(sys, template)
     models = PSI.SimulationModels(; decision_models = [model])
     sequence = PSI.SimulationSequence(; models, ini_cond_chronology = PSI.InterProblemChronology())
     simulation = PSI.Simulation(;
-        name = "replay_workflow", steps = length(steps), models, sequence,
+        name = "problem_workflow", steps = length(steps), models, sequence,
         simulation_folder = chunk_folder, initial_time = first(steps),
     )
     PSI.build!(simulation; store_systems_in_results = false) == PSI.SimulationBuildStatus.BUILT || error("build failed")
@@ -358,11 +358,11 @@ for (k, steps) in enumerate(replay_chunks(trading_day_steps(Date(2026, 1, 1))))
 end
 ```
 
-The overnight runner in `scripts/replay_batch.jl` runs this same sequence per trading
+The overnight runner in `scripts/batch_run.jl` runs this same sequence per trading
 day, writes the tables as CSVs and records the phase timings. A loop like this has
 no ten-hour budget.
 
-The solved interconnector losses of a saved replay can be checked against the loss curve
+The solved interconnector losses of a saved run can be checked against the loss curve
 at each solved flow with `read_interconnector_loss_gaps(results, sys)`.
 
 ## HDF5 dependency

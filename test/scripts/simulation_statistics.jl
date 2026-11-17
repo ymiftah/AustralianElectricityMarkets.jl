@@ -1,4 +1,4 @@
-# Regression tests for the saved replay analysis; no market data or solver needed.
+# Regression tests for the saved run analysis; no market data or solver needed.
 using Dates
 using Test
 

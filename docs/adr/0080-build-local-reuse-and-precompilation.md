@@ -6,7 +6,7 @@ Accepted
 
 ## What
 
-- Public database-backed setters stay. Replay construction shares its demand, dispatch and fixed-loading reads between coverage checks and attachment through private frame-based helpers.
+- Public database-backed setters stay. Run construction shares its demand, dispatch and fixed-loading reads between coverage checks and attachment through private frame-based helpers.
 - There is no connection-wide or global market-data SQL cache.
 - Each generic constraint gets a lazy component resolver for its construction stage only; the first lookup delegates to PowerSystems (missing and ambiguous-name behaviour unchanged), later lookups of the same type and name reuse it, and it is discarded afterwards.
 - `src/precompile.jl` (and the Simulations equivalent) holds a PrecompileTools workload on an in-memory bus, generator and synthetic offers. It opens no DuckDB, reads no user cache, uses no network and writes no HDF5 store.

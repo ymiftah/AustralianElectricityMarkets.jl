@@ -186,7 +186,7 @@ are not added. With `nem = true` the units are stock `ThermalStandard` and `Rene
 # Arguments
 
 - `market`: the toy market, or its `energy_market`.
-- `nem`: attach an empty [`NEMUnitData`](@ref) to each unit, as a replay system carries.
+- `nem`: attach an empty [`NEMUnitData`](@ref) to each unit, as a NEMDE system carries.
 
 # Returns
 

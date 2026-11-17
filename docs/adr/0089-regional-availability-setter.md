@@ -7,7 +7,7 @@ Accepted.
 ## What
 
 - `set_regional_availability!(sys, db, date_range; resolution, intervention)` attaches a `max_active_power` series (per-unit of the device's own limit, clamped to [0, 1]) to every available `RenewableGen` and `HydroGen` of a `RegionalNetworkConfiguration` system. Thermal, storage and load devices are untouched. A repeat call replaces the series. A device with capacity of zero or less is 0.0 throughout.
-- `set_nem_dispatch_limits!` stays strict for NEMDE replay (it throws on a unit with no `DISPATCHLOAD` rows); about 150 non-scheduled units have none, so the regional path is a separate setter.
+- `set_nem_dispatch_limits!` stays strict for NEMDE run (it throws on a unit with no `DISPATCHLOAD` rows); about 150 non-scheduled units have none, so the regional path is a separate setter.
 - Each stamp takes the first source that exists:
   1. a `RenewableGen` with a `read_uigf` row: `UIGF / capacity`;
   2. a `read_dispatch_limits` `AVAILABILITY` row: `AVAILABILITY / capacity`;

@@ -24,7 +24,7 @@ function _require_mnsp_fixed_loads(device::PSY.AreaInterchange)
         PSY.has_time_series(device, PSY.SingleTimeSeries, name) || throw(
             ArgumentError(
                 "AreaInterchange \"$(PSY.get_name(device))\" has no derived MNSP fixed loading \"$name\"; " *
-                    "its replay inputs are written by nem_system, so build the system with it before the formulation",
+                    "its NEMDE inputs are written by nem_system, so build the system with it before the formulation",
             ),
         )
     end
@@ -213,7 +213,7 @@ function _add_mnsp_link_variables!(container::PSI.OptimizationContainer, devices
     end
     closed_loop = _closed_loop(container)
     for (meta, series) in _MNSP_OPERATING_SERIES
-        # A closed-loop replay carries the starting flow as an initial condition.
+        # A closed-loop run carries the starting flow as an initial condition.
         closed_loop && meta == _mnsp_input_meta(MNSPInitialFlowInput()) && continue
         PSI.add_parameters!(container, MNSPOperatingParameter, mnsp, device_model; meta, time_series_name = series)
     end
@@ -396,7 +396,7 @@ function _add_mnsp_band_costs!(container::PSI.OptimizationContainer, devices, de
         for device in mnsp
             name = PSY.get_name(device)
             prices = _mnsp_bid(device, dir).band_prices
-            isnothing(prices) && throw(ArgumentError("$name has no MNSP $dir band prices; run the replay input stage."))
+            isnothing(prices) && throw(ArgumentError("$name has no MNSP $dir band prices; run the NEMDE input stage."))
             for t in time_steps, (b, label) in enumerate(labels)
                 JuMP.add_to_expression!(invariant, scale * prices[b], bands[name, label, t])
             end

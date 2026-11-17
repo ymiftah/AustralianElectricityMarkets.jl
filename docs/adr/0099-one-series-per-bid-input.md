@@ -18,5 +18,5 @@ Accepted. Input ownership is in [0101](0101-aem-writes-aemsim-reads.md); the AGC
 
 ## Why
 
-- A copy needs a second writer to follow any change to the bid, and the duplicated series made up about 15% of a 288-interval replay system's static time series (25,042 to 21,302 after the change).
+- A copy needs a second writer to follow any change to the bid, and the duplicated series made up about 15% of a 288-interval NEMDE system's static time series (25,042 to 21,302 after the change).
 - Results differ from the copied form only by floating-point rounding from the division at read.

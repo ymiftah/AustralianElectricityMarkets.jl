@@ -1,4 +1,4 @@
-# Closed-loop replay: each interval starts from the previous interval's solved state. The starting output of
+# Closed-loop run: each interval starts from the previous interval's solved state. The starting output of
 # each unit and the starting flow of each MNSP are PowerSimulations initial conditions; the inputs derived from
 # that state are recomputed each step with AEM's writer code (`closed_loop_input`).
 
@@ -18,8 +18,8 @@ end
     _add_initial_power!(container, devices, model)
 
 Adds the starting output of each of `devices`: the [`InitialPowerTimeSeriesParameter`](@ref) of its observed
-starting output in an open-loop replay, and a [`NEMInitialPower`](@ref) initial condition seeded with the
-observed output at the build's initial time in a closed-loop replay.
+starting output in an open-loop run, and a [`NEMInitialPower`](@ref) initial condition seeded with the
+observed output at the build's initial time in a closed-loop run.
 
 # Returns
 `nothing`.
@@ -137,7 +137,7 @@ end
 """
     PSI.update_parameter_values!(model::PSI.DecisionModel{NEMClosedLoopDispatchProblem}, key, state)
 
-Updates a time-series parameter of a closed-loop replay: PowerSimulations' own update reads the interval's
+Updates a time-series parameter of a closed-loop run: PowerSimulations' own update reads the interval's
 series, then each component whose series is state-dependent (see `is_state_dependent_input`) gets the value
 `closed_loop_input` computes from its solved output at the previous interval. The first execution of the model
 keeps the stock series values, the build-time observed values; the overwrite starts from the second execution.
@@ -280,13 +280,13 @@ function _update_state_dependent_parameter!(model, key, param_container, param::
             leader = entries[entry.leader]
             leader.last == value || throw(
                 ArgumentError(
-                    "closed-loop replay: \"$(entry.name)\" and \"$(leader.name)\" share the series behind $(series), so their state-dependent values cannot differ.",
+                    "closed-loop run: \"$(entry.name)\" and \"$(leader.name)\" share the series behind $(series), so their state-dependent values cannot differ.",
                 ),
             )
             continue
         end
         unwrapped = PSI._unwrap_for_param(param, value, axes_)
-        all(isfinite, unwrapped) || throw(ArgumentError("closed-loop replay: the $(series) value of \"$(entry.name)\" at $t is not finite."))
+        all(isfinite, unwrapped) || throw(ArgumentError("closed-loop run: the $(series) value of \"$(entry.name)\" at $t is not finite."))
         PSI._set_param_value_at!(array.data, unwrapped, entry.column, 1)
     end
     return

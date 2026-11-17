@@ -1,5 +1,5 @@
 """
-    _nem_network(db; replay = false, time_series_in_memory = true, as_of = nothing, through = nothing, kwargs...) -> (sys, units, gen_df)
+    _nem_network(db; nemde = false, time_series_in_memory = true, as_of = nothing, through = nothing, kwargs...) -> (sys, units, gen_df)
 
 Builds the NEM network without operation costs: buses, loads, branches, generators, batteries,
 scheduled loads and area interfaces, with every generator's operation cost zero. Reads no ISP cost
@@ -9,7 +9,7 @@ table. `units` is the unit table as of `as_of`, or over the window `[as_of, thro
 
 # Arguments
 - `db`: The database connection.
-- `replay`: Build a replay network: attach a [`NEMUnitData`](@ref) to every dispatch device and record
+- `nemde`: Build a NEMDE network: attach a [`NEMUnitData`](@ref) to every dispatch device and record
   each unit's [`NEMRegistration`](@ref).
 - `time_series_in_memory`: Store time series in memory when `true`.
 - `as_of`: A `Date` or `DateTime` to resolve the unit and interconnector tables as of; `nothing`
@@ -21,7 +21,7 @@ table. `units` is the unit table as of `as_of`, or over the window `[as_of, thro
 # Returns
 A tuple `(sys, units, gen_df)`.
 """
-function _nem_network(db; replay::Bool = false, time_series_in_memory = true, as_of = nothing, through = nothing, kwargs...)
+function _nem_network(db; nemde::Bool = false, time_series_in_memory = true, as_of = nothing, through = nothing, kwargs...)
     @info "parsing buses"
     interconnectors = read_interconnectors(db; as_of = as_of)
     bus_df = _bus_dataframe(interconnectors)
@@ -43,12 +43,12 @@ function _nem_network(db; replay::Bool = false, time_series_in_memory = true, as
     sys = System(BASE_POWER; time_series_in_memory = time_series_in_memory, kwargs...)
     _add_buses!(sys, bus_df)
     _add_loads!(sys, loads_df)
-    _add_generation!(sys, gen_df; legacy_batteries = replay)
+    _add_generation!(sys, gen_df; legacy_batteries = nemde)
     _add_branches!(sys, branch_df)
     _add_batteries!(sys, batteries_df)
-    _add_scheduled_loads!(sys, scheduled_loads_df; replay)
+    _add_scheduled_loads!(sys, scheduled_loads_df; nemde)
     _add_area_interfaces!(sys, interfaces_df)
-    if replay
+    if nemde
         _attach_nem_unit_data!(sys)
         _set_registrations!(sys, units, read_loss_factors(db; as_of, through))
     end
@@ -135,7 +135,7 @@ table as of `as_of`, or over the window `[as_of, through]` (see [`read_units`](@
 A tuple `(sys, units)`.
 """
 function nem_network(db; time_series_in_memory = true, as_of = nothing, through = nothing, kwargs...)
-    sys, units, _ = _nem_network(db; replay = true, time_series_in_memory, as_of, through, kwargs...)
+    sys, units, _ = _nem_network(db; nemde = true, time_series_in_memory, as_of, through, kwargs...)
     return sys, units
 end
 

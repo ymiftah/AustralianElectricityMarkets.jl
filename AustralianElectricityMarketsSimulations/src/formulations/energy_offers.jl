@@ -134,12 +134,12 @@ function PSI.calc_additional_axes(
     return (string.(1:_energy_band_count(devices)),)
 end
 
-# The day band prices of `device`'s energy bid on `side`; throws when the replay inputs have not set them.
+# The day band prices of `device`'s energy bid on `side`; throws when the NEMDE inputs have not set them.
 function _energy_band_prices(device::PSY.Component, side::OfferSide)
     bid = _energy_bid(_nem_offer_cost(device), side)
     isnothing(bid) && throw(ArgumentError("$(PSY.get_name(device)) has an energy offer series but no NEMEnergyBid on the $(side) side."))
     prices = bid.band_prices
-    isnothing(prices) && throw(ArgumentError("$(PSY.get_name(device)) has no energy band prices; run the replay input stage."))
+    isnothing(prices) && throw(ArgumentError("$(PSY.get_name(device)) has no energy band prices; run the NEMDE input stage."))
     return prices
 end
 

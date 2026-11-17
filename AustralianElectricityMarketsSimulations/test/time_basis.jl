@@ -5,8 +5,8 @@
     @test last(steps) == DateTime(2026, 1, 2, 4, 0)
 end
 
-@testset "replay_chunks" begin
-    chunks = replay_chunks
+@testset "dispatch_chunks" begin
+    chunks = dispatch_chunks
     @test chunks(DateTime(2026, 1, 1, 3, 55):Minute(5):DateTime(2026, 1, 1, 4, 15); chunk = :trading_day) ==
         [DateTime(2026, 1, 1, 3, 55):Minute(5):DateTime(2026, 1, 1, 4, 0), DateTime(2026, 1, 1, 4, 5):Minute(5):DateTime(2026, 1, 1, 4, 15)]
     @test chunks(DateTime(2026, 1, 1, 4, 5):Minute(5):DateTime(2026, 1, 2, 4, 0); chunk = :trading_day) ==

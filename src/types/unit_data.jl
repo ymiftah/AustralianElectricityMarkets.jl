@@ -175,7 +175,7 @@ end
     NEMUnitData(; offer = NEMOfferCost(), registration = nothing, telemetry = nothing,
         observed_state = nothing)
 
-The NEM unit data of a stock device in a replay system, attached to it as a supplemental attribute: the
+The NEM unit data of a stock device in a NEMDE system, attached to it as a supplemental attribute: the
 unit's offer, registration, telemetry and observed state. A `nothing` field is a value AEMO does not
 publish for the unit.
 
@@ -250,8 +250,8 @@ end
 """
     NEM_DISPATCH_DEVICE_TYPES
 
-The stock device types that replay systems build for NEM dispatch units, in the order
-[`nem_dispatch_devices`](@ref) collects them. A replay unit is a device of one of these types that
+The stock device types that NEMDE systems build for NEM dispatch units, in the order
+[`nem_dispatch_devices`](@ref) collects them. A NEMDE unit is a device of one of these types that
 carries a [`NEMUnitData`](@ref).
 """
 const NEM_DISPATCH_DEVICE_TYPES = (

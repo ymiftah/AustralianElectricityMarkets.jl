@@ -1,4 +1,4 @@
-# Compares two replay snapshots key by key. Run as a script, it compares two capture folders and
+# Compares two run snapshots key by key. Run as a script, it compares two capture folders and
 # exits 0 when the gate passes.
 
 using Dates
@@ -229,7 +229,7 @@ end
 """
     compare_snapshots(baseline, candidate; atol = 1.0e-9, allow_new = Regex[], allow_missing = Regex[], mask_gc_slacks = false, invariants = false, report_only = Regex[]) -> Vector{NamedTuple}
 
-Compares two snapshots from [`replay_snapshot`](@ref) and returns the gating mismatches as
+Compares two snapshots from [`problem_snapshot`](@ref) and returns the gating mismatches as
 `(; key, kind, max_abs)` rows. Variable, dual, auxiliary and expression values differ when they exceed
 `atol`; the optimizer objective differs beyond the solver's relative MIP gap, `1e-8`. Parameter and input tables never gate.
 A key present on one side only is a mismatch unless a regex in `allow_new` or `allow_missing` matches it;

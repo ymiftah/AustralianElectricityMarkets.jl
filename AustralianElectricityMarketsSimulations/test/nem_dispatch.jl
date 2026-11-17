@@ -23,7 +23,7 @@ function nem_dispatch_system(; mutate! = identity, data_span = NEM_DISPATCH_HORI
     attach_demand!(sys, db, date_range; resolution = NEM_DISPATCH_RESOLUTION)
     set_market_bids!(sys, db, date_range; resolution = NEM_DISPATCH_RESOLUTION)
     attach_dispatch_limits!(sys, db, date_range)
-    AustralianElectricityMarkets._set_replay_inputs!(sys)
+    AustralianElectricityMarkets._set_nemde_inputs!(sys)
     mutate!(sys)
     # One window spanning the whole span, matching the single window the bid forecast carries.
     PSY.transform_single_time_series!(sys, data_span, NEM_DISPATCH_RESOLUTION)
@@ -280,7 +280,7 @@ end
                 EnergyLimitTimeSeriesParameter
             AEMS._availability_series_name(device, param) == bid.max_avail.name &&
                 PSY.has_time_series(device, PSY.SingleTimeSeries, bid.max_avail.name) &&
-                PSI.get_multiplier_value(param(), device, NEMReplayDispatch()) ≈ 1 / PSY.get_base_power(sys) ||
+                PSI.get_multiplier_value(param(), device, NEMDispatch()) ≈ 1 / PSY.get_base_power(sys) ||
                 push!(wrong, "$(PSY.get_name(device)) $(bid.direction)")
             checked += 1
         end

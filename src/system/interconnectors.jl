@@ -150,7 +150,7 @@ A repeat call replaces the earlier limits.
 # Arguments
 - `sys`: the `System` to add to.
 - `db`: an `AEMDB` connection.
-- `date_range`: the dispatch intervals to replay.
+- `date_range`: the dispatch intervals to run.
 - `kwargs`: passed to [`read_interconnector_limits`](@ref) (e.g. `intervention`).
 
 # Returns

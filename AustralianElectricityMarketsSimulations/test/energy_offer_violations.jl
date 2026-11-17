@@ -27,7 +27,7 @@ end
             return
         end,
     )
-    status, log = _toy_build_log(toy_model(sys; template = replay_template(sys)))
+    status, log = _toy_build_log(toy_model(sys; template = problem_template(sys)))
     @test status == PSI.ModelBuildStatus.FAILED
     @test occursin("energy offer curves must start at 0 MW", log)
 end
@@ -61,7 +61,7 @@ end
 
 @testset "recurrent offered-band widths update step by step" begin
     sys = offered_band_system(; bands = [[(40.0, 20.0)], [(80.0, 20.0)]])
-    out = run_replay(sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false))
+    out = run_problem(sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false))
     rows = filter(:family => ==("energy_offer"), read_constraint_violations(out.results, sys))
     @test nrow(rows) == 1
     @test only(rows.MW) ≈ 20.0 atol = 1.0e-6
@@ -137,7 +137,7 @@ end
         batteries = ["BAT" => toy_battery(20.0, 75.0, 20.0, 25.0; initial = 0.0, ramp_up = 100.0)],
         loads = ["LOAD" => toy_load(20.0, 40.0; initial = 0.0, ramp_up = 100.0)],
     )
-    model = toy_model(sys; template = replay_template(sys))
+    model = toy_model(sys; template = problem_template(sys))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
     invariant = PSI.get_invariant_terms(PSI.get_objective_expression(container))

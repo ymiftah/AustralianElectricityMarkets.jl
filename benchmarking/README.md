@@ -4,7 +4,7 @@
 (`get_test_intervals(number=1000)` in
 [UNSW-CEEM/nempy `benchmarking`](https://github.com/UNSW-CEEM/nempy/tree/master/benchmarking)):
 `random.seed(1)`, then `random.sample(range(1, n), 1000)` over the five-minute grid from
-2024-07-01 00:00 to 2025-01-01 00:00. Replaying the same intervals, each solved independently,
+2024-07-01 00:00 to 2025-01-01 00:00. Running the same intervals, each solved independently,
 allows a like-for-like comparison of the energy price error against NEMDE.
 
 The timestamps are interval-ending `SETTLEMENTDATE` values in AEST (UTC+10), sorted, with the
@@ -12,7 +12,7 @@ header `interval`. An interval ending 00:05 through 04:00 belongs to the previou
 
 ## Populate the cache
 
-The replay reads the local cache and downloads nothing, so populate July to December 2024 first.
+The run reads the local cache and downloads nothing, so populate July to December 2024 first.
 The tables are those of `table_requirements(NEMDEConfiguration())`. `DISPATCH_FCAS_REQ` covers the
 months before 2025-06, and `DISPATCH_FCAS_REQ_CONSTRAINT` only applies from 2025-06, so skip it here.
 
@@ -38,7 +38,7 @@ that builds one system and solves its selected intervals one by one, so `--hours
 (days run in a seeded random order). The run folder must not exist.
 
 ```sh
-julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/replay_batch.jl \
+julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/batch_run.jl \
     --intervals-file benchmarking/nempy_2024h2_intervals.csv \
     --hours 24 --output "$HOME/aem_validation/nempy-2024h2"
 ```

@@ -45,8 +45,8 @@ function binding_sentinel_system()
 end
 # The solved tables of `read_solved_interval` at interval `t`.
 stock_at(tables, t) = map(df -> filter(:SETTLEMENTDATE => ==(t), df), tables)
-# One standalone one-interval solve of `template` (default the replication template) at `t`.
-function stock_standalone(sys, t; template = replay_template(sys))
+# One standalone one-interval solve of `template` (default the NEMDE template) at `t`.
+function stock_standalone(sys, t; template = problem_template(sys))
     model = PSI.DecisionModel(
         AEMS.NEMDispatchProblem, template, sys; optimizer = STOCK_OPTIMIZER, initial_time = t, name = "standalone",
     )
@@ -61,7 +61,7 @@ function stock_standalone(sys, t; template = replay_template(sys))
 end
 # The simulation, its per-step objectives and solved tables.
 function stock_simulate(sys; kwargs...)
-    out = run_replay(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER, kwargs...)
+    out = run_problem(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER, kwargs...)
     tables = read_solved_interval(out.results, sys)
     return (;
         out...,
@@ -88,18 +88,18 @@ const STOCK_SIM = stock_simulate(sentinel_system())
     end
 end
 
-@testset "the problem type selects the replay mode" begin
+@testset "the problem type selects the run mode" begin
     sys = sentinel_system()
     closed = PSI.DecisionModel(
-        NEMClosedLoopDispatchProblem, replay_template(sys), sys; optimizer = STOCK_OPTIMIZER, initial_time = TOY_START,
+        NEMClosedLoopDispatchProblem, problem_template(sys), sys; optimizer = STOCK_OPTIMIZER, initial_time = TOY_START,
     )
     @test PSI.get_ext(PSI.get_settings(closed))["closed_loop"] === true
     open_loop = PSI.DecisionModel(
-        NEMDispatchProblem, replay_template(sys), sys; optimizer = STOCK_OPTIMIZER, initial_time = TOY_START,
+        NEMDispatchProblem, problem_template(sys), sys; optimizer = STOCK_OPTIMIZER, initial_time = TOY_START,
     )
     @test PSI.get_ext(PSI.get_settings(open_loop))["closed_loop"] === false
     for kw in (:horizon, :interval, :resolution)
-        err = _caught(() -> PSI.DecisionModel(NEMDispatchProblem, replay_template(sys), sys; kw => TOY_RESOLUTION))
+        err = _caught(() -> PSI.DecisionModel(NEMDispatchProblem, problem_template(sys), sys; kw => TOY_RESOLUTION))
         @test err isa ArgumentError && occursin(string(kw), err.msg)
     end
     container = PSI.get_optimization_container(STOCK_SIM.model)
@@ -162,7 +162,7 @@ end
 stock_gc_price(raw) = raw / (100.0 * interval_hours(DISPATCH_INTERVAL))
 # One standalone solve at `t`, every `GenericConstraint` under `LinearFactorLimit` with `use_slacks`.
 function masked_standalone(sys, t)
-    template = replay_template(sys; template = energy_template())
+    template = problem_template(sys; template = energy_template())
     for gc in PSY.get_components(GenericConstraint, sys)
         name = PSY.get_name(gc)
         PSI.set_service_model!(
@@ -249,7 +249,7 @@ end
 
 @testset "a recurrent build without slacks builds and solves, since non-invoked rows are freed by the invocation parameter" begin
     sys = masked_system(ConstraintSense.LE, TOY_CHEAP, 60.0)
-    template = replay_template(sys; template = energy_template())
+    template = problem_template(sys; template = energy_template())
     PSI.set_service_model!(template, "N_TOY_LIMIT", PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "N_TOY_LIMIT"; duals = [NEMConstraintLimit]))
     model = PSI.DecisionModel(
         AEMS.NEMDispatchProblem, template, sys; optimizer = STOCK_OPTIMIZER, initial_time = TOY_START, name = "hard",
@@ -438,7 +438,7 @@ stock_fcas_prices(results, sys, t) = Dict(
     (r.REGIONID, r.BIDTYPE) => r.ROP for r in eachrow(read_fcas_prices(results, sys; resolution = DISPATCH_INTERVAL)) if r.SETTLEMENTDATE == t
 )
 function stock_fcas_standalone(sys, t)
-    template = replay_template(sys)
+    template = problem_template(sys)
     model = PSI.DecisionModel(
         AEMS.NEMDispatchProblem, template, sys; optimizer = STOCK_OPTIMIZER, initial_time = t, name = "standalone",
     )
@@ -463,7 +463,7 @@ const FCAS_CHANGES = (
 @testset "FCAS trapezium, enablement and AGC status change between steps: simulation equals standalone solves" begin
     sim = stock_simulate(fcas_toy_system(; FCAS_CHANGES...))
     @test PSI.has_container_key(PSI.get_optimization_container(sim.model), FCASSideCapacityVariable, FCASService, "1_RAISEREG_gen")
-    # Every cost of the full replay template is an invariant term.
+    # Every cost of the full problem template is an invariant term.
     @test !PSI.get_objective_expression(PSI.get_optimization_container(sim.model)).has_variant_contributors
     capacities = [stock_fcas_capacities(sim.results, t) for t in STOCK_STEPS]
     prices = [stock_fcas_prices(sim.results, fcas_toy_system(; FCAS_CHANGES...), t) for t in STOCK_STEPS]
@@ -725,7 +725,7 @@ end
         [100.0, 120.0]; horizon = TOY_RESOLUTION,
         mutate! = (sys, stamps) -> foreach(i -> add_constraint!(sys, stamps, i), 1:n),
     )
-    out = run_replay(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
+    out = run_problem(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
     slack_families = Dict(AEMS._VIOLATION_FAMILIES)
     keys = [k for k in PSI.list_variable_keys(out.results) if haskey(slack_families, PSI.IS.Optimization.get_entry_type(k))]
     # One up and one down generic constraint slack container hold the thirty constraints.
@@ -739,15 +739,15 @@ end
     @test isempty(AEMS._read_variable_frames(out.results, PSI.OptimizationContainerKey[]))
 end
 
-@testset "replay template follows the template and exclude_constraints" begin
+@testset "problem template follows the template and exclude_constraints" begin
     sys = fcas_toy_system()
-    full = replay_template(sys)
+    full = problem_template(sys)
     @test Set(PSI.get_component_type(m) for m in values(PSI.get_device_models(full))) ==
         Set([AEMS.NEM_DISPATCH_DEVICE_TYPES..., PSY.PowerLoad])
     # A dispatch participant without a device model fails the template check.
     no_storage = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
     for T in (ThermalStandard, HydroDispatch, RenewableDispatch, InterruptiblePowerLoad)
-        PSI.set_device_model!(no_storage, T, AEMS.NEMReplayDispatch)
+        PSI.set_device_model!(no_storage, T, AEMS.NEMDispatch)
     end
     PSI.set_device_model!(no_storage, PSY.PowerLoad, PSI.StaticPowerLoad)
     @test_throws r"no device model in template for dispatch participant types .*EnergyReservoirStorage" AEMS.check_template_against_sys(
@@ -755,20 +755,20 @@ end
     )
     # Without FCAS service models the FCAS requirements need an unmodeled market and are reported, not built.
     skipped = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
-    no_fcas = replay_template(sys; template = with_generic_constraints!(energy_template()), skipped = skipped)
+    no_fcas = problem_template(sys; template = with_generic_constraints!(energy_template()), skipped = skipped)
     @test isempty(AEMS._modeled_fcas_services(no_fcas, sys))
     @test Set(r.constraint for r in skipped) == Set(["F_REG", "F_R6", "F_L6"])
     @test all(r -> r.reason == :unmodeled_fcas_service, skipped)
     # exclude_constraints rejects an unknown name.
-    @test_throws r"exclude_constraints names N_ABSENT" replay_template(
+    @test_throws r"exclude_constraints names N_ABSENT" problem_template(
         sentinel_system(); template = template_nemde(; exclude_constraints = Dict("N_ABSENT" => :x)),
     )
 end
 
-@testset "named errors of the replay core" begin
+@testset "named errors of the run core" begin
     # Losses modeled but no interchange variable in the results.
     sys = loss_curve_sentinel_system()
-    uncoupled = stock_standalone(sys, TOY_START; template = replay_template(sys; template = energy_template()))
+    uncoupled = stock_standalone(sys, TOY_START; template = problem_template(sys; template = energy_template()))
     @test nrow(read_solved_interval(uncoupled.results, sys).interconnectors) == 0
     @test_throws r"non-finite regional price" AEMS._check_prices_finite(
         DataFrame(SETTLEMENTDATE = [TOY_START], REGIONID = ["1"], ROP = [NaN]),
@@ -792,7 +792,7 @@ end
         derived.forward_value => [0.0, 20.0],
         derived.forward_invoked => [0.0, 1.0],
     )
-    # The raw inputs are edited before the replay inputs are written, which derive the fixed loading from them.
+    # The raw inputs are edited before the NEMDE inputs are written, which derive the fixed loading from them.
     function set_raw_inputs!(sys, _stamps)
         ic = only(collect(PSY.get_components(PSY.AreaInterchange, sys)))
         for (name, values) in inputs

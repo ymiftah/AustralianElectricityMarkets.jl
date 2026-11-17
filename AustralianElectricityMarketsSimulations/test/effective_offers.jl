@@ -1,5 +1,5 @@
-# The replay-unit offers and limits that AustralianElectricityMarketsSimulations reads, with the
-# `_set_replay_inputs!` series they are derived from.
+# The run-unit offers and limits that AustralianElectricityMarketsSimulations reads, with the
+# `_set_nemde_inputs!` series they are derived from.
 
 # A unit first registered at `stamp`: its summary and loss-factor rows start there, and its bids and
 # dispatch rows before it are removed, as NEMWEB has them. Returns the hive location.
@@ -19,16 +19,16 @@ function registered_from(source, duid, stamp)
 end
 
 
-@testset "a device with no dispatch rows before its registration does not abort the replay" begin
+@testset "a device with no dispatch rows before its registration does not abort the run" begin
     # BW02 registers after 00:10, so both steps precede its registration and must read the zero seed state
     # (zero output, no fixed loading) instead of throwing on the absent dispatch mode.
     steps = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 10)
-    late_hive = registered_from(AEM_TEST_REPLAY_HIVE_DIR, "BW02", "2025-01-01 00:10:00")
+    late_hive = registered_from(AEM_TEST_NEMDE_HIVE_DIR, "BW02", "2025-01-01 00:10:00")
     late = nem_system(
         aem_connect(HiveConfiguration(hive_location = late_hive, filesystem = "file")), NEMDEConfiguration();
         date_range = first(steps):Minute(5):(last(steps) + 2Minute(5)),
     )
-    out = run_replay(late, steps)
+    out = run_problem(late, steps)
     @test length(PSI.read_optimizer_stats(out.results).objective_value) == length(steps)
     container = PSI.get_optimization_container(out.model)
     for P in (AEMS.InitialPowerTimeSeriesParameter, AEMS.FixedLoadTimeSeriesParameter, AEMS.FixedLoadInvokedTimeSeriesParameter)
@@ -56,7 +56,7 @@ end
         set_available!(get_component(ThermalStandard, sys, "ER02"), false)
         set_available!(get_component(HydroDispatch, sys, "BW02"), false)
         set_unit_conditions!(sys, db, date_range)
-        AEM._set_replay_inputs!(sys)
+        AEM._set_nemde_inputs!(sys)
         return sys
     end
 
@@ -65,7 +65,7 @@ end
         @test AEMSim._has_nem_dispatch_limits(get_component(ThermalStandard, sys, "ER01"))
         @test AEMSim._has_nem_dispatch_limits(get_component(InterruptiblePowerLoad, sys, "ASLOAD1"))
         semi = first(d for d in get_components(RenewableDispatch, sys) if is_semi_scheduled(d))
-        @test PSI.get_multiplier_value(EnergyLimitTimeSeriesParameter(), semi, NEMReplayDispatch()) ≈ 1 / get_base_power(sys)
+        @test PSI.get_multiplier_value(EnergyLimitTimeSeriesParameter(), semi, NEMDispatch()) ≈ 1 / get_base_power(sys)
     end
 
     @testset "a missing $name series fails the pre-flight" for name in (max_avail, NEM_SERIES.ramp_up_rate)

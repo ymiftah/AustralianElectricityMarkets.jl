@@ -1,7 +1,7 @@
 # The values of `gc`'s series in `field` (`:rhs` or `:invoked`), read through its key.
 _constraint_series(gc, field::Symbol) = PowerSystems.IS.get_time_series_values(gc, getproperty(gc, field))
 
-# Removes `device`'s series `name` with the forecast windows the replay input stage transformed from it.
+# Removes `device`'s series `name` with the forecast windows the NEMDE input stage transformed from it.
 function remove_series_and_forecast!(sys, device, name)
     PowerSystems.has_time_series(device, PowerSystems.DeterministicSingleTimeSeries, name) &&
         PowerSystems.remove_time_series!(sys, PowerSystems.DeterministicSingleTimeSeries, device, name)
@@ -25,7 +25,7 @@ using DuckDB
 
 Writes the mock Hive-partitioned cache under `hive_root`. With `complete_inputs`, the invoked
 constraints whose terms cannot all resolve (`N_PHANTOM_TEST`, `N_ONE_PHANTOM_TERM`) are removed and
-`PUMP2` is inactive in `DISPATCHLOAD`, so a strict replay can run on it. Every interconnector also
+`PUMP2` is inactive in `DISPATCHLOAD`, so a strict run can run on it. Every interconnector also
 gets a `LOSSMODEL`.
 """
 function create_mock_data(hive_root::String; complete_inputs::Bool = false)
@@ -770,7 +770,7 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
     initial_mw_for(duid, i) = duid == "BW01" && i == last(intervals) ? -30.0 : duid == "ASLOAD1" ? 0.1 : duid in nonscheduled ? 0.0 : 40.0 + duid_offset(duid) + (i % 10)
     # BW04 (fast-start, T1 > 0) is in DISPATCHMODE 4 at 00:10 and 2 at 00:15, its fixed-load intervals.
     dispatch_mode_for(duid, i) = duid == "BW04" && i == 2 ? 4 : duid == "BW04" && i == 3 ? 2 : 0
-    # BW04's mode times exceed its zero T2 and T4, so the replay state caps them to 0.
+    # BW04's mode times exceed its zero T2 and T4, so the NEMDE state caps them to 0.
     dispatch_mode_time_for(duid, i) = dispatch_mode_for(duid, i) == 0 ? 0 : 7
     ramp_up_rate_for(duid, i) = duid in nonscheduled ? 0.0 : 4.0 + duid_offset(duid) + (i % 5)
     ramp_down_rate_for(duid, i) = duid in nonscheduled ? 0.0 : 3.0 + duid_offset(duid) + (i % 5)
@@ -788,7 +788,7 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
     lower_reg_enablement_min_for(duid, i) = 22.0 + duid_offset(duid) + (i % 3)
     lower_reg_enablement_max_for(duid, i) = 98.0 - duid_offset(duid) - (i % 3)
     df_dispatchload = DataFrame()
-    # One interval before the first, so a replay starting at the first interval has its previous row.
+    # One interval before the first, so a run starting at the first interval has its previous row.
     for i in (first(intervals) - 1):last(intervals)
         t = base_datetime + Minute(5 * i)
         block = DataFrame(

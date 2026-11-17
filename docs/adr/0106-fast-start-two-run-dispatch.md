@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. Extends [0034](0034-mms-tables-for-mnsp-and-fast-start.md); closed-loop interplay in [0102](0102-closed-loop-replay.md).
+Accepted. Extends [0034](0034-mms-tables-for-mnsp-and-fast-start.md); closed-loop interplay in [0102](0102-closed-loop-problem.md).
 
 ## What
 
@@ -22,7 +22,7 @@ AEMO *Fast Start Inflexibility Profile* (June 2021, s2 to 3, s5): offered times 
 
 ## Why
 
-- Unmodelled profiles made the replay dispatch such units differently from NEMDE; per-day `BIDDAYOFFER_D` also loses intraday rebids of the profile.
+- Unmodelled profiles made the run dispatch such units differently from NEMDE; per-day `BIDDAYOFFER_D` also loses intraday rebids of the profile.
 
 ## Known departures
 
@@ -32,4 +32,4 @@ AEMO *Fast Start Inflexibility Profile* (June 2021, s2 to 3, s5): offered times 
 ## Known limits
 
 - A closed loop keeps AEMO's observed starting mode; it does not carry run 2's end state forward.
-- Replay fixed loadings are dropped by the starting mode (modes 1 and 2); the profile at CVP 1130 governs. `_set_nem_fixed_loads!` and `read_fixed_loads`' `IN_PROFILE` flag are not on the replay path.
+- Run fixed loadings are dropped by the starting mode (modes 1 and 2); the profile at CVP 1130 governs. `_set_nem_fixed_loads!` and `read_fixed_loads`' `IN_PROFILE` flag are not on the NEMDE path.

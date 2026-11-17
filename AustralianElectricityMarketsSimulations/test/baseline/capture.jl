@@ -1,4 +1,4 @@
-# Captures one replay of the NEM dispatch as a baseline: prepares the system, builds and executes the
+# Captures one run of the NEM dispatch as a baseline: prepares the system, builds and executes the
 # simulation over a range of intervals, and writes the snapshot, the metrics, the skipped constraints,
 # the interval comparison and a README into the output folder.
 #
@@ -77,8 +77,8 @@ function _build(db, steps::StepRange{DateTime}, template, optimizer, folder::Abs
     )
     system_build_s = time() - t
     t = time()
-    skipped = isdefined(AEMS, :prepare_replay!) ? AEMS.prepare_replay!(sys, template, steps) :
-        AEMS.replay_skipped_constraints(sys, template)
+    skipped = isdefined(AEMS, :prepare_problem!) ? AEMS.prepare_problem!(sys, template, steps) :
+        AEMS.template_skipped_constraints(sys, template)
     prepare_s = time() - t
     t = time()
     # The dispatch run is `DECISION_NAME`; with a fast-start unit, the commitment run precedes it at each step.
@@ -124,7 +124,7 @@ end
 """
     capture(; hive, start, intervals, out, warm) -> Nothing
 
-Runs one replay of `intervals` five-minute steps from `start` and writes the capture folder `out`.
+Runs `intervals` five-minute steps from `start` and writes the capture folder `out`.
 See the header of this file for the options.
 """
 function capture(; hive::AbstractString, start::DateTime, intervals::Integer, out::AbstractString, warm::Bool)
@@ -150,7 +150,7 @@ function capture(; hive::AbstractString, start::DateTime, intervals::Integer, ou
             results = PSI.get_decision_problem_results(PSI.SimulationResults(built.simulation), DECISION_NAME)
             say("executed in $(round(execute_s; digits = 2)) s")
 
-            snapshot = replay_snapshot(results, built.sys)
+            snapshot = problem_snapshot(results, built.sys)
             serialize(joinpath(out, "snapshot.jls"), snapshot)
             stats = PSI.read_optimizer_stats(results)
             timed = collect(Float64, stats.timed_solve_time)
@@ -185,8 +185,8 @@ function capture(; hive::AbstractString, start::DateTime, intervals::Integer, ou
             solver = join(("$k = $v" for (k, v) in AEMS.NEMDE_HIGHS_OPTIONS), "; ")
             outcome = "solved and compared $(length(steps)) intervals; snapshot has $(length(snapshot)) tables"
             open(joinpath(out, "README.md"), "w") do io
-                println(io, "# Replay capture: $hive from $start, $(length(steps)) intervals\n")
-                println(io, "Purpose: baseline for the replay comparison gate of the PSI split refactor.")
+                println(io, "# Run capture: $hive from $start, $(length(steps)) intervals\n")
+                println(io, "Purpose: baseline for the run comparison gate of the PSI split refactor.")
                 println(io, "Command: `capture.jl $(join(ARGS, " "))`")
                 println(io, "Branch: $(git.branch)")
                 println(io, "Commit: $(git.commit)")

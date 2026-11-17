@@ -7,7 +7,7 @@ Accepted
 ## What
 
 - Nothing downstream of ingestion reads `GENCONDATA.DYNAMICRHS`, and `GENERICCONSTRAINTRHS` is not ingested.
-- A constraint's RHS is the replayed `DISPATCHCONSTRAINT.RHS` for each `(SETTLEMENTDATE, GENCONID)`.
+- A constraint's RHS is the run `DISPATCHCONSTRAINT.RHS` for each `(SETTLEMENTDATE, GENCONID)`.
 
 ## How
 
@@ -17,5 +17,5 @@ Accepted
 ## Why
 
 - AEMO's MMS Data Model Report documents `DYNAMICRHS` as "Not used"; NEMDE's RPN RHS engine does not consult it.
-- The package replays the outcome NEMDE enforced and does not re-implement RHS derivation.
+- The package runs the outcome NEMDE enforced and does not re-implement RHS derivation.
 - Explaining why an RHS took a value is a separate feature and needs its own ADR.

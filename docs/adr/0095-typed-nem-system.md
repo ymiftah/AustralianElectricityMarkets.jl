@@ -2,17 +2,17 @@
 
 ## Status
 
-Accepted. Replay devices are stock PowerSystems types ([0097](0097-stock-devices-for-replay.md)); AEM writes every input and AEMSim only reads the System ([0101](0101-aem-writes-aemsim-reads.md)); bids are in [0093](0093-nem-device-types-and-offer-cost.md).
+Accepted. Run devices are stock PowerSystems types ([0097](0097-stock-devices-for-nemde.md)); AEM writes every input and AEMSim only reads the System ([0101](0101-aem-writes-aemsim-reads.md)); bids are in [0093](0093-nem-device-types-and-offer-cost.md).
 
 ## What
 
-- Every quantity of a replay system is a typed field: a static value, or a key into a series attached to the component that owns the field. No component carries an `ext` entry on the replay path.
+- Every quantity of a NEMDE system is a typed field: a static value, or a key into a series attached to the component that owns the field. No component carries an `ext` entry on the NEMDE path.
 - A quantity AEMO publishes once is static; one that varies over the range is an `IS.StaticTimeSeriesKey`. Numeric static fields are coerced to `Float64`, since JSON reads `0.0` back as an integer. `nothing` is allowed only where AEMO permits absence (a non-semi-scheduled unit's UIGF, an MNSP bid's fixed load).
 - The System is self-contained and persistable. A JSON and HDF5 round trip preserves every struct and series value; shared object identity (one `NEMStation` for several units) is not part of the contract.
 
 ## How
 
-Per-device structs, held by `NEMUnitData` ([0097](0097-stock-devices-for-replay.md)):
+Per-device structs, held by `NEMUnitData` ([0097](0097-stock-devices-for-nemde.md)):
 
 - `NEMRegistration`: schedule type, loss factors, registration span and commissioned flag.
 - `NEMTelemetry`: the telemetered limits from `DISPATCHLOAD` in natural units. Ramp rates are stored as published and the bid rate is applied by `effective_ramp_limit`; regulation availability is stored as published (AEMO already publishes the minimum of bid and telemetry).

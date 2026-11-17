@@ -13,7 +13,7 @@ Accepted.
 ## How
 
 - The root and Simulations `Project.toml` carry `HDF5 = "0.17.5"` in `[compat]` and the pinned revision in `[sources]`; remove the pin once a tag is released.
-- The batch runner replays each trading day in a fresh Julia process, which bounds native handle lifetimes at the cost of repeated package loading.
+- The batch runner runs each trading day in a fresh Julia process, which bounds native handle lifetimes at the cost of repeated package loading.
 
 ## Why
 

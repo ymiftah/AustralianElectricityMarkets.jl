@@ -13,7 +13,7 @@ import PowerSystems as PSY
 import InfrastructureSystems as IS
 
 export HiveConfiguration, aem_connect
-export NetworkConfiguration, table_requirements, nem_system, replay_intervals
+export NetworkConfiguration, table_requirements, nem_system, dispatch_intervals
 export RegionalNetworkConfiguration, NEMDEConfiguration
 export set_mnsp_offers!, set_demand!, set_market_bids!, add_nem_constraints!, set_regional_availability!
 export set_unit_conditions!, set_interconnector_flow_limits!
@@ -116,8 +116,8 @@ include("system/fixed_loads.jl")
 include("system/interconnectors.jl")
 include("system/penalties.jl")
 include("system/RegionModel.jl")
-include("system/replay_checks.jl")
-include("system/replay_inputs.jl")
+include("system/nemde_checks.jl")
+include("system/nemde_inputs.jl")
 
 using .RegionModel: nem_network
 export nem_network

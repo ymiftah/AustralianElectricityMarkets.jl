@@ -28,4 +28,4 @@ For each non-negative directional link flow `q` with bounded offer-band variable
 ## Departures from AEMO
 
 - The two-end MNSP loss violation equations (schedule item 17), Basslink converter losses, its no-go zone and the frequency-controller alternative runs are not modelled. Loss-curve endpoint bounds and the hard loss-split equality remain.
-- Historical MNSP versus post-conversion regulated operation follows the standing `ICTYPE`; a replay crossing a type change must be split.
+- Historical MNSP versus post-conversion regulated operation follows the standing `ICTYPE`; a run crossing a type change must be split.

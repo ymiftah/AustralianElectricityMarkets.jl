@@ -46,7 +46,7 @@ function set_mnsp_offers!(sys, db, date_range; intervention::Integer = 0)
     end_parameters = read_interconnector_loss_parameters(db; as_of = last(intervals))
     end_types = Dict(r.INTERCONNECTORID => r.ICTYPE for r in eachrow(end_parameters))
     all(name -> isequal(types[name], get(end_types, name, missing)), keys(devices)) ||
-        throw(ArgumentError("set_mnsp_offers!: ICTYPE differs between the first and last interval; split the replay at the change"))
+        throw(ArgumentError("set_mnsp_offers!: ICTYPE differs between the first and last interval; split the run at the change"))
     required = sort!([name for name in keys(devices) if types[name] == "MNSP"])
     isempty(required) && return String[]
     tables = (:MNSP_INTERCONNECTOR, :MNSP_DAYOFFER, :MNSP_BIDOFFERPERIOD, :DISPATCH_MNSPBIDTRK, :DISPATCHINTERCONNECTORRES)

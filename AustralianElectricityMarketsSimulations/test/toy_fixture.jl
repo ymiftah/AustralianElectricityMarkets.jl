@@ -1,4 +1,4 @@
-# Shared toy `System` fixture: a two-unit `5_bus_hydro_ed_sys` under `NEMReplayDispatch`, used by
+# Shared toy `System` fixture: a two-unit `5_bus_hydro_ed_sys` under `NEMDispatch`, used by
 # `nem_dispatch_toy.jl` and `fcas_market.jl`.
 
 using HiGHS
@@ -304,8 +304,8 @@ function nem_toy_system(
         foreach(device -> _key_toy_telemetry_limits!(sys, stamps, device), filter(AustralianElectricityMarkets.has_nem_unit_data, collect(PSY.get_components(T, sys))))
     end
     _extend_toy_series!(sys)
-    # The replay inputs first: the dispatch parameters and FCAS offers read the series they write.
-    AustralianElectricityMarkets._set_replay_inputs!(sys)
+    # The NEMDE inputs first: the dispatch parameters and FCAS offers read the series they write.
+    AustralianElectricityMarkets._set_nemde_inputs!(sys)
     tie_break_scales || _strip_toy_tie_breaks!(sys)
 
     # One window per `horizon`.
@@ -314,7 +314,7 @@ function nem_toy_system(
 end
 
 # Repeats the last point of every raw series one step on: `nem_system` series carry one point beyond the
-# last simulated step, so the replay intervals of the toy equal its steps.
+# last simulated step, so the dispatch intervals of the toy equal its steps.
 function _extend_toy_series!(sys::PSY.System)
     for component in PSY.get_components(PSY.Component, sys), key in collect(PSY.get_time_series_keys(component))
         key isa PSY.IS.StaticTimeSeriesKey || continue
@@ -333,7 +333,7 @@ function _extend_toy_series!(sys::PSY.System)
     return sys
 end
 
-# Removes the tie-break scales and the EnergyTieBreak service that the replay input stage wrote, for a fixture
+# Removes the tie-break scales and the EnergyTieBreak service that the NEMDE input stage wrote, for a fixture
 # built without tie-break scales.
 function _strip_toy_tie_breaks!(sys::PSY.System)
     for device in PSY.get_components(PSY.StaticInjection, sys), key in collect(PSY.get_time_series_keys(device))
@@ -467,7 +467,7 @@ function _toy_build_log(model)
     return status, join((read(joinpath(dir, f), String) for f in readdir(dir)), "\n")
 end
 
-# Solves one 5-minute interval under `NEMReplayDispatch`. Returns dispatch and per-band offers in
+# Solves one 5-minute interval under `NEMDispatch`. Returns dispatch and per-band offers in
 # MW, the area price in $/MWh, the objective in $, and each `GenericConstraint`'s shadow price in
 # $/MWh, keyed by name (empty if `sys` carries none). Any `GenericConstraint` in `sys` is registered
 # under `LinearFactorLimit`.
@@ -623,7 +623,7 @@ function _toy_energy_bid!(
 end
 
 # Sets `band_prices` of each energy bid of `device` from its `energy_offer` series over every stamp, as the
-# replay input stage does for a built system.
+# NEMDE input stage does for a built system.
 function _toy_set_band_prices!(device)
     AEM = AustralianElectricityMarkets
     cost = AEM._nem_offer_cost(device)

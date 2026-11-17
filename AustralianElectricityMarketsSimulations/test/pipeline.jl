@@ -1,17 +1,17 @@
 @testset "simulation consumes an existing system without a database" begin
     t = DateTime(2025, 1, 1, 0, 5)
     steps = t:Minute(5):(t + Minute(5))
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR))
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_NEMDE_HIVE_DIR))
     sys = nem_system(
         db, NEMDEConfiguration(); date_range = t:Minute(5):(t + Minute(15)),
         time_series_in_memory = false, time_series_directory = mktempdir()
     )
     DuckDB.close(db.db)
     @test PowerSystems.get_time_series_counts(sys).forecast_count > 0
-    @test replay_intervals(sys) == collect(t:Minute(5):(t + Minute(5)))
+    @test dispatch_intervals(sys) == collect(t:Minute(5):(t + Minute(5)))
     folder = mktempdir()
-    replay = replay_simulation(sys, steps; name = "custom_dispatch", simulation_name = "custom_run", folder)
-    simulation = replay.simulation
+    problem = problem_simulation(sys, steps; name = "custom_dispatch", simulation_name = "custom_run", folder)
+    simulation = problem.simulation
     @test isnothing(simulation.internal)
     @test PSI.get_steps(simulation) == 2
     @test PSI.build!(simulation; store_systems_in_results = false) == PSI.SimulationBuildStatus.BUILT

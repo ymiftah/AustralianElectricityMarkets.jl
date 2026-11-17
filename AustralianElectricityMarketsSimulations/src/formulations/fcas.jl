@@ -738,7 +738,7 @@ function _add_fcas_band_costs!(container::PSI.OptimizationContainer, group, svc:
         bid = AustralianElectricityMarkets._fcas_side_bid(device, get_bid_type(svc), offer_side(decremental))
         prices = isnothing(bid) ? nothing : bid.band_prices
         isnothing(prices) && throw(
-            ArgumentError("$dname has no $(get_bid_type(svc)) band prices; run the replay input stage."),
+            ArgumentError("$dname has no $(get_bid_type(svc)) band prices; run the NEMDE input stage."),
         )
         for t in PSI.get_time_steps(container), (b, label) in enumerate(labels)
             JuMP.add_to_expression!(invariant, scale * prices[b], bands[dname, label, t])

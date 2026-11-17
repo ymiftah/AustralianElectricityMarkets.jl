@@ -7,7 +7,7 @@ function _guard_template(sys)
 end
 
 @testset "per-step update methods only for the closed-loop model and the fast-start runs" begin
-    # An open-loop replay keeps PowerSimulations' own per-step updates; only a closed-loop model recomputes state inputs,
+    # An open-loop run keeps PowerSimulations' own per-step updates; only a closed-loop model recomputes state inputs,
     # and only the fast-start parameters reset the fast-start rows.
     # The shared generic constraint parameter containers have their own container update.
     for f in (PSI.update_container_parameter_values!, PSI._update_parameter_values!)

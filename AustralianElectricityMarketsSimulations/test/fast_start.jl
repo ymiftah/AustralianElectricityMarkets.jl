@@ -45,9 +45,9 @@ function fs_price(results)
     return only(frame[frame.DateTime .== TOY_START, :value]) / (100.0 * interval_hours(DISPATCH_INTERVAL))
 end
 
-# Runs `steps` of the replay sequence of `sys`; returns the sequence and the results of both runs.
-function fs_replay(sys; steps = 1, problem = NEMDispatchProblem, fast_start = true)
-    built = nem_dispatch_sequence(problem, replay_template(sys), sys; optimizer = FS_OPTIMIZER, initial_time = TOY_START, fast_start)
+# Runs `steps` of the run sequence of `sys`; returns the sequence and the results of both runs.
+function fs_problem(sys; steps = 1, problem = NEMDispatchProblem, fast_start = true)
+    built = nem_dispatch_sequence(problem, problem_template(sys), sys; optimizer = FS_OPTIMIZER, initial_time = TOY_START, fast_start)
     simulation = PSI.Simulation(;
         name = "fast_start", steps, models = built.models, sequence = built.sequence,
         simulation_folder = mktempdir(), initial_time = TOY_START,
@@ -64,7 +64,7 @@ const FS_POWER = "ActivePowerVariable__ThermalStandard"
 
 @testset "a mode-0 unit dispatched in the commitment run is held at 0 MW in the dispatch run" begin
     # The commitment run dispatches Alta at $10 without ramp rows; it enters mode 1 with T1 = 7 > 5 minutes left.
-    out = fs_replay(fast_start_system())
+    out = fs_problem(fast_start_system())
     @test PSI.get_name(out.commitment) == Symbol(FAST_START_COMMITMENT_NAME)
     @test PSI.get_name(out.dispatch) == :dispatch
     run1 = fs_values(out.commitment_results, FS_POWER)
@@ -82,8 +82,8 @@ const FS_POWER = "ActivePowerVariable__ThermalStandard"
     @test isempty(subset(read_constraint_violations(out.dispatch_results, PSI.get_system(out.dispatch)), :family => ByRow(==("fast_start_profile"))))
 end
 
-@testset "fast_start = false replays one model without inflexibility profiles" begin
-    out = fs_replay(fast_start_system(); fast_start = false)
+@testset "fast_start = false runs one model without inflexibility profiles" begin
+    out = fs_problem(fast_start_system(); fast_start = false)
     @test isnothing(out.commitment)
     @test length(PSI.get_decision_models(out.models)) == 1
     @test fs_values(out.dispatch_results, FS_POWER)[TOY_CHEAP] ≈ 250.0 atol = TOY_TOLERANCE
@@ -92,7 +92,7 @@ end
 
 @testset "a unit ending in mode 2 is fixed at M t / T2" begin
     # From mode 1 with 4 of 7 minutes: 3 minutes to mode 2, then 2 of its 3 minutes, so 230 x 2 / 3 MW.
-    out = fs_replay(fast_start_system(; alta_price = 100.0, mode = 1, mode_time = 4.0))
+    out = fs_problem(fast_start_system(; alta_price = 100.0, mode = 1, mode_time = 4.0))
     @test fs_values(out.commitment_results, FS_POWER)[TOY_CHEAP] ≈ 0.0 atol = TOY_TOLERANCE
     run2 = fs_values(out.dispatch_results, FS_POWER)
     @test run2[TOY_CHEAP] ≈ FS_MINIMUM_LOAD * 2 / 3 atol = 1.0e-6
@@ -102,7 +102,7 @@ end
 
 @testset "a unit ending in mode 3 holds at least its minimum loading" begin
     # From mode 2 with 1 of 3 minutes: 2 minutes to mode 3, where it spends the other 3.
-    out = fs_replay(fast_start_system(; alta_price = 100.0, alta_initial = FS_MINIMUM_LOAD / 3, mode = 2, mode_time = 1.0))
+    out = fs_problem(fast_start_system(; alta_price = 100.0, alta_initial = FS_MINIMUM_LOAD / 3, mode = 2, mode_time = 1.0))
     run2 = fs_values(out.dispatch_results, FS_POWER)
     @test run2[TOY_CHEAP] ≈ FS_MINIMUM_LOAD atol = 1.0e-6
     @test fs_price(out.dispatch_results) ≈ 50.0 atol = TOY_TOLERANCE
@@ -110,7 +110,7 @@ end
 
 @testset "a unit leaving mode 2 ramps up from its minimum loading" begin
     # The standard row would hold Alta to 76.7 + 5 x 10 MW; the profile row ramps it from 230 MW for 3 minutes.
-    out = fs_replay(fast_start_system(; alta_initial = FS_MINIMUM_LOAD / 3, mode = 2, mode_time = 1.0, ramp_up = 10.0, load_mw = 400.0))
+    out = fs_problem(fast_start_system(; alta_initial = FS_MINIMUM_LOAD / 3, mode = 2, mode_time = 1.0, ramp_up = 10.0, load_mw = 400.0))
     run2 = fs_values(out.dispatch_results, FS_POWER)
     @test run2[TOY_CHEAP] ≈ FS_MINIMUM_LOAD + 10.0 * 3 atol = 1.0e-6
     @test run2[TOY_EXPENSIVE] ≈ 400.0 - FS_MINIMUM_LOAD - 30.0 atol = 1.0e-6
@@ -121,10 +121,10 @@ end
 
 @testset "a unit ending in mode 4 has a lower bound on its declining profile" begin
     # From mode 4 with 2 of 10 minutes: 7 minutes at the end, so at least 230 x (1 - 7 / 10) = 69 MW.
-    out = fs_replay(fast_start_system(; alta_price = 100.0, alta_initial = 120.0, mode = 4, mode_time = 2.0))
+    out = fs_problem(fast_start_system(; alta_price = 100.0, alta_initial = 120.0, mode = 4, mode_time = 2.0))
     @test fs_values(out.dispatch_results, FS_POWER)[TOY_CHEAP] ≈ 69.0 atol = 1.0e-6
     # The bound is a floor only: a cheap unit ramps above it, from its initial output.
-    cheap = fs_replay(fast_start_system(; alta_initial = 120.0, mode = 4, mode_time = 2.0, ramp_up = 10.0))
+    cheap = fs_problem(fast_start_system(; alta_initial = 120.0, mode = 4, mode_time = 2.0, ramp_up = 10.0))
     @test fs_values(cheap.dispatch_results, FS_POWER)[TOY_CHEAP] ≈ 170.0 atol = 1.0e-6
 end
 
@@ -132,7 +132,7 @@ end
     # Without the feedforward Alta's commitment target is 0 MW, so it stays in mode 0 and is held at 0 MW.
     sys = fast_start_system()
     model = PSI.DecisionModel(
-        NEMDispatchProblem, replay_template(sys), sys; optimizer = FS_OPTIMIZER, initial_time = TOY_START,
+        NEMDispatchProblem, problem_template(sys), sys; optimizer = FS_OPTIMIZER, initial_time = TOY_START,
         fast_start_run = :dispatch,
     )
     @test PSI.get_ext(PSI.get_settings(model))["fast_start_run"] == "dispatch"
@@ -142,14 +142,14 @@ end
     @test only(power[power.name .== TOY_CHEAP, :value]) ≈ 0.0 atol = TOY_TOLERANCE
 end
 
-@testset "a system without fast-start units replays one model, as a single DecisionModel does" begin
+@testset "a system without fast-start units runs one model, as a single DecisionModel does" begin
     sys = fast_start_system(; profile = nothing)
-    @test isempty(AEMS._fast_start_device_types(replay_template(sys), sys))
-    out = fs_replay(sys)
+    @test isempty(AEMS._fast_start_device_types(problem_template(sys), sys))
+    out = fs_problem(sys)
     @test isnothing(out.commitment) && isnothing(out.commitment_results)
     @test length(PSI.get_decision_models(out.models)) == 1
     @test !haskey(PSI.get_ext(PSI.get_settings(out.dispatch)), "fast_start_run")
-    single = PSI.DecisionModel(NEMDispatchProblem, replay_template(sys), sys; optimizer = FS_OPTIMIZER, initial_time = TOY_START, name = "single")
+    single = PSI.DecisionModel(NEMDispatchProblem, problem_template(sys), sys; optimizer = FS_OPTIMIZER, initial_time = TOY_START, name = "single")
     @test PSI.build!(single; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     @test PSI.solve!(single) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     reference = PSI.OptimizationProblemResults(single)
@@ -161,18 +161,18 @@ end
     end
 end
 
-@testset "both runs build and replay closed loop over two steps" begin
-    out = fs_replay(fast_start_system(); steps = 2, problem = NEMClosedLoopDispatchProblem)
+@testset "both runs build and run closed loop over two steps" begin
+    out = fs_problem(fast_start_system(); steps = 2, problem = NEMClosedLoopDispatchProblem)
     @test fs_values(out.dispatch_results, FS_POWER)[TOY_CHEAP] ≈ 0.0 atol = TOY_TOLERANCE
 end
 
 @testset "the sequence rejects a fast_start_run and a shared name" begin
     sys = fast_start_system()
-    err = _caught(() -> nem_dispatch_sequence(NEMDispatchProblem, replay_template(sys), sys; fast_start_run = :dispatch))
+    err = _caught(() -> nem_dispatch_sequence(NEMDispatchProblem, problem_template(sys), sys; fast_start_run = :dispatch))
     @test err isa ArgumentError
-    err = _caught(() -> nem_dispatch_sequence(NEMDispatchProblem, replay_template(sys), sys; name = "x", commitment_name = "x"))
+    err = _caught(() -> nem_dispatch_sequence(NEMDispatchProblem, problem_template(sys), sys; name = "x", commitment_name = "x"))
     @test err isa ArgumentError
-    err = _caught(() -> PSI.DecisionModel(NEMDispatchProblem, replay_template(sys), sys; fast_start_run = :other))
+    err = _caught(() -> PSI.DecisionModel(NEMDispatchProblem, problem_template(sys), sys; fast_start_run = :other))
     @test err isa ArgumentError
 end
 
@@ -188,19 +188,19 @@ end
 @testset "closed-loop fast-start dispatch: the first interval's FCAS offers are the observed ones" begin
     # Alta is in fast-start mode 0 with 15 MW of raise regulation observed at the start of the interval.
     sys = fcas_toy_system(; alta_fast_start = FS_PROFILE, alta_mode = 0)
-    observed = fs_fcas_limits(fs_replay(sys), TOY_CHEAP)
-    closed = fs_fcas_limits(fs_replay(sys; problem = NEMClosedLoopDispatchProblem), TOY_CHEAP)
+    observed = fs_fcas_limits(fs_problem(sys), TOY_CHEAP)
+    closed = fs_fcas_limits(fs_problem(sys; problem = NEMClosedLoopDispatchProblem), TOY_CHEAP)
     @test closed ≈ observed atol = 1.0e-9
     @test closed[1] ≈ 0.15 atol = 1.0e-9
 end
 
 @testset "a sequence's dispatch run without the commitment-target feedforward does not build" begin
     sys = fast_start_system()
-    built = nem_dispatch_sequence(NEMDispatchProblem, replay_template(sys), sys; optimizer = FS_OPTIMIZER, initial_time = TOY_START)
+    built = nem_dispatch_sequence(NEMDispatchProblem, problem_template(sys), sys; optimizer = FS_OPTIMIZER, initial_time = TOY_START)
     @test PSI.get_ext(PSI.get_settings(built.dispatch))["fast_start_feedforward"] === true
     # The sequence's dispatch run without the feedforward the sequence adds: it has no commitment target for Alta.
     bare = PSI.DecisionModel(
-        NEMDispatchProblem, replay_template(sys), sys; optimizer = FS_OPTIMIZER, initial_time = TOY_START, fast_start_run = :dispatch,
+        NEMDispatchProblem, problem_template(sys), sys; optimizer = FS_OPTIMIZER, initial_time = TOY_START, fast_start_run = :dispatch,
     )
     PSI.get_ext(PSI.get_settings(bare))["fast_start_feedforward"] = true
     PSI.set_output_dir!(bare, mktempdir())

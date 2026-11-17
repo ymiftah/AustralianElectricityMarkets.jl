@@ -8,22 +8,22 @@ decremental offer and withdrawn from the area balance.
 
 Methods are defined over `PowerSystems.StaticInjection`; a `PowerSimulations.ProblemTemplate`
 selects the component types they apply to. Subtypes differ only in what the ramp constraint
-measures against; [`NEMReplayDispatch`](@ref) is the one subtype. Ramp,
+measures against; [`NEMDispatch`](@ref) is the one subtype. Ramp,
 availability, offer-total and fixed-loading rows always carry priced slacks; the device model's
 `use_slacks` does not apply to them. The energy offer cost and the slack penalties are objective terms
 only; no `PowerSimulations` cost expression is built, and slack penalties are reported as violation
-rows of a replay's results rather than as device cost.
+rows of a run's results rather than as device cost.
 """
 abstract type AbstractNEMDispatch <: PSI.AbstractDeviceFormulation end
 
 
 """
-    NEMReplayDispatch
+    NEMDispatch
 
 [`AbstractNEMDispatch`](@ref) whose ramp constraint measures against the device's initial MW at every
 interval, read from the observed state series `NEM_STATE_INPUT_SERIES`. Intervals are decoupled.
 """
-struct NEMReplayDispatch <: AbstractNEMDispatch end
+struct NEMDispatch <: AbstractNEMDispatch end
 
 
 """

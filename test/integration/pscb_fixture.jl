@@ -145,7 +145,7 @@ end
 """
     nem_pscb_system()
 
-[`augmented_pscb_system`](@ref) with its thermal, hydro and renewable units rebuilt as replay units, each
+[`augmented_pscb_system`](@ref) with its thermal, hydro and renewable units rebuilt as NEMDE units, each
 carrying a `NEMUnitData` with an empty `NEMOfferCost` and a [`NEMRegistration`](@ref), so [`set_market_bids!`](@ref) can record their bids. The base
 case's reserve service and hydro reservoirs, which reference the stock units, are removed.
 
@@ -180,8 +180,8 @@ function nem_pscb_system()
             device, NEMObservedState(; initial_mw = Float64(get_active_power(device)), dispatch_mode = 0),
         )
     end
-    # The stock case's hourly series are not replay inputs, and the replay stage transforms every series to five-minute windows.
+    # The stock case's hourly series are not NEMDE inputs, and the NEMDE stage transforms every series to five-minute windows.
     PowerSystems.clear_time_series!(sys)
-    AustralianElectricityMarkets._set_replay_inputs!(sys)
+    AustralianElectricityMarkets._set_nemde_inputs!(sys)
     return sys
 end

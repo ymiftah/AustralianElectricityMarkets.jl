@@ -807,24 +807,24 @@ end
 
 
 """
-    _add_scheduled_loads!(sys, scheduled_loads_df; replay = false)
+    _add_scheduled_loads!(sys, scheduled_loads_df; nemde = false)
 
 Adds each load as an `InterruptiblePowerLoad` with a zero `LoadCost`; [`set_market_bids!`](@ref) gives
 a scheduled load its decremental offer, or marks it unavailable when it has no bid. A non-scheduled load
 (`scheduled = false`) starts unavailable; it keeps the zero cost, and the dispatch limits
 ([`nem_system`](@ref)) fix its energy at zero. A regional build records `non_scheduled` and
-`commissioned` on the load's `ext`; a replay build records them on its [`NEMRegistration`](@ref).
+`commissioned` on the load's `ext`; a NEMDE build records them on its [`NEMRegistration`](@ref).
 Despite the name, this builds every `DISPATCHTYPE = LOAD` unit of the data frame.
 
 # Arguments
 - `sys`: The `PowerSystems.System` object.
 - `scheduled_loads_df`: A `DataFrame` as returned by `get_scheduled_loads_dataframe`.
-- `replay`: Record the non-scheduled flags on the registration instead of `ext`.
+- `nemde`: Record the non-scheduled flags on the registration instead of `ext`.
 
 # Returns
 The result of `add_components!`.
 """
-function _add_scheduled_loads!(sys, scheduled_loads_df; replay::Bool = false)
+function _add_scheduled_loads!(sys, scheduled_loads_df; nemde::Bool = false)
     loads = (
         InterruptiblePowerLoad(;
             name = row[:name],
@@ -836,8 +836,8 @@ function _add_scheduled_loads!(sys, scheduled_loads_df; replay::Bool = false)
             max_reactive_power = 0.0,
             base_power = row[:base_power],
             operation_cost = LoadCost(; variable = CostCurve(LinearCurve(0.0)), fixed = 0.0),
-            # A replay build records both flags on the load's registration instead.
-            ext = (!replay && !row[:scheduled]) ?
+            # A run build records both flags on the load's registration instead.
+            ext = (!nemde && !row[:scheduled]) ?
                 Dict{String, Any}("non_scheduled" => true, "commissioned" => row[:commissioned]) :
                 Dict{String, Any}(),
         ) for row in eachrow(scheduled_loads_df)

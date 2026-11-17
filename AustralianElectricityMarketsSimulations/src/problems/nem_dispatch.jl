@@ -1,8 +1,8 @@
 """
     AbstractNEMDispatchProblem <: PSI.DefaultDecisionProblem
 
-The PSI decision problems of a NEM dispatch replay interval. The concrete problem type selects the replay
-mode: [`NEMDispatchProblem`](@ref) replays each interval from AEMO's observed state, and
+The PSI decision problems of a NEM dispatch dispatch interval. The concrete problem type selects the run
+mode: [`NEMDispatchProblem`](@ref) runs each interval from AEMO's observed state, and
 [`NEMClosedLoopDispatchProblem`](@ref) from the previous solved interval.
 """
 abstract type AbstractNEMDispatchProblem <: PSI.DefaultDecisionProblem end
@@ -10,7 +10,7 @@ abstract type AbstractNEMDispatchProblem <: PSI.DefaultDecisionProblem end
 """
     NEMDispatchProblem <: AbstractNEMDispatchProblem
 
-The open-loop NEM dispatch replay problem: every interval starts from AEMO's observed initial MW and MNSP
+The open-loop NEM dispatch problem: every interval starts from AEMO's observed initial MW and MNSP
 flows. Building it checks the template against the system and prices the area-balance slacks and every
 penalty at the Market Price Cap, resolved from the model's initial time unless the model sets one.
 """
@@ -19,7 +19,7 @@ struct NEMDispatchProblem <: AbstractNEMDispatchProblem end
 """
     NEMClosedLoopDispatchProblem <: AbstractNEMDispatchProblem
 
-The closed-loop NEM dispatch replay problem: the first interval starts from AEMO's observed state, and each later
+The closed-loop NEM dispatch problem: the first interval starts from AEMO's observed state, and each later
 interval of a `Simulation` from the previous interval's solved output. The starting output of each unit and the
 starting flow of each MNSP are [`NEMInitialPower`](@ref) and [`NEMInitialFlow`](@ref) initial conditions, and the
 inputs derived from that state (battery ramp rates, fixed loadings, effective FCAS offers and regulation ramping
@@ -80,12 +80,12 @@ end
     PSI.validate_template(model::PSI.DecisionModel{<:AbstractNEMDispatchProblem})
 
 Checks that the system carries forecasts and that the availability of its devices and services is the one its
-replay inputs were derived for, sets the Market Price Cap and the network model's balance-slack
+NEMDE inputs were derived for, sets the Market Price Cap and the network model's balance-slack
 cost of `model`, then checks that the constraints the template excludes are constraints of the system, and runs
 [`check_template_against_sys`](@ref) and [`check_fcas_services`](@ref). It throws when the template cannot model an
 available `GenericConstraint` it does not tolerate, deletes the per-name `GenericConstraint` models of the constraints
-the template leaves out (see [`replay_skipped_constraints`](@ref)), runs [`check_dispatch_envelope`](@ref) over the
-replay intervals of the system, then the default template validation, which prunes device models with no
+the template leaves out (see [`template_skipped_constraints`](@ref)), runs [`check_dispatch_envelope`](@ref) over the
+dispatch intervals of the system, then the default template validation, which prunes device models with no
 available devices.
 The cap is the `"market_price_cap_override"` setting when set, else the one dated by the initial time, or by the
 system's forecast initial timestamp when the initial time is unset. The resolved cap is written to the
@@ -107,7 +107,7 @@ function PSI.validate_template(model::PSI.DecisionModel{<:AbstractNEMDispatchPro
             "validate_template: the system has no forecasts; build sys with nem_system(db, NEMDEConfiguration(); date_range)",
         ),
     )
-    AustralianElectricityMarkets._check_replay_availability(sys)
+    AustralianElectricityMarkets._check_nemde_availability(sys)
     template = PSI.get_template(model)
     ext = PSI.get_ext(PSI.get_settings(model))
     t = PSI.get_initial_time(model)

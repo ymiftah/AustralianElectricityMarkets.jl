@@ -4,7 +4,7 @@
 
 Living reference (not an ADR), reviewed 2026-11-16 against the code and ADRs of this branch.
 
-This is a living register of where the NEM dispatch replay follows or departs from AEMO's published NEMDE rules. It replaces the October 2026 documentation-gap audit, whose findings are resolved in the formulation chapters under `docs/literate/formulation/`. Each row cites the ADR that holds the detail. Constants were checked against `src/system/penalties.jl`; AEMO text is as cited by the ADRs and was not re-read, so rows marked `unverified` rest on an ADR alone. Any new departure goes in an ADR and here.
+This is a living register of where the NEM dispatch run follows or departs from AEMO's published NEMDE rules. It replaces the October 2026 documentation-gap audit, whose findings are resolved in the formulation chapters under `docs/literate/formulation/`. Each row cites the ADR that holds the detail. Constants were checked against `src/system/penalties.jl`; AEMO text is as cited by the ADRs and was not re-read, so rows marked `unverified` rest on an ADR alone. Any new departure goes in an ADR and here.
 
 ## Objective and penalties
 
@@ -34,7 +34,7 @@ Sources for CVP factors: AEMO *Schedule of Constraint Violation Penalty Factors*
 | Split-battery generator and load halves dispatched as separate units | [0105](0105-split-battery-units-and-unregistered-terms.md) | Follows |
 | Scheduled and ancillary loads, WDR | [0032](0032-scheduled-loads-and-unresolved-constraint-terms.md), [0038](0038-load-fcas-offers.md) | WDR dispatch not modelled |
 | Energy tie-break among price-tied bands, in proportion to band MW | [0036](0036-energy-tie-break.md) | Follows; pairs fixed at build |
-| Generic-constraint RHS as NEMDE enforced it | [0003](0003-no-dynamic-rhs.md) | Replays `DISPATCHCONSTRAINT.RHS`; the RHS engine is not re-implemented |
+| Generic-constraint RHS as NEMDE enforced it | [0003](0003-no-dynamic-rhs.md) | Runs `DISPATCHCONSTRAINT.RHS`; the RHS engine is not re-implemented |
 | Constraint terms on units absent from the System | [0032](0032-scheduled-loads-and-unresolved-constraint-terms.md), [0104](0104-vacuous-constraints-on-retired-units.md), [0105](0105-split-battery-units-and-unregistered-terms.md) | Dropped terms of registered units fail; unregistered or vacuous ones are allowed |
 
 ## FCAS
@@ -64,4 +64,4 @@ Sources for CVP factors: AEMO *Schedule of Constraint Violation Penalty Factors*
 | Topic | Implemented in | Status |
 | --- | --- | --- |
 | Tied optima resolved by AEMO's solver path | [0094](0094-highs-root-heuristics-and-tied-vertices.md), [0101](0101-aem-writes-aemsim-reads.md) | Not reproducible; prices at degenerate vertices can differ, so comparison gates use invariants |
-| Administered price adjustments (`RRP` against `ROP`) | none | Not modelled (`unverified`); replay compares unadjusted prices |
+| Administered price adjustments (`RRP` against `ROP`) | none | Not modelled (`unverified`); run compares unadjusted prices |

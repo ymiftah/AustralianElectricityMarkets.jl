@@ -18,5 +18,5 @@ Accepted. Refined by [0105](0105-split-battery-units-and-unregistered-terms.md).
 
 ## Why
 
-- Batteries re-registered as bidirectional units (IESS, 2024 to 2025) leave former generator and load DUIDs absent from the `System`, while some GENCONDATA versions still invoked in late 2024 name only them; such replays otherwise could not be built.
+- Batteries re-registered as bidirectional units (IESS, 2024 to 2025) leave former generator and load DUIDs absent from the `System`, while some GENCONDATA versions still invoked in late 2024 name only them; such runs otherwise could not be built.
 - A satisfiable row `0 <= RHS` has zero violation at the optimum, no dual and no objective contribution, so omitting it changes nothing. A violated row would be priced by NEMDE at CVP factor x Market Price Cap x constraint weight (AEMO *Schedule of Constraint Violation Penalty Factors* v8.0), shifting the objective by a constant and altering the reported violation. Omitting it silently would hide that, so it stays an error. There is no departure from AEMO for the omitted case.

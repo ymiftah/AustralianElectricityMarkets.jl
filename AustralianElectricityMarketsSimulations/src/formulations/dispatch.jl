@@ -1,5 +1,5 @@
 #! format: off
-PSI.requires_initialization(::NEMReplayDispatch) = false
+PSI.requires_initialization(::NEMDispatch) = false
 
 
 PSI.get_variable_binary(::PSI.ActivePowerVariable, ::Type{<:PSY.StaticInjection}, ::AbstractNEMDispatch) = false
@@ -70,7 +70,7 @@ end
 """
     _has_nem_dispatch_limits(device)
 
-Whether `device` carries every series [`NEMReplayDispatch`](@ref) reads as a parameter, under the
+Whether `device` carries every series [`NEMDispatch`](@ref) reads as a parameter, under the
 series names the parameters register, and the observed state and telemetry series it reads through.
 The observed state's keyed series and the UIGF series must exist.
 
@@ -93,7 +93,7 @@ function _has_nem_dispatch_limits(device)
         PSY.SingleTimeSeries,
         PSY.get_name(observed.initial_mw),
     ) || return false
-    names = PSI.get_default_time_series_names(typeof(device), NEMReplayDispatch)
+    names = PSI.get_default_time_series_names(typeof(device), NEMDispatch)
     for (param, direction) in _DERIVED_SERIES_PARAMETERS
         haskey(names, param) || continue
         expected = _expected_series_name(device, names, param, direction)
@@ -176,16 +176,16 @@ end
     PSI.get_initial_conditions_device_model(::PSI.OperationModel, ::PSI.DeviceModel{T, <:AbstractNEMDispatch})
 
 Device model PowerSimulations requires of every formulation for an initial-conditions sub-model;
-[`NEMReplayDispatch`](@ref) builds none.
+[`NEMDispatch`](@ref) builds none.
 
 # Returns
-A `PowerSimulations.DeviceModel` over the same component type with [`NEMReplayDispatch`](@ref).
+A `PowerSimulations.DeviceModel` over the same component type with [`NEMDispatch`](@ref).
 """
 function PSI.get_initial_conditions_device_model(
         ::PSI.OperationModel,
         ::PSI.DeviceModel{T, <:AbstractNEMDispatch},
     ) where {T <: PSY.StaticInjection}
-    return PSI.DeviceModel(T, NEMReplayDispatch)
+    return PSI.DeviceModel(T, NEMDispatch)
 end
 
 
@@ -390,7 +390,7 @@ function _ts_parameter_accessor(container, ::Type{P}, ::Type{T}, meta::String = 
 end
 
 
-# Whether the model replays closed loop, from its `"closed_loop"` setting; `false` for a model without one.
+# Whether the model runs closed loop, from its `"closed_loop"` setting; `false` for a model without one.
 function _closed_loop(container::PSI.OptimizationContainer)
     return get(PSI.get_ext(PSI.get_settings(container)), "closed_loop", false)::Bool
 end
@@ -399,14 +399,14 @@ end
 """
     _initial_mw_accessor(container, T, closed_loop) -> (accessor, covered)
 
-The unit initial MW of a replay interval, as `accessor(name, t) -> JuMP.AffExpr` in system-base per-unit:
-the observed initial MW parameter in an open-loop replay, the [`NEMInitialPower`](@ref) initial condition in a
-closed-loop replay.
+The unit initial MW of a dispatch interval, as `accessor(name, t) -> JuMP.AffExpr` in system-base per-unit:
+the observed initial MW parameter in an open-loop run, the [`NEMInitialPower`](@ref) initial condition in a
+closed-loop run.
 
 # Arguments
 - `container`: the `PSI.OptimizationContainer` being built.
 - `T`: the component type whose `InitialPowerTimeSeriesParameter` is read.
-- `closed_loop`: whether the model replays closed loop.
+- `closed_loop`: whether the model runs closed loop.
 
 # Returns
 The accessor and the `Set` of device names it covers.
@@ -419,10 +419,10 @@ function _initial_mw_accessor(container::PSI.OptimizationContainer, ::Type{T}, c
 end
 
 
-function _ramp_base_accessor(container, ::Type{NEMReplayDispatch}, ::Type{T}, names, _) where {T}
+function _ramp_base_accessor(container, ::Type{NEMDispatch}, ::Type{T}, names, _) where {T}
     _closed_loop(container) || PSI.has_container_key(container, InitialPowerTimeSeriesParameter, T) || throw(
         ArgumentError(
-            "NEMReplayDispatch: the device model registers no initial-power parameter, so the " *
+            "NEMDispatch: the device model registers no initial-power parameter, so the " *
                 "ramp has no base to measure against",
         ),
     )
@@ -476,7 +476,7 @@ end
 
 The component types in `sys` that participate in a NEM dispatch: any
 `PowerSystems.StaticInjection` with at least one component satisfying
-[`_has_nem_dispatch_limits`](@ref) for [`NEMReplayDispatch`](@ref).
+[`_has_nem_dispatch_limits`](@ref) for [`NEMDispatch`](@ref).
 
 # Arguments
 - `sys`: the `PowerSystems.System` to inspect.
@@ -498,7 +498,7 @@ end
 """
     set_nem_dispatch_models!(template, sys; tie_breaks = true)
 
-Sets [`NEMReplayDispatch`](@ref) as the device model for every dispatch participant in `sys`, and, when
+Sets [`NEMDispatch`](@ref) as the device model for every dispatch participant in `sys`, and, when
 `sys` carries the [`EnergyTieBreak`](@ref) of [`nem_system`](@ref AustralianElectricityMarkets.nem_system), its
 [`TieBreakMarket`](@ref) service model, which dispatches price-tied energy bands pro rata. Without it
 ties resolve to an arbitrary solver vertex.
@@ -520,7 +520,7 @@ function set_nem_dispatch_models!(template, sys; tie_breaks::Bool = true)
                 "model's date range first",
         ),
     )
-    foreach(T -> PSI.set_device_model!(template, T, NEMReplayDispatch), types)
+    foreach(T -> PSI.set_device_model!(template, T, NEMDispatch), types)
     if tie_breaks && !isnothing(PSY.get_component(EnergyTieBreak, sys, TIE_BREAK_SERVICE_NAME))
         PSI.set_service_model!(
             template, TIE_BREAK_SERVICE_NAME, PSI.ServiceModel(EnergyTieBreak, TieBreakMarket, TIE_BREAK_SERVICE_NAME),

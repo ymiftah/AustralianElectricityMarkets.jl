@@ -22,4 +22,4 @@ Accepted. Fast-start state derivation is extended by [0106](0106-fast-start-two-
 - MNSP participants auto-resubmit a full-day offer every five minutes (about 5 million `MNSP_BIDOFFERPERIOD` rows a month), so latest-version-before-interval is wrong and slow; the tracking table is exact.
 - No MMS table carries `CurrentMode` for a run's first interval, so it comes from the previous interval's `DISPATCHLOAD` row.
 - `MNSP_OFFERTRK`, `MNSP_FILETRK` and `MNSP_PARTICIPANT` are not cached: the tracking table already names participant and version.
-- Pre-5MS MNSP tables (`MNSP_PEROFFER`) are not read, as dispatch replay starts at 1 October 2021 ([0073](0073-replay-from-five-minute-settlement.md)).
+- Pre-5MS MNSP tables (`MNSP_PEROFFER`) are not read, as dispatch run starts at 1 October 2021 ([0073](0073-five-minute-settlement-scope.md)).

@@ -38,7 +38,7 @@ include(joinpath(@__DIR__, "..", "..", "literate", "shared", "toy_jump.jl")); #h
 
 sys = toy_system(market; nem = true)
 
-# A replay `System` holds its inputs as raw five-minute series with one point beyond the last
+# A run `System` holds its inputs as raw five-minute series with one point beyond the last
 # dispatch interval, as `nem_system` reads them from NEMWEB. The toy clears the one interval `T0`,
 # so its series cover two stamps.
 
@@ -191,16 +191,16 @@ function attach_generic_constraints!(sys, market) #hide
 end #hide
 attach_generic_constraints!(sys, market);
 
-# ### The derived replay inputs
+# ### The derived NEMDE inputs
 #
-# `nem_system` ends by deriving the inputs the replay reads from the raw ones: the offers referred to
+# `nem_system` ends by deriving the inputs the run reads from the raw ones: the offers referred to
 # the regional reference node, the effective FCAS trapeziums, the loss demand coefficients, the
 # tie-break scales, the starting output of each unit, and the five-minute forecast windows. That
 # stage has no public entry point, because `nem_system` always runs it; the toy calls the internal
-# function directly on its hand-built `System`, which then replays the one interval `T0`.
+# function directly on its hand-built `System`, which then runs the one interval `T0`.
 
-AEM._set_replay_inputs!(sys)
-replay_intervals(sys)
+AEM._set_nemde_inputs!(sys)
+dispatch_intervals(sys)
 
 # The `System` now holds the whole market:
 
@@ -221,14 +221,14 @@ DataFrame(
 
 # ## Step 2: the template
 #
-# `template_nemde` builds the data-free replay template: `NEMReplayDispatch` for each dispatch
+# `template_nemde` builds the data-free problem template: `NEMDispatch` for each dispatch
 # device type, the regional balance with slacks, the interconnector losses, and one service model per
-# FCAS service and per generic constraint. `replay_skipped_constraints` reports, without changing `sys`,
-# the constraints the replay leaves out, and `PSI.validate_template` verifies the inputs and that the
+# FCAS service and per generic constraint. `template_skipped_constraints` reports, without changing `sys`,
+# the constraints the run leaves out, and `PSI.validate_template` verifies the inputs and that the
 # template models every participant when the model is built.
 
 template = template_nemde()
-skipped = replay_skipped_constraints(sys, template)
+skipped = template_skipped_constraints(sys, template)
 isempty(skipped)
 
 # ## Step 3: build and solve
@@ -331,23 +331,23 @@ slack_total
 # 1. `db = aem_connect()` and `populate(db, table, start, stop)` cache the NEMWEB tables.
 # 2. `nem_system(db, NEMDEConfiguration(); date_range)` builds the populated `System`,
 #    including energy and FCAS offers, dispatch and energy limits, generic constraints and losses.
-#    It ends with the replay input stage the toy called above, so the derived inputs and the
-#    five-minute forecast windows are already in place, and `replay_intervals(sys)` lists the
-#    intervals it can replay.
-# 3. The replay pre-flight checks run when the model is built, and
-#    `replay_skipped_constraints(sys, template)` reports the constraints left out.
-# 4. Construct, build and run a PSI simulation of the replay intervals. `nem_dispatch_sequence`
+#    It ends with the NEMDE input stage the toy called above, so the derived inputs and the
+#    five-minute forecast windows are already in place, and `dispatch_intervals(sys)` lists the
+#    intervals it can run.
+# 3. The run pre-flight checks run when the model is built, and
+#    `template_skipped_constraints(sys, template)` reports the constraints left out.
+# 4. Construct, build and run a PSI simulation of the dispatch intervals. `nem_dispatch_sequence`
 #    adds NEMDE's second, fast-start run to each interval when the `System` has a fast-start unit:
 #
 #    ```julia
-#    steps = replay_intervals(sys)
+#    steps = dispatch_intervals(sys)
 #    template = template_nemde()
 #    (; models, sequence) = nem_dispatch_sequence(
 #        AEMSim.NEMDispatchProblem, template, sys;
 #        optimizer = AEMSim.nemde_optimizer(), initial_time = first(steps),
 #    )
 #    simulation = PSI.Simulation(;
-#        name = "replication", steps = length(steps), models, sequence,
+#        name = "NEMDE", steps = length(steps), models, sequence,
 #        simulation_folder = mktempdir(), initial_time = first(steps),
 #    )
 #    PSI.build!(simulation; store_systems_in_results = false)
@@ -356,7 +356,7 @@ slack_total
 #    ```
 # 5. `read_solved_interval(results, sys)` and `read_constraint_violations(results, sys)` extract the
 #    solved quantities and constraint violations, and `compare_intervals` joins them with
-#    `read_published_interval` from the cache. [Replaying NEMDE dispatch](@ref replay-nemde) runs
+#    `read_published_interval` from the cache. [Running NEMDE dispatch](@ref run-nemde) runs
 #    these steps on real intervals.
 #
 # Validate the study inputs before solving. `check_fcas_services(template, sys)`

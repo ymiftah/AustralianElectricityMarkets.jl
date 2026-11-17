@@ -24,18 +24,18 @@ function _precompile_simulation(problem, template, sys, steps)
     models = PSI.SimulationModels(; decision_models = [model])
     sequence = PSI.SimulationSequence(; models = models, ini_cond_chronology = PSI.InterProblemChronology())
     simulation = PSI.Simulation(;
-        name = "replication", steps = length(steps), models = models,
+        name = "NEMDE", steps = length(steps), models = models,
         sequence = sequence, simulation_folder = mktempdir(), initial_time = first(steps),
     )
     PSI.build!(simulation; store_systems_in_results = false) == PSI.SimulationBuildStatus.BUILT ||
-        error("precompile replication failed to build")
+        error("precompile NEMDE failed to build")
     PSI.execute!(simulation) == PSI.RunStatus.SUCCESSFULLY_FINALIZED ||
-        error("precompile replication failed to execute")
+        error("precompile NEMDE failed to execute")
     return simulation
 end
 
-# Builds, executes and reads back a two-interval replay through the public API, with the inputs and
-# steps of the replay workflow (`nem_system` followed by a PSI simulation).
+# Builds, executes and reads back a two-interval run through the public API, with the inputs and
+# steps of the run workflow (`nem_system` followed by a PSI simulation).
 function _precompile_workload()
     _PrecompileMockData.AVAILABLE || return
     hive = mktempdir()
@@ -55,7 +55,7 @@ function _precompile_workload()
     template = template_nemde()
     simulation = _precompile_simulation(NEMDispatchProblem, template, sys, steps)
     results = PSI.get_decision_problem_results(PSI.SimulationResults(simulation), "dispatch")
-    # Realized reads of the dispatch variable and the area balance dual, as the replay results do.
+    # Realized reads of the dispatch variable and the area balance dual, as the run results do.
     variable_names = [
         PSI.IS.Optimization.encode_key_as_string(k) for k in PSI.list_variable_keys(results)
             if PSI.IS.Optimization.get_entry_type(k) === PSI.ActivePowerVariable
@@ -67,7 +67,7 @@ function _precompile_workload()
     return
 end
 
-# Build, step and read back a two-interval replay while creating the package cache.
+# Build, step and read back a two-interval run while creating the package cache.
 @compile_workload begin
     Base.CoreLogging.with_logger(_precompile_workload, Base.CoreLogging.NullLogger())
 end

@@ -17,7 +17,7 @@ _fixed_load_devices(devices) = [d for d in devices if _has_fixed_load_bid(d)]
 Adds the fixed-loading parameters ([`FixedLoadTimeSeriesParameter`](@ref),
 [`FixedLoadInvokedTimeSeriesParameter`](@ref)) and the surplus and deficit slacks for the
 `devices` whose energy bid carries a fixed loading. The parameters read the observed-state series
-`NEM_STATE_INPUT_SERIES`, which the replay input stage writes from the bids and the observed state.
+`NEM_STATE_INPUT_SERIES`, which the NEMDE input stage writes from the bids and the observed state.
 
 # Returns
 `nothing`.

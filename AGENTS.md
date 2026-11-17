@@ -9,7 +9,7 @@ four packages sharing the root `Manifest.toml`:
 | `AustralianElectricityMarketsCache` | `AustralianElectricityMarketsCache/` | Shared configuration, DuckDB connections, cache metadata and partition inspection. No market readers or population pipeline. |
 | `AustralianElectricityMarketsData` | `AustralianElectricityMarketsData/` | NEMWEB download and Hive-partitioned parquet population. Depends on Cache, with no AEM, AEMSim or PowerSystems dependency. |
 | `AustralianElectricityMarkets` | repo root (`src/`) | Domain types, Readers submodule, PSY system construction and modification, attached-data accessors, per-interval NEM inputs and market-rule tables (CVP factors, MPC). Depends on Cache, with no Data or Simulations dependency. |
-| `AustralianElectricityMarketsSimulations` | `AustralianElectricityMarketsSimulations/` | NEMDE replication in PSI: `AbstractNEMDispatch` device formulations (batteries included), FCAS market and trapezium formulations, NEM constraint formulations, replication template, decision-model constructor and pre-flight checks. The overnight batch runner is in `scripts/replay_batch.jl`. |
+| `AustralianElectricityMarketsSimulations` | `AustralianElectricityMarketsSimulations/` | NEMDE problems in PSI: `AbstractNEMDispatch` device formulations (batteries included), FCAS market and trapezium formulations, NEM constraint formulations, NEMDE template, decision-model constructor and pre-flight checks. The overnight batch runner is in `scripts/batch_run.jl`. |
 
 ## Quick start
 
@@ -22,7 +22,7 @@ db = aem_connect()                                    # AEMDB wrapper over DuckD
 populate(db, :DISPATCHPRICE, Date(2025, 1, 1), Date(2025, 1, 3))
 sys = nem_system(db, RegionalNetworkConfiguration())  # energy-only regional system
 sys = nem_system(db, NEMDEConfiguration(); date_range = start:Minute(5):stop)
-                                                      # replay system: bids, FCAS, constraints, losses
+                                                      # NEMDE system: bids, FCAS, constraints, losses
 ```
 
 Cache layout: `~/.nemdb_cache/<TABLE>/archive_month=YYYY-MM-01/*.parquet`. Configuration is entirely
@@ -75,19 +75,19 @@ front, so every group runs on its own.
 | `src/types/` | Domain types, constructors, field accessors and type-specific calculations (`NEMUnitData`, `NEMUnitState`, bids, FCAS, generic constraints, losses, tie-break) |
 | `src/readers/` | Readers submodule; one file per external-data category |
 | `src/system/` | System construction and modification; RegionModel submodule |
-| `src/system/replay_inputs.jl`, `src/system/replay_inputs/` | `_set_replay_inputs!`, the last stage of `nem_system(db, NEMDEConfiguration(); date_range)`: one writer per input family, the forecast transform and the availability record |
-| `src/derivations/` | Scalar replay-input kernels (state, energy, ramps, FCAS, fast-start, tie-break, loss demand): `Float64` inputs and an `NEMUnitState`, no System access |
+| `src/system/nemde_inputs.jl`, `src/system/nemde_inputs/` | `_set_nemde_inputs!`, the last stage of `nem_system(db, NEMDEConfiguration(); date_range)`: one writer per input family, the forecast transform and the availability record |
+| `src/derivations/` | Scalar run-input kernels (state, energy, ramps, FCAS, fast-start, tie-break, loss demand): `Float64` inputs and an `NEMUnitState`, no System access |
 | `src/network_configurations/` | `NetworkConfiguration` and its `RegionalNetworkConfiguration` and `NEMDEConfiguration` variants |
 | `src/accessors/` | Attached component data and time-series lookup |
-| `…Simulations/src/types/` | PSI parameter, variable, constraint and slack types and formulation structs; `state.jl` holds the initial-condition types and the telemetry and observed-state accessors of a replay unit |
+| `…Simulations/src/types/` | PSI parameter, variable, constraint and slack types and formulation structs; `state.jl` holds the initial-condition types and the telemetry and observed-state accessors of a NEMDE unit |
 | `…Simulations/src/formulations/` | `AbstractNEMDispatch` device formulations, FCAS, generic-constraint, loss, MNSP, slack and tie-break formulations |
 | `…Simulations/src/offers/derivation.jl` | The energy `MAXAVAIL` series name the dispatch parameters register |
-| `…Simulations/src/templates/` | `template_nemde`, the replication template |
+| `…Simulations/src/templates/` | `template_nemde`, the NEMDE template |
 | `…Simulations/src/problems/` | `NEMDispatchProblem`, the closed-loop sequence and the HiGHS optimizer settings |
 | `…Simulations/src/results/` | Solved and violation readers of PSI results: `read_solved_interval`, `read_constraint_violations`, the `read_prices` / `read_fcas_prices` methods, and the comparison against published outcomes |
 | `…Simulations/src/checks/` | Pre-flight checks run before a build, one file per thing checked |
 | `…Simulations/src/psi_compat.jl` | shims over the pinned PowerSimulations fork |
-| `scripts/replay_batch.jl` | overnight batch replay of random trading days or sampled intervals on the AEMSim replay API |
+| `scripts/batch_run.jl` | overnight batch run of random trading days or sampled intervals on the AEMSim run API |
 | `docs/adr/` | architecture decisions; design rationale goes here |
 | `docs/superpowers/plans/` | implementation plans; follow-up work is recorded here or in an ADR |
 
@@ -142,14 +142,14 @@ bound, constraint and cost term. Record any departure from AEMO in an ADR.
 - Simulations depends on a **pinned PowerSimulations fork** (`[sources]` in its `Project.toml`);
   check PSI behaviour against that revision, not upstream. The root `Project.toml` also pins forks of
   InfrastructureSystems and HDF5. PowerSystems is the registered release.
-- Replay systems use stock PowerSystems devices (`NEM_DISPATCH_DEVICE_TYPES`) each carrying a
+- NEMDE systems use stock PowerSystems devices (`NEM_DISPATCH_DEVICE_TYPES`) each carrying a
   `NEMUnitData` supplemental attribute (offer, registration, telemetry, observed state); a device is a
-  replay unit when `has_nem_unit_data` holds, never by its type. Regional systems carry none.
+  NEMDE unit when `has_nem_unit_data` holds, never by its type. Regional systems carry none.
 - Series-key fields of the typed structs are `IS.StaticTimeSeriesKey`; store the static key, never a
   forecast key.
-- AEM writes every replay input once, in `nem_system`; AEMSim never writes to the System (no PSY/IS
+- AEM writes every NEMDE input once, in `nem_system`; AEMSim never writes to the System (no PSY/IS
   mutator, `add_time_series!`, `set_available!` or `ext` write under `…Simulations/src/`). Set device
-  availability before `nem_system` builds the replay inputs: `validate_template` refuses a System whose
-  availability changed afterwards. The replay interface is `nem_system -> DecisionModel(NEMDispatchProblem,
+  availability before `nem_system` builds the NEMDE inputs: `validate_template` refuses a System whose
+  availability changed afterwards. The run interface is `nem_system -> DecisionModel(NEMDispatchProblem,
   template, sys) -> Simulation -> build! -> execute!`; `DecisionModel` takes no `horizon`, `interval` or
   `resolution`.

@@ -14,7 +14,7 @@ Accepted. Amends the ramp input of [0017](0017-fcas-market-formulation.md) and [
 ## Departure from AEMO and nempy
 
 - The derived rate is a lower bound on the telemetered rate, so joint ramping can be tighter than NEMDE's. It is never below `RAMPUPRATE`; where `RAMPUPRATE` is 0 (for example STAN units bidding `ROCDOWN = 0`) the derived rate now applies scaling and a joint row where the old rate applied neither.
-- nempy takes the rate from the XML `SCADARampUpRate`/`SCADARampDnRate`; this replay reads XML for validation only.
+- nempy takes the rate from the XML `SCADARampUpRate`/`SCADARampDnRate`; this run reads XML for validation only.
 - Known gap: availability 0 with a bid and a positive ramp keeps the ramp as the rate; the cause is unknown.
 
 ## Why

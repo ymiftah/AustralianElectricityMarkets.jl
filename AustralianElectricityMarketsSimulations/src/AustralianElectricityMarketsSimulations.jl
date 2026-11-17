@@ -14,7 +14,7 @@ using AustralianElectricityMarkets: _mnsp_bid, _MNSP_DIRECTIONS, BidType, Constr
     is_semi_scheduled, FCASBidDirection, fcas_bid_direction, fcas_series_name, fcas_service_name, get_bid_type,
     get_defaulted_constraint_weights, get_devices, get_dropped_terms, get_duid, get_factor, get_interconnector,
     get_missing_constraint_intervals, get_region, get_sense, get_skipped_constraints, get_terms,
-    get_unavailable_constraints, replay_intervals, loss_curve_vertex_values, is_non_scheduled_load, loss_segments,
+    get_unavailable_constraints, dispatch_intervals, loss_curve_vertex_values, is_non_scheduled_load, loss_segments,
     nem_dispatch_devices, NEM_DISPATCH_DEVICE_TYPES, _nem_offer_cost, _energy_bid, _has_fixed_load_bid,
     energy_offer_sides, FCAS_CAPACITY_CVP_FACTOR, FCAS_RAMPING_CVP_FACTOR, FCAS_MAXAVAIL_CVP_FACTOR,
     FCAS_BDU_RAMPING_CVP_FACTOR, _financial_year_mpc, get_fcas_requirements, get_service, fixed_load_invoked,
@@ -73,7 +73,7 @@ include("formulations/mnsp_limits.jl")
 include("psi_compat.jl")
 include("formulations/fcas.jl")
 include("checks/fcas.jl")
-include("checks/replay_inputs.jl")
+include("checks/nemde_inputs.jl")
 include("checks/template.jl")
 include("templates/template_nemde.jl")
 include("problems/optimizer.jl")
@@ -90,8 +90,8 @@ include("results/interconnector_losses.jl")
 
 export FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, fcas_effective_series_name, fcas_ramping_series_name,
     fcas_upper_regulation_service, fcas_offer_sides
-export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient, trading_day_steps, replay_chunks
-export NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys, replay_skipped_constraints
+export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient, trading_day_steps, dispatch_chunks
+export NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys, template_skipped_constraints
 export AbstractNEMDispatchProblem, NEMDispatchProblem, NEMClosedLoopDispatchProblem, nemde_optimizer, NEMDE_HIGHS_OPTIONS
 export nem_dispatch_sequence, FAST_START_COMMITMENT_NAME, FastStartModeTimeSeriesParameter,
     FastStartCommitmentTargetParameter
@@ -111,7 +111,7 @@ export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,
 export check_fcas_services, check_dispatch_envelope
 export read_solved_interval, read_constraint_violations
 export compare_intervals, comparison_summary, read_interconnector_loss_gaps
-export AbstractNEMDispatch, NEMReplayDispatch,
+export AbstractNEMDispatch, NEMDispatch,
     RampRateTimeSeriesParameter,
     InitialPowerTimeSeriesParameter, NEMInitialPower, NEMInitialFlow
 export nem_dispatch_participants, set_nem_dispatch_models!

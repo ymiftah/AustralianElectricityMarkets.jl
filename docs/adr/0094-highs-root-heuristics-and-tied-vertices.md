@@ -7,7 +7,7 @@ Accepted
 ## What
 
 - `NEMDE_HIGHS_OPTIONS` (`AustralianElectricityMarketsSimulations/src/problems/optimizer.jl`) sets the MIP gaps to `1e-8` relative and `1e-10` absolute and turns off four HiGHS root sub-MIP heuristics: `mip_heuristic_run_rins`, `mip_heuristic_run_rens`, `mip_heuristic_run_root_reduced_cost` and `mip_heuristic_run_feasibility_jump`. `nemde_optimizer(; attributes...)` applies them, and keyword attributes override.
-- The replay MILP has many tied optima: different primal solutions at the same objective. Solver options change which one HiGHS returns, so prices (duals of the fixed LP), flows and FCAS prices can differ at equal objectives, and so can their match to AEMO's published outcome. NEMDE resolves ties by its own rules, which the replay does not model.
+- The run MILP has many tied optima: different primal solutions at the same objective. Solver options change which one HiGHS returns, so prices (duals of the fixed LP), flows and FCAS prices can differ at equal objectives, and so can their match to AEMO's published outcome. NEMDE resolves ties by its own rules, which the run does not model.
 
 ## Why
 

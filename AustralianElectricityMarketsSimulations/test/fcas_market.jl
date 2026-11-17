@@ -71,13 +71,13 @@ function add_toy_storage_initial_mw!(sys, device, initial_timestamp, n::Integer,
 end
 
 """
-    _write_toy_battery_replay_inputs!(sys, bat, stamps)
+    _write_toy_battery_nemde_inputs!(sys, bat, stamps)
 
-Attaches `bat`'s `NEMReplayDispatch` requirements over `stamps`: cheap generation and worthless load
+Attaches `bat`'s `NEMDispatch` requirements over `stamps`: cheap generation and worthless load
 energy offers, generous ramp rates and a zero net `initial_mw`. None of them bind in these tests,
 which fix the energy variables directly.
 """
-function _write_toy_battery_replay_inputs!(sys, bat, stamps)
+function _write_toy_battery_nemde_inputs!(sys, bat, stamps)
     base_power = PSY.get_base_power(sys)
     rating = PSY.get_output_active_power_limits(bat).max
     for (direction, price, mw) in (
@@ -104,7 +104,7 @@ function _write_toy_battery_replay_inputs!(sys, bat, stamps)
     return
 end
 
-"`NEMReplayDispatch`/`StaticPowerLoad` for the toy's devices, plus [`FCASMarket`](@ref) for each named [`FCASService`](@ref)."
+"`NEMDispatch`/`StaticPowerLoad` for the toy's devices, plus [`FCASMarket`](@ref) for each named [`FCASService`](@ref)."
 function fcas_toy_template(sys, service_names; use_slacks = false, duals = [FCASJointCapacityConstraint])
     template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
     set_nem_dispatch_models!(template, sys)
@@ -401,7 +401,7 @@ end
     battery_fcas_model(service_name, bids; initial_mw = nothing, energy_max_avail_mw = nothing,
         scaling = nothing, agc_status = nothing, use_slacks = false, requirement_mw = nothing)
 
-Builds the toy PSCB `DecisionModel` with BAT1, under `NEMReplayDispatch`, as the only contributor to
+Builds the toy PSCB `DecisionModel` with BAT1, under `NEMDispatch`, as the only contributor to
 one `service_name` [`FCASService`](@ref). Each `(bid_type, trapezium_mw, bands, decremental)` of
 `bids` is one side's offer. `energy_max_avail_mw = (gen, load)` is BAT1's energy `MAXAVAIL`,
 `initial_mw` its net `INITIALMW`, `scaling` keywords for [`add_toy_fcas_scaling!`](@ref).
@@ -428,7 +428,7 @@ function battery_fcas_model(
         add_toy_fcas!(sys, bat, stamps[1], n, bt, trapezium_mw, bands; decremental)
     end
     isnothing(agc_status) || add_toy_fcas_agc_status!(sys, bat, stamps[1], n, agc_status)
-    _write_toy_battery_replay_inputs!(sys, bat, stamps)
+    _write_toy_battery_nemde_inputs!(sys, bat, stamps)
     isnothing(initial_mw) || add_toy_storage_initial_mw!(sys, bat, stamps[1], n, initial_mw)
     isnothing(scaling) || add_toy_fcas_scaling!(sys, bat, stamps[1], n, bid_type; scaling...)
     if !isnothing(energy_max_avail_mw)
@@ -438,7 +438,7 @@ function battery_fcas_model(
             )
         end
     end
-    # The clear above drops the observed-state series the replay stage wrote, which the model reads.
+    # The clear above drops the observed-state series the NEMDE stage wrote, which the model reads.
     AustralianElectricityMarkets._set_observed_state_inputs!(sys)
     add_service!(sys, FCASService(; name = service_name, region = "TAS1", bid_type = bid_type), [bat])
     if !isnothing(requirement_mw)
@@ -454,7 +454,7 @@ function battery_fcas_model(
     PSY.transform_single_time_series!(sys, 2 * TOY_RESOLUTION, TOY_RESOLUTION)
 
     template = _area_balance_template(sys; mpc = FCAS_TOY_MPC)
-    PSI.set_device_model!(template, EnergyReservoirStorage, NEMReplayDispatch)
+    PSI.set_device_model!(template, EnergyReservoirStorage, NEMDispatch)
     PSI.set_service_model!(
         template, service_name,
         PSI.ServiceModel(FCASService, FCASMarket, service_name; duals = [FCASJointCapacityConstraint], use_slacks),
@@ -680,7 +680,7 @@ end
             PSY.get_component(ThermalStandard, reg_sys, TOY_CHEAP),
             AustralianElectricityMarkets.NEMObservedState(; initial_mw = 0.0, dispatch_mode = 0),
         )
-        err = _caught(() -> check_fcas_services(partial_template(NEMReplayDispatch, "TAS1_RAISEREG"), reg_sys))
+        err = _caught(() -> check_fcas_services(partial_template(NEMDispatch, "TAS1_RAISEREG"), reg_sys))
         @test err isa ArgumentError
         @test occursin("observed initial MW", sprint(showerror, err))
     end
@@ -1217,7 +1217,7 @@ function non_scheduled_fcas_sys(; extra! = nothing)
             PSY.get_ext(load)["non_scheduled"] = true
             set_registration!(load, _toy_registration())
             zero_availability = AustralianElectricityMarkets.bid_series_name(BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.LOAD)
-            # The ramp rates are written by the replay input stage from the zero ramp limits set below.
+            # The ramp rates are written by the NEMDE input stage from the zero ramp limits set below.
             for name in ("max_active_power", zero_availability)
                 PSY.add_time_series!(
                     sys, load, PSY.SingleTimeSeries(; name = name, data = PSY.TimeSeries.TimeArray(stamps, zeros(length(stamps)))),

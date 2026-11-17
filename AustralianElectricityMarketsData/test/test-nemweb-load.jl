@@ -306,7 +306,7 @@ end
     end
 end
 
-# A stand-in for HTTP.get that replays scripted (status, body) answers, writing each body to the response stream.
+# A stand-in for HTTP.get that runs scripted (status, body) answers, writing each body to the response stream.
 function scripted_http_get(script)
     calls = Ref(0)
     function http_get(url; response_stream = nothing, kwargs...)

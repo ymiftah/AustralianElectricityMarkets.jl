@@ -1,4 +1,4 @@
-# Summarises saved NEM replay batch runs: NEMDE errors, error distributions by category, timings and
+# Summarises saved NEM run batch runs: NEMDE errors, error distributions by category, timings and
 # provenance. From the repository root:
 #
 #     julia --project=AustralianElectricityMarketsSimulations/test scripts/simulation_statistics.jl \
@@ -585,13 +585,13 @@ module SimulationStatistics
     """
         analyze(runs; cache_windows = 24, hive = nothing) -> Dict{String, Any}
 
-    Summarises the replay batch runs in `runs`, in pooling priority order: per-day comparisons and timings,
+    Summarises the run batch runs in `runs`, in pooling priority order: per-day comparisons and timings,
     pooled NEMDE errors over the first compatible completed attempt per day (with and without over-constrained
     intervals), error distributions by category, and warnings. With `hive`, dispatch errors are also grouped by
     the units' region, dispatch type and schedule type from the cache's `DUDETAILSUMMARY`.
 
     # Arguments
-    - `runs`: the replay output folders.
+    - `runs`: the run output folders.
     - `cache_windows`: the window count used only to infer parameter-update cohorts.
     - `hive`: the NEMWEB cache folder, or `nothing`.
 
@@ -961,7 +961,7 @@ module SimulationStatistics
     const USAGE = """
     usage: simulation_statistics.jl RUN [RUN...] [--output FOLDER] [--cache-windows N] [--hive FOLDER]
 
-      RUN                Replay batch output folders, in pooling priority order
+      RUN                Run batch output folders, in pooling priority order
       --output FOLDER    Report folder (default: FIRST_RUN/simulation_statistics)
       --cache-windows N  Window count used only to infer update cohorts (default: 24)
       --hive FOLDER      NEMWEB cache; groups dispatch errors by unit region, dispatch and schedule type

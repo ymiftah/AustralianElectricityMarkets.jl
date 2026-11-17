@@ -93,11 +93,11 @@ function energy_template()
     template = PSI.ProblemTemplate(
         PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true, duals = [PSI.CopperPlateBalanceConstraint]),
     )
-    PSI.set_device_model!(template, ThermalStandard, AEMS.NEMReplayDispatch)
-    PSI.set_device_model!(template, HydroDispatch, AEMS.NEMReplayDispatch)
-    PSI.set_device_model!(template, RenewableDispatch, AEMS.NEMReplayDispatch)
-    PSI.set_device_model!(template, InterruptiblePowerLoad, AEMS.NEMReplayDispatch)
-    PSI.set_device_model!(template, EnergyReservoirStorage, AEMS.NEMReplayDispatch)
+    PSI.set_device_model!(template, ThermalStandard, AEMS.NEMDispatch)
+    PSI.set_device_model!(template, HydroDispatch, AEMS.NEMDispatch)
+    PSI.set_device_model!(template, RenewableDispatch, AEMS.NEMDispatch)
+    PSI.set_device_model!(template, InterruptiblePowerLoad, AEMS.NEMDispatch)
+    PSI.set_device_model!(template, EnergyReservoirStorage, AEMS.NEMDispatch)
     PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
     return template
 end
@@ -126,10 +126,10 @@ end
 
 # Checks `template` against `sys` as `PSI.validate_template` does before a build, with the records of the
 # constraints it leaves out appended to `skipped`, and returns `template`.
-function replay_template(
+function problem_template(
         sys::PSY.System; template::PSI.ProblemTemplate = AEMS.template_nemde(), skipped = nothing,
     )
-    isnothing(skipped) || append!(skipped, NamedTuple.(eachrow(AEMS.replay_skipped_constraints(sys, template))))
+    isnothing(skipped) || append!(skipped, NamedTuple.(eachrow(AEMS.template_skipped_constraints(sys, template))))
     AEMS._check_excluded_constraints(sys, template)
     AEMS.check_template_against_sys(template, sys)
     AEMS._check_blocked_constraints(AEMS._blocked_constraints(sys, template))
@@ -137,18 +137,18 @@ function replay_template(
 end
 
 """
-    replay_simulation(sys, steps; optimizer, template, folder, name, simulation_name, problem) -> (; simulation, model, skipped_constraints)
+    problem_simulation(sys, steps; optimizer, template, folder, name, simulation_name, problem) -> (; simulation, model, skipped_constraints)
 
 Constructs, without building, the PSI simulation of `steps` on `sys`, with the skipped constraints of `template`.
 `problem` is the NEM dispatch problem type, `NEMDispatchProblem` by default.
 """
-function replay_simulation(
+function problem_simulation(
         sys::PSY.System, steps; optimizer = nemde_optimizer(), template::PSI.ProblemTemplate = template_nemde(),
-        folder::AbstractString = mktempdir(), name = "dispatch", simulation_name = "replication",
+        folder::AbstractString = mktempdir(), name = "dispatch", simulation_name = "NEMDE",
         problem::Type{<:AEMS.AbstractNEMDispatchProblem} = NEMDispatchProblem,
     )
     model = PSI.DecisionModel(problem, template, sys; optimizer, initial_time = first(steps), name)
-    skipped_constraints = replay_skipped_constraints(sys, template)
+    skipped_constraints = template_skipped_constraints(sys, template)
     models = PSI.SimulationModels(; decision_models = [model])
     sequence = PSI.SimulationSequence(; models, ini_cond_chronology = PSI.InterProblemChronology())
     simulation = PSI.Simulation(;
@@ -158,13 +158,13 @@ function replay_simulation(
 end
 
 """
-    run_replay(sys, steps; cache_size_mib = nothing, name = "dispatch", kwargs...) -> (; simulation, model, results, skipped_constraints)
+    run_problem(sys, steps; cache_size_mib = nothing, name = "dispatch", kwargs...) -> (; simulation, model, results, skipped_constraints)
 
-Builds and executes the [`replay_simulation`](@ref) of `sys` over `steps` and reads the results of the decision
-problem `name`. Throws when the build or the execution does not succeed. `kwargs` go to `replay_simulation`.
+Builds and executes the [`problem_simulation`](@ref) of `sys` over `steps` and reads the results of the decision
+problem `name`. Throws when the build or the execution does not succeed. `kwargs` go to `problem_simulation`.
 """
-function run_replay(sys, steps; cache_size_mib = nothing, name = "dispatch", kwargs...)
-    (; simulation, model, skipped_constraints) = replay_simulation(sys, steps; name, kwargs...)
+function run_problem(sys, steps; cache_size_mib = nothing, name = "dispatch", kwargs...)
+    (; simulation, model, skipped_constraints) = problem_simulation(sys, steps; name, kwargs...)
     status = PSI.build!(simulation; store_systems_in_results = false)
     status == PSI.SimulationBuildStatus.BUILT ||
         error("Range from $(first(steps)) failed to build ($status); see the simulation logs.")

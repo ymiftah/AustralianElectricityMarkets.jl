@@ -9,7 +9,7 @@
 # This package handles the download of data from the [NEMWEB Archive](https://www.aemo.com.au/energy-systems/electricity/national-electricity-market-nem/data-nem/market-data-nemweb)
 # and the parsing of the data into a System from `PowerSystems.jl`.
 # `RegionalNetworkConfiguration` builds a zonal model in which each region is a single node, for
-# economic dispatch studies. `NEMDEConfiguration` builds the full replay system, with bids, FCAS,
+# economic dispatch studies. `NEMDEConfiguration` builds the full NEMDE system, with bids, FCAS,
 # constraints and losses, used to replicate NEMDE dispatch.
 # By default, the package will create a hidden folder `.nemdb_cache` in the home directory, and save the data into
 # parquet files.

@@ -256,7 +256,7 @@ named `GENCONID@EFFECTIVEDATE#VERSIONNO` and attached via `add_service!` to its 
 # Arguments
 - `sys`: the `System` to add to.
 - `db`: an `AEMDB` connection.
-- `date_range`: the dispatch intervals to replay.
+- `date_range`: the dispatch intervals to run.
 - `invoked_all`: the invoked constraint rows over `date_range`, as `_read_constraint_inputs` returns them.
 - `fixed`: the fixed-loading rows over `date_range`, as `_read_constraint_inputs` returns them.
 - `intervention`: the `DISPATCHCONSTRAINT.INTERVENTION` the rows were read with (default `0`).
@@ -561,13 +561,13 @@ end
 Reads the invoked constraints and participant fixed loadings over `date_range` from `db` and attaches
 them to `sys`: one [`GenericConstraint`](@ref) per invoked version. A unit's participant fixed
 loading is unit offer data, excluded from the generic constraints but not attached as a series; the
-replay formulation derives it from the bid and the unit state. Constraints skipped or dropped are
+run formulation derives it from the bid and the unit state. Constraints skipped or dropped are
 recorded on `sys` (see [`get_skipped_constraints`](@ref)).
 
 # Arguments
 - `sys`: the `System` to add to.
 - `db`: an `AEMDB` connection.
-- `date_range`: the dispatch intervals to replay; its last timestamp ends the final interval.
+- `date_range`: the dispatch intervals to run; its last timestamp ends the final interval.
 - `intervention`: the `DISPATCHCONSTRAINT.INTERVENTION` run to read, 0 for pricing or 1 for physical.
 
 # Returns

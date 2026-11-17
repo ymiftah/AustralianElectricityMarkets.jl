@@ -133,9 +133,9 @@ end #hide
 # interval it produces 30 MW whatever the price turns out to be. The cost of those fixed MW
 # is the risk the two-solve scheme is designed to weigh.
 #
-# ## How the replay implements it
+# ## How the run implements it
 #
-# `nem_dispatch_sequence` builds the replay of each interval as two PowerSimulations decision
+# `nem_dispatch_sequence` builds the run of each interval as two PowerSimulations decision
 # models that run in order at the same timestamp, when the `System` has an available
 # fast-start unit (a unit whose energy offer has a positive ``T_1`` to ``T_4``):
 #
@@ -143,10 +143,10 @@ end #hide
 #    starts the interval in mode 0, 1 or 2 has no energy ramp rows and no joint ramping rows.
 # 2. **End state.** From the commitment run's target, `fast_start_end_state` commits a unit
 #    starting in mode 0 when that target is above 0 MW, then advances it through modes 1, 2
-#    and 3 by the five minutes of the interval. A unit never leaves mode 4 in the replay.
+#    and 3 by the five minutes of the interval. A unit never leaves mode 4 in the run.
 # 3. **Dispatch run.** The same dispatch with the profile rows of the end mode, elastic at the
 #    fast-start penalty factor of 1130 times the Market Price Cap (`FAST_START_CVP_FACTOR`).
-#    Its targets, prices and violations are the replay's results.
+#    Its targets, prices and violations are the run's results.
 #
 # | End mode | Row of the dispatch run |
 # | --- | --- |
@@ -176,7 +176,7 @@ end #hide
 #     unit. **AustralianElectricityMarketsSimulations:**
 #     - does not model the corrections of the starting mode above, so a unit that NEMDE returns
 #       to mode 0 starts from its published mode;
-#     - in a closed-loop replay, still starts each unit from AEMO's observed mode and minutes in
+#     - in a closed-loop run, still starts each unit from AEMO's observed mode and minutes in
 #       mode, not from the end state of the previous solve;
 #     - gives batteries no profile rows; a battery with a profile keeps its usual rows;
 #     - decides the regulation joint ramping exemption from the starting mode in both runs; see

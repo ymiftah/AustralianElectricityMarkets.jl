@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted; the composite ramp rate is now computed by AEM (see [0102](0102-closed-loop-replay.md)) and the lookahead part was removed by [0069](0069-remove-lookahead-dispatch.md).
+Accepted; the composite ramp rate is now computed by AEM (see [0102](0102-closed-loop-problem.md)) and the lookahead part was removed by [0069](0069-remove-lookahead-dispatch.md).
 
 ## What
 

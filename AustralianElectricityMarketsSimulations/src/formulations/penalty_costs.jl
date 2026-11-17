@@ -66,7 +66,7 @@ end
     _resolved_market_price_cap(t::DateTime, market_price_cap = nothing) -> Float64
 
 The Market Price Cap of a build whose first interval is `t`: `market_price_cap` when given, else
-[`_financial_year_mpc`](@ref)`(t)`. A replay resolves its cap once through this function and gives the
+[`_financial_year_mpc`](@ref)`(t)`. A run resolves its cap once through this function and gives the
 same value to its network model and to its model settings.
 
 # Returns
@@ -88,13 +88,13 @@ end
 """
     _area_balance_network_model(sys::PSY.System, initial_time::DateTime; market_price_cap = nothing, duals = Vector{DataType}()) -> PSI.NetworkModel{PSI.AreaBalancePowerModel}
 
-The `AreaBalancePowerModel` network model of a replay, with slacks priced at `slack_cost` per
+The `AreaBalancePowerModel` network model of a run, with slacks priced at `slack_cost` per
 per-unit slack variable: [`AREA_BALANCE_CVP_FACTOR`](@ref) times the Market Price Cap per MW of one
 dispatch interval, times the system base power. The cap is [`_resolved_market_price_cap`](@ref) of
 `initial_time` and `market_price_cap`.
 
 # Arguments
-- `sys`: the replay system, whose base power scales the slack cost.
+- `sys`: the NEMDE system, whose base power scales the slack cost.
 - `initial_time`: the first interval of the build.
 - `market_price_cap`: a Market Price Cap that replaces the dated one, or `nothing`.
 - `duals`: the dual constraints to record on the network model.

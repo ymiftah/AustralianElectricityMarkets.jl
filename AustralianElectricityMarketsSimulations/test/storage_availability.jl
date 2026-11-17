@@ -53,7 +53,7 @@ end
 
 @testset "storage availability parameters update step by step" begin
     sys = storage_availability_system(; target = [60.0, -50.0], gen = [40.0, 80.0], load = [70.0, 30.0])
-    out = run_replay(sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false))
+    out = run_problem(sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false))
     rows = filter(r -> r.family == "energy_max_avail" && r.name == TOY_BATTERY, read_constraint_violations(out.results, sys))
     sort!(rows, :DateTime)
     @test rows.MW ≈ [20.0, 20.0] atol = 1.0e-6
@@ -79,10 +79,10 @@ end
         battery = PSY.get_component(EnergyReservoirStorage, sys, TOY_BATTERY)
         PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, battery, key)
         PSY.remove_time_series!(sys, PSY.SingleTimeSeries, battery, key)
-        @test_throws ArgumentError check_dispatch_envelope(replay_template(sys), sys)
+        @test_throws ArgumentError check_dispatch_envelope(problem_template(sys), sys)
     end
     for bad in (NaN, Inf, -1.0)
         sys = storage_availability_system(; gen = bad)
-        @test_throws ArgumentError check_dispatch_envelope(replay_template(sys), sys)
+        @test_throws ArgumentError check_dispatch_envelope(problem_template(sys), sys)
     end
 end

@@ -122,7 +122,7 @@ value or a key of the time series that holds it on that interchange.
 - `fixed_load`: the link's `FIXEDLOAD`, MW, with NaN at the intervals where AEMO publishes NULL, or `nothing`
   when it is NULL over the whole range.
 - `band_prices`: the ten band prices of the trading day in \$/MWh, padded with `0.0`, or `nothing` until the
-  replay inputs are written.
+  NEMDE inputs are written.
 - `internal`: `InfrastructureSystems` bookkeeping.
 """
 struct NEMMNSPBid <: PSY.SupplementalAttribute

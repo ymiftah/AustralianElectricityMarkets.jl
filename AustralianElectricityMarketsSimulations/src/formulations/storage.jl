@@ -198,5 +198,5 @@ function PSI.add_constraints!(
 end
 
 
-_storage_ramp_base_accessor(container, ::Type{NEMReplayDispatch}, ::Type{T}, names, out, in_) where {T <: PSY.Storage} =
-    _ramp_base_accessor(container, NEMReplayDispatch, T, names, nothing)
+_storage_ramp_base_accessor(container, ::Type{NEMDispatch}, ::Type{T}, names, out, in_) where {T <: PSY.Storage} =
+    _ramp_base_accessor(container, NEMDispatch, T, names, nothing)

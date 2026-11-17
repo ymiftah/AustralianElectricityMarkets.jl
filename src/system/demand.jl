@@ -34,7 +34,7 @@ Adds load time series to the `PowerLoad` components of `sys` from `demand` rows 
 # Arguments
 - `sys`: The `PowerSystems.System` object.
 - `demand`: The demand rows over `date_range`, as [`read_demand`](@ref) returns them.
-- `date_range`: The dispatch intervals to replay; its last timestamp ends the final interval.
+- `date_range`: The dispatch intervals to run; its last timestamp ends the final interval.
 - `resolution`: The spacing of the intervals (default five minutes).
 
 # Returns
@@ -56,7 +56,7 @@ interval of `date_range`, or if a demand value is not finite.
 # Arguments
 - `sys`: the `PowerSystems.System` to add to.
 - `rows`: the demand rows over `date_range`, as [`read_demand`](@ref) returns them.
-- `date_range`: the dispatch intervals to replay; its last timestamp ends the final interval.
+- `date_range`: the dispatch intervals to run; its last timestamp ends the final interval.
 - `resolution`: the spacing of the intervals (default five minutes).
 
 # Returns

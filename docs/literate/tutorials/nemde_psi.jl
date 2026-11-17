@@ -209,7 +209,7 @@ template
 
 # A `DecisionModel` adds what the template leaves open: the data and solver, the first interval and the
 # horizon. The stock PSI problem used here takes `horizon`, `resolution` and `interval`; the NEM
-# replay problem `NEMDispatchProblem` of [the next page](@ref nemde-aem) takes none of them,
+# problem `NEMDispatchProblem` of [the next page](@ref nemde-aem) takes none of them,
 # because it always solves one five-minute dispatch interval at a time.
 
 model_psi = PSI.DecisionModel(

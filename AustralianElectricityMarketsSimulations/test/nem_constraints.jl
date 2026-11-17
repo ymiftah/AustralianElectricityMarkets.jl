@@ -611,7 +611,7 @@ end
     # A named exclusion is reported, gets no container, and leaves the constraint available.
     name = first(names_before)
     template = template_nemde(; exclude_constraints = Dict(name => :manual))
-    rows = replay_skipped_constraints(sys, template)
+    rows = template_skipped_constraints(sys, template)
     @test (name, :manual, 0) in [(r.constraint, r.reason, r.n_missing) for r in eachrow(rows)]
     model = PSI.DecisionModel(AEMS.NEMDispatchProblem, template, sys; optimizer, initial_time = TOY_START, name = "dispatch")
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
@@ -620,7 +620,7 @@ end
     @test !any(k -> k.meta == name, PSI.get_variable_keys(container))
     @test PSY.get_available(PSY.get_component(GenericConstraint, sys, name))
     # The report reads the same from the caller's template and from the model's expanded copy.
-    @test replay_skipped_constraints(sys, PSI.get_template(model)) == rows
+    @test template_skipped_constraints(sys, PSI.get_template(model)) == rows
 
     # An unknown excluded name fails the template validation.
     unknown = PSI.DecisionModel(
@@ -640,18 +640,18 @@ end
 @testset "a template without FCAS reports the FCAS constraints, and the simulation builds, executes and reads back" begin
     sys = fcas_toy_system()
     template = with_generic_constraints!(energy_template())
-    rows = replay_skipped_constraints(sys, template)
+    rows = template_skipped_constraints(sys, template)
     @test Set(rows.constraint) == Set(["F_REG", "F_R6", "F_L6"])
     @test all(==(:unmodeled_fcas_service), rows.reason)
     steps = TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION)
     optimizer = PSI.optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false)
     counts = PSY.get_time_series_counts(sys)
-    out = run_replay(sys, steps; template, optimizer)
+    out = run_problem(sys, steps; template, optimizer)
     @test out.skipped_constraints == rows
     @test nrow(read_solved_interval(out.results, sys).prices) > 0
     # A second model and simulation on the same System build, and leave its series as they were.
     @test PSY.get_time_series_counts(sys) == counts
-    again = run_replay(sys, steps; template, optimizer)
+    again = run_problem(sys, steps; template, optimizer)
     @test again.skipped_constraints == rows
     @test PSY.get_time_series_counts(sys) == counts
 end

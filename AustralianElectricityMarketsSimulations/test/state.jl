@@ -19,7 +19,7 @@ function _st_thermal(name, bus)
 end
 
 
-# Two 5-minute steps, the shortest range a replay can run one interval per step.
+# Two 5-minute steps, the shortest range a run can run one interval per step.
 const _ST_STEP_RANGE = TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION)
 const _ST_OPTIMIZER = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false)
 
@@ -41,7 +41,7 @@ end
         ],
         100.0; horizon = TOY_RESOLUTION,
     )
-    out = run_replay(sys, _ST_STEP_RANGE; optimizer = _ST_OPTIMIZER)
+    out = run_problem(sys, _ST_STEP_RANGE; optimizer = _ST_OPTIMIZER)
     dispatch = _st_dispatch_by_step(out)
     @test dispatch[TOY_CHEAP] ≈ [60.0, 15.0] atol = 1.0e-6
     @test dispatch[TOY_EXPENSIVE] ≈ [40.0, 85.0] atol = 1.0e-6
@@ -74,7 +74,7 @@ end
             return
         end,
     )
-    out = run_replay(sys, _ST_STEP_RANGE; optimizer = _ST_OPTIMIZER)
+    out = run_problem(sys, _ST_STEP_RANGE; optimizer = _ST_OPTIMIZER)
     dispatch = _st_dispatch_by_step(out)
     @test dispatch[TOY_EXPENSIVE] ≈ [40.0, 0.0] atol = 1.0e-6
     @test dispatch[TOY_CHEAP] ≈ [20.0, 60.0] atol = 1.0e-6
@@ -126,7 +126,7 @@ end
     # bound would disable the offer.
     sys = fcas_toy_system(park_initial = [95.0, 95.0], park_trap = (5.0, 10.0, 90.0, 95.0, 25.0))
     model = PSI.DecisionModel(
-        replay_template(sys), sys; optimizer = _ST_OPTIMIZER, horizon = TOY_RESOLUTION,
+        problem_template(sys), sys; optimizer = _ST_OPTIMIZER, horizon = TOY_RESOLUTION,
         resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
     )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT

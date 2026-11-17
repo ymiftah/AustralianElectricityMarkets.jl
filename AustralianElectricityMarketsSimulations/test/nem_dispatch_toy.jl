@@ -227,7 +227,7 @@ end
     end
 end
 
-@testset "a generic constraint binds against NEMReplayDispatch" begin
+@testset "a generic constraint binds against NEMDispatch" begin
     function constrained_toy(rhs_mw)
         return nem_toy_system(
             [
@@ -608,7 +608,7 @@ end
         batteries = [TOY_BATTERY => toy_battery(100.0, 10.0, 50.0, 1.0; initial = 0.0, ramp_up = 100.0)],
     )
     template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
-    PSI.set_device_model!(template, ThermalStandard, NEMReplayDispatch)
+    PSI.set_device_model!(template, ThermalStandard, NEMDispatch)
     PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
     PSI.set_service_model!(template, TIE_BREAK_SERVICE_NAME, tie_model())
     model = toy_model(mixed; template)
@@ -670,7 +670,7 @@ end
     PSI.set_device_model!(
         template,
         PSI.DeviceModel(
-            ThermalStandard, NEMReplayDispatch;
+            ThermalStandard, NEMDispatch;
             attributes = Dict{String, Any}("filter_function" => d -> PSY.get_name(d) != TOY_EXPENSIVE),
         ),
     )
