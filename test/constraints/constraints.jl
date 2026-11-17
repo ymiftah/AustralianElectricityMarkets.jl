@@ -347,7 +347,7 @@ end
         @test rhs_len == length(date_range) - 1
     end
 
-    @testset "grid misalignment between invoked SETTLEMENTDATE and date_range warns" begin
+    @testset "grid misalignment between invoked SETTLEMENTDATE and date_range throws" begin
         # Shift one row's SETTLEMENTDATE by 1 second so it can never match date_range's
         # 5-minute grid exactly - reproduces a caller passing a date_range whose step doesn't
         # match the cache's real dispatch cadence.
@@ -370,9 +370,7 @@ end
 
         misaligned_db = aem_connect(HiveConfiguration(hive_location = misaligned_hive, filesystem = "file"))
         misaligned_sys = nem_system(misaligned_db, RegionalNetworkConfiguration())
-        @test_logs (:warn, r"fall outside date_range's grid") match_mode = :any begin
-            build_constraints!(misaligned_sys, misaligned_db, date_range)
-        end
+        @test_throws r"fall outside date_range's grid" build_constraints!(misaligned_sys, misaligned_db, date_range)
     end
 
     @testset "resolution inference" begin
@@ -384,26 +382,16 @@ end
         rhs_ts_default = PowerSystems.IS.get_time_series(gc_default, gc_default.rhs)
         @test get_resolution(rhs_ts_default) == Minute(5)
 
-        # A single-interval grid can't be exercised end-to-end through _add_nem_constraints!:
-        # InfrastructureSystems rejects a one-point SingleTimeSeries ("data array length must be at
-        # least 2"), independent of resolution - so a 1-point full_grid always errors before
-        # resolution matters. _infer_resolution is unit-tested directly instead, contrasted
-        # with the genuine multi-interval inference above (which is not just matching the fallback
-        # by coincidence, since it uses a non-5-minute spacing).
-        @test AustralianElectricityMarkets._infer_resolution(DateTime[]) == Minute(5)
-        @test AustralianElectricityMarkets._infer_resolution([start_date]) == Minute(5)
+        # A single-point grid has no spacing: inference throws rather than guessing one.
+        @test_throws ArgumentError AustralianElectricityMarkets._infer_resolution(DateTime[])
+        @test_throws ArgumentError AustralianElectricityMarkets._infer_resolution([start_date])
 
         grid_30min = [start_date + Minute(30 * i) for i in 0:3]
         @test AustralianElectricityMarkets._infer_resolution(grid_30min) == Minute(30)
 
-        # Irregular spacing warns (naming the distinct spacings) and falls back to the smallest
-        # one rather than throwing - real, gappy caches still need a result.
+        # Irregular spacing throws, listing the distinct spacings found.
         gappy_grid = [start_date, start_date + Minute(5), start_date + Minute(15)]
-        inferred = nothing
-        @test_logs (:warn, r"not uniform") match_mode = :any begin
-            inferred = AustralianElectricityMarkets._infer_resolution(gappy_grid)
-        end
-        @test inferred == Minute(5)
+        @test_throws r"not uniform: found 5 minutes, 10 minutes" AustralianElectricityMarkets._infer_resolution(gappy_grid)
     end
 
     @testset "Interconnector Zero constraints have a built-in definition" begin

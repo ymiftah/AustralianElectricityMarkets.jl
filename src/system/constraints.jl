@@ -285,8 +285,8 @@ A constraint whose every term is a dropped unit term has a zero left-hand side; 
 at every invoked interval it cannot bind and is skipped as `:vacuous_unknown_duid` (its dropped terms are
 still recorded), otherwise it is skipped as `:unknown_duid`.
 
-Throws `ArgumentError` when a `RegionTerm` resolves to a region with no Generator/Storage in `sys`;
-the throw leaves `sys` unmodified.
+Throws `ArgumentError` when a `RegionTerm` resolves to a region with no Generator/Storage in `sys`, or
+when an invoked `SETTLEMENTDATE` falls outside `date_range`'s grid; the throw leaves `sys` unmodified.
 """
 function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; intervention = 0)
     start_date = first(date_range)
@@ -316,7 +316,13 @@ function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; interven
     grid_set = Set(full_grid)
     unaligned = setdiff(Set(invoked.SETTLEMENTDATE), grid_set)
     if !isempty(unaligned)
-        @warn "nem constraints: $(length(unaligned)) invoked SETTLEMENTDATE(s) fall outside date_range's grid and will be dropped from every constraint's rhs and invoked series - check that date_range's step matches the cache's real dispatch cadence: $(sort(collect(unaligned)))"
+        shown = sort(collect(unaligned))[1:min(3, length(unaligned))]
+        throw(
+            ArgumentError(
+                "nem constraints: $(length(unaligned)) invoked SETTLEMENTDATE(s) fall outside date_range's grid " *
+                    "(e.g. $(join(shown, ", "))); check that date_range's step matches the cache's real dispatch cadence",
+            ),
+        )
     end
 
     gencon_versions = unique(select(invoked, :GENCONID, :GENCONID_EFFECTIVEDATE, :GENCONID_VERSIONNO))

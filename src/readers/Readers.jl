@@ -11,7 +11,7 @@ using Chain
 using DataFrames
 using Dates
 using DuckDB
-using Statistics: median, mean
+using Statistics: mean
 using AustralianElectricityMarketsCache
 import AustralianElectricityMarketsCache: _parse_hive_root
 import ..AustralianElectricityMarkets: BidType, FCAS_BID_TYPES, NEM_MARKETS

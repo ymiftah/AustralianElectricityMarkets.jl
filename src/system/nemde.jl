@@ -170,7 +170,7 @@ the first unit and direction, or region, missing an input.
 function _nemde_energy_bids_with_coverage(sys, db, date_range, units, offers; intervention::Integer = 0, resolution = Minute(5))
     bids = offers[offers.BIDTYPE .== Ref(BidType.ENERGY), :]
     dispatch = read_dispatch_limits(db, date_range; intervention, resolution)
-    demand = read_demand(db, date_range; resolution)
+    demand = read_demand(db, date_range; resolution, intervention)
     _check_nemde_energy_bid_coverage(sys, bids, dispatch, units, demand, date_range)
     return (; dispatch, demand)
 end

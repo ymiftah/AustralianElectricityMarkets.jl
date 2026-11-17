@@ -91,6 +91,11 @@ end
         physical_db.config.hive_location, :DISPATCHCONSTRAINT,
         "INSERT INTO input SELECT * REPLACE (1 AS INTERVENTION) FROM input WHERE INTERVENTION = 0",
     )
+    # Regional demand is published for the physical run too.
+    physical_db = damaged_cache(
+        physical_db.config.hive_location, :DISPATCHREGIONSUM,
+        "INSERT INTO input SELECT * REPLACE (1 AS INTERVENTION) FROM input WHERE INTERVENTION = 0",
+    )
     physical = nem_system(physical_db, config; date_range = interval, intervention = 1)
     physical_gen = get_component(RenewableDispatch, physical, "BW03")
     @test get_time_series_values(SingleTimeSeries, physical_gen, "observed_initial_mw"; ignore_scaling_factors = true) .- get_time_series_values(SingleTimeSeries, gen, "observed_initial_mw"; ignore_scaling_factors = true) ≈ fill(10.0, 3)

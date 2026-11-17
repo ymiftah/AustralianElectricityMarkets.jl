@@ -1,16 +1,21 @@
 """
     _infer_resolution(grid) -> Dates.Period
 
-Spacing between consecutive points of a sorted `grid`. Falls back to `Minute(5)` for fewer
-than 2 points; warns and uses the smallest spacing if unequal.
+Spacing between consecutive points of a sorted `grid`. Throws `ArgumentError` for fewer than
+2 points or for unequal spacings, naming the distinct spacings found.
 """
 function _infer_resolution(grid::Vector{DateTime})
-    length(grid) < 2 && return Minute(5)
+    length(grid) < 2 && throw(
+        ArgumentError("cannot infer a resolution from $(length(grid)) point(s); at least 2 are needed"),
+    )
     distinct = sort(unique(diff(grid)))
-    if length(distinct) > 1
-        @warn "grid spacing is not uniform (found $(join(distinct, ", "))); the stored series' fixed resolution will not match every SETTLEMENTDATE. Proceeding with the smallest spacing, $(first(distinct))."
-    end
-    return _canonical_period(first(distinct))
+    length(distinct) > 1 && throw(
+        ArgumentError(
+            "grid spacing is not uniform: found $(join(_canonical_period.(distinct), ", ")); " *
+                "the resolution is ambiguous",
+        ),
+    )
+    return _canonical_period(only(distinct))
 end
 
 

@@ -130,6 +130,7 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
                 SS_WIND_AVAILABILITY = fill(200.0 - i, n),
                 SS_SOLAR_UIGF = fill(120.0 + i, n),
                 SS_WIND_UIGF = fill(220.0 - i, n),
+                INTERVENTION = fill(0, n),
                 archive_month = fill("2025-01", n)
             )
         )

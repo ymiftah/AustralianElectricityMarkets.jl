@@ -46,6 +46,23 @@ end
     end
 end
 
+@testset "Demand aggregation reads only the requested intervention run" begin
+    # A physical-run (INTERVENTION = 1) duplicate of NSW1's 00:05 row, with 500 MW more demand.
+    db = damaged_cache(
+        AEM_TEST_HIVE_DIR, :DISPATCHREGIONSUM,
+        "INSERT INTO input SELECT * REPLACE (1 AS INTERVENTION, TOTALDEMAND + 500.0 AS TOTALDEMAND) " *
+            "FROM input WHERE REGIONID = 'NSW1' AND SETTLEMENTDATE = TIMESTAMP '2025-01-01 00:05'",
+    )
+    stamp = DateTime(2025, 1, 1, 0, 5)
+    nsw(df) = df.TOTALDEMAND[(df.REGIONID .== "NSW1") .& (df.SETTLEMENTDATE .== stamp)]
+    @test nsw(read_demand(db)) == [1010.0]
+    @test nsw(read_demand(db; intervention = 0)) == [1010.0]
+    @test nsw(read_demand(db; intervention = 1)) == [1510.0]
+    window = (stamp, stamp + Minute(5))
+    @test nsw(read_demand(db, window)) == [1010.0]
+    @test nsw(read_demand(db, window; intervention = 1)) == [1510.0]
+end
+
 @testset "Demand aggregation keeps nulls, charging and range boundaries" begin
     db = damaged_cache(
         AEM_TEST_HIVE_DIR, :DISPATCHREGIONSUM,

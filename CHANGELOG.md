@@ -963,6 +963,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `_extract_d_lines` throws an `ArgumentError` when the parts of one archive have different column lists.
 
+- `read_demand` takes an `intervention` keyword (default `0`) and filters both `DISPATCHREGIONSUM` and the charging `DISPATCHLOAD` rows by it, so a run no longer averages in the other run's regional demand; `_nemde_energy_bids_with_coverage` passes its `intervention` through.
+
+- `_infer_resolution` throws an `ArgumentError` for fewer than two points or for non-uniform spacings, naming the distinct spacings, instead of defaulting to five minutes or warning and using the smallest spacing.
+
+- `read_isp_thermal_costs_parameters` no longer overwrites every station's fuel price with its technology's median, so stations of one technology keep their own prices; missing prices are filled by the OPEX fill cascade.
+
+- Invoked constraint `SETTLEMENTDATE`s outside `date_range`'s grid throw an `ArgumentError` naming up to three of them, instead of warning and dropping them from every constraint.
+
+- `read_interconnector_loss_gaps` reads each interval's loss coefficient at its offset from the first stamp on the coefficient series' own grid, so a skipped interval no longer shifts the coefficients of later intervals.
+
+- The absent-FCAS-service warning of the generic constraints is emitted once per build, naming the sorted union of absent services and the number of constraints that reference them.
+
 ### Removed
 
 - The `energy_max_avail[_decremental]` time series: the derived energy availability is

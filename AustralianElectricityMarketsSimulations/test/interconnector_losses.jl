@@ -787,4 +787,43 @@ end
     @test loss ≈ expected atol = 1.0e-5
 end
 
+@testset "a skipped interval reads the loss coefficient of its own stamp" begin
+    # Area 2's loss demand ramps with the stamp, so each interval has its own demand coefficient.
+    function ramp!(sys)
+        for load in PSY.get_components(PSY.PowerLoad, sys)
+            stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, load, "loss_demand")
+            values = [1.0 + i / 10 for i in eachindex(stamps)]
+            PSY.remove_time_series!(sys, PSY.SingleTimeSeries, load, "loss_demand")
+            PSY.add_time_series!(
+                sys, load,
+                PSY.SingleTimeSeries(;
+                    name = "loss_demand", data = TimeArray(stamps, values),
+                    scaling_factor_multiplier = PSY.get_max_active_power,
+                ),
+            )
+        end
+        return
+    end
+    sys = _loss_test_system(;
+        loss_flow_coefficient = 2.0e-4, breakpoints = [-100.0, -25.0, 0.0, 25.0, 100.0],
+        demand_coefficients = Dict("2" => 1.0e-4), mutate! = ramp!,
+    )
+    ic1 = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
+    all_stamps = collect(PSY.get_time_series_timestamps(PSY.SingleTimeSeries, ic1, "loss_demand_coefficient"))
+    @test length(all_stamps) >= 4
+    frame(stamps, value) = DataFrame(
+        name = fill("IC1", length(stamps)), DateTime = collect(stamps), value = fill(value, length(stamps)),
+    )
+    full, _ = AEMS._interconnector_loss_rows(sys, frame(all_stamps, 50.0), frame(all_stamps, 1.0))
+    kept = all_stamps[[1, 2, 4]]
+    gapped, _ = AEMS._interconnector_loss_rows(sys, frame(kept, 50.0), frame(kept, 1.0))
+    curve(rows, stamp) = only(rows.curve_loss_mw[rows.DateTime .== stamp])
+    # The coefficients differ between the skipped and the kept stamps, so the check can tell them apart.
+    @test curve(full, all_stamps[3]) != curve(full, all_stamps[4])
+    @test gapped.DateTime == kept
+    for stamp in kept
+        @test curve(gapped, stamp) ≈ curve(full, stamp)
+    end
+end
+
 include("mnsp_limits.jl")

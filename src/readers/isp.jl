@@ -101,17 +101,7 @@ function read_isp_thermal_costs_parameters(year::Int, scenario::String)
         [:technology, :price_aud] => ByRow((tech, price) -> tech == "Biomass" ? biomass_price : price) => :price_aud
     )
 
-    #fill missing values with median price
-    return @chain df begin
-        groupby(:technology)
-        transform(
-            :price_aud => (
-                x -> (
-                    all(ismissing.(x)) ? missing : median(skipmissing(x))
-                )
-            ) => :price_aud
-        )
-    end
+    return df
 end
 
 

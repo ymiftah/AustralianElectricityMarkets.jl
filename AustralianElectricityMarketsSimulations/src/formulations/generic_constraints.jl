@@ -261,29 +261,47 @@ end
 
 
 """
-    _warn_absent_fcas_services(sys, gc)
+    _warn_absent_fcas_services(container, lookup, sys)
 
-Warns once for `gc`, naming every FCAS service its terms reference that is absent from `sys`
-(those terms contribute zero).
+Warns once per build, naming the sorted union of FCAS services that the terms of the build's generic
+constraints reference but `sys` lacks (those terms contribute zero), and how many constraints reference them.
+Later calls in the same build are silent.
 """
-function _warn_absent_fcas_services(sys::Union{PSY.System, _ConstraintComponentLookup}, gc::GenericConstraint)
+function _warn_absent_fcas_services(container::PSI.OptimizationContainer, lookup::_ConstraintComponentLookup, sys::PSY.System)
+    scratch = _build_scratch(container)
+    get(scratch, :absent_fcas_warned, false) && return
+    scratch[:absent_fcas_warned] = true
+    union_names = Set{String}()
+    affected = 0
+    for row in _build_scratch(container)[:constraint_parameters]
+        gc = PSY.get_component(GenericConstraint, sys, row.name)
+        absent = _absent_fcas_services(lookup, gc)
+        isempty(absent) && continue
+        affected += 1
+        union!(union_names, absent)
+    end
+    isempty(union_names) || @warn(
+        "FCAS terms reference services absent from the System and contribute zero: " *
+            "$(join(sort!(collect(union_names)), ", ")); $affected generic constraint(s) reference them."
+    )
+    return
+end
+
+# The FCAS service names the non-energy unit and region terms of `gc` reference that `lookup` lacks.
+function _absent_fcas_services(lookup::_ConstraintComponentLookup, gc::GenericConstraint)
     absent = Set{String}()
     for term in get_terms(gc)
         term isa Union{UnitTerm, RegionTerm} || continue
         get_bid_type(term) == BidType.ENERGY && continue
         names = term isa UnitTerm ? [get_duid(term)] : get_devices(term)
         for dname in names
-            device = _constraint_component(PSY.Device, sys, dname)
+            device = _constraint_component(PSY.Device, lookup, dname)
             isnothing(device) && continue
             svc_name = fcas_service_name(device, get_bid_type(term))
-            isnothing(_constraint_component(FCASService, sys, svc_name)) && push!(absent, svc_name)
+            isnothing(_constraint_component(FCASService, lookup, svc_name)) && push!(absent, svc_name)
         end
     end
-    isempty(absent) || @warn(
-        "GenericConstraint \"$(PSY.get_name(gc))\": FCAS terms reference services absent from the " *
-            "System and contribute zero: $(join(sort!(collect(absent)), ", "))."
-    )
-    return
+    return absent
 end
 
 
@@ -570,7 +588,7 @@ function PSI.construct_service!(
     for term in get_terms(gc)
         PSI.add_to_expression!(container, NEMConstraintLHS, typeof(term), gc, term, lookup)
     end
-    _warn_absent_fcas_services(lookup, gc)
+    _warn_absent_fcas_services(container, lookup, sys)
     # Before add_constraints! reads NEMConstraintLHS: a slack must already be merged in for the
     # constraint it relaxes to be built with it, not around it.
     _add_gc_slack_variables!(container, gc, model)

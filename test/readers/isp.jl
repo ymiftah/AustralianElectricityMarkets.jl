@@ -10,3 +10,11 @@
     all_units = Set(read_isp_variable_opex().unit)
     @test issubset(Set(df.unit), all_units)
 end
+
+
+@testset "read_isp_thermal_costs_parameters keeps station-specific fuel prices" begin
+    df = read_isp_thermal_costs_parameters(2025, "Step Change")
+    # Same technology, different stations: each keeps its own published coal price.
+    @test unique(df.price_aud[df.station .== "Bayswater"]) == [4.12]
+    @test unique(df.price_aud[df.station .== "Eraring"]) == [7.02]
+end

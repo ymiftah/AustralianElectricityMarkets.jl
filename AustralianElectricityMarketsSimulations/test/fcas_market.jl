@@ -1121,6 +1121,43 @@ end
     @test isempty(_diagnosed_gcs(sys, template))
 end
 
+@testset "absent FCAS services warn once per build, naming their union" begin
+    bid_types = [BidType.RAISE6SEC, BidType.LOWER6SEC, BidType.RAISE6SEC]
+    sys = fcas_energy_toy_system(
+        2.0;
+        mutate! = (sys, stamps) -> begin
+            device = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
+            for (i, bid_type) in enumerate(bid_types)
+                gc = GenericConstraint(;
+                    name = "F_ABSENT_$i", sense = ConstraintSense.GE, rhs = 5.0,
+                    terms = ConstraintTerm[UnitTerm(TOY_CHEAP, bid_type, 1.0)],
+                )
+                PSY.add_service!(sys, gc, [device])
+                add_toy_constraint_series!(sys, gc, stamps, fill(5.0, length(stamps)), fill(1.0, length(stamps)))
+            end
+            return
+        end,
+    )
+    template = fcas_toy_template(sys, String[])
+    for i in eachindex(bid_types)
+        PSI.set_service_model!(template, "F_ABSENT_$i", PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "F_ABSENT_$i"))
+    end
+    model = PSI.DecisionModel(
+        template, sys; optimizer = HiGHS.Optimizer, horizon = TOY_RESOLUTION,
+        resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
+    )
+    PSI.set_output_dir!(model, mktempdir())
+    # PSI.build! routes its own logging to files under the output directory, so read the warning back from there.
+    out = mktempdir()
+    PSI.build!(model; output_dir = out)
+    log_text = join((read(joinpath(root, f), String) for (root, _, files) in walkdir(out) for f in files if endswith(f, ".log")), "\n")
+    warnings = [m.match for m in eachmatch(r"FCAS terms reference services absent[^\n]*", log_text)]
+    @test length(warnings) == 1
+    device = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
+    names = sort(unique(fcas_service_name.(Ref(device), bid_types)))
+    @test occursin("$(join(names, ", ")); 3 generic constraint(s)", only(warnings))
+end
+
 @testset "a scheduled load offers FCAS on its consumption axis" begin
     # UpperSlope (30 - 20) / 10 = 1.0, LowerSlope (10 - 5) / 10 = 0.5.
     contingency = (BidType.RAISE6SEC, (5.0, 10.0, 20.0, 30.0, 10.0), [(10.0, 10.0)])

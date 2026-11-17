@@ -143,7 +143,8 @@
         fuel = get_variable(thermal)
         @test get_proportional_term(get_value_curve(fuel)) ≈ 9.26
         @test get_constant_term(get_value_curve(fuel)) ≈ 648.0
-        @test get_fuel_cost(fuel) ≈ 4.96
+        # ER01 keeps its station's own Eraring coal price (7.02 AUD/GJ, Step Change 2025-26), not a technology median.
+        @test get_fuel_cost(fuel) ≈ 7.02
         @test get_proportional_term(get_vom_cost(fuel)) ≈ 8.0
         @test get_fixed(thermal) ≈ 319.634703196347
         @test get_start_up(thermal) == 100.0
