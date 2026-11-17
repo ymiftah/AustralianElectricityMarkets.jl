@@ -175,12 +175,25 @@ end
 # Absolute tolerance (MW) on `0 == RHS` for an equality constraint with an empty left-hand side.
 const _VACUOUS_EQ_TOLERANCE = 1.0e-6
 
+# The sense of a GENCONDATA `CONSTRAINTTYPE`; only "<=", ">=" and "=" are defined.
+function _constraint_sense(gencon_id, constraint_type)
+    isequal(constraint_type, "<=") && return ConstraintSense.LE
+    isequal(constraint_type, ">=") && return ConstraintSense.GE
+    isequal(constraint_type, "=") && return ConstraintSense.EQ
+    throw(
+        ArgumentError(
+            "GENCONDATA $gencon_id has CONSTRAINTTYPE $(repr(constraint_type)); expected \"<=\", \">=\" or \"=\"",
+        ),
+    )
+end
+
 # Whether `0 sense rhs` holds at every invoked interval; a missing RHS never qualifies.
-function _is_vacuous(constraint_type, rhs)
+function _is_vacuous(gencon_id, constraint_type, rhs)
+    sense = _constraint_sense(gencon_id, constraint_type)
     any(ismissing, rhs) && return false
     return all(rhs) do r
-        constraint_type == "<=" ? r >= 0 :
-            constraint_type == ">=" ? r <= 0 : abs(r) <= _VACUOUS_EQ_TOLERANCE
+        sense == ConstraintSense.LE ? r >= 0 :
+            sense == ConstraintSense.GE ? r <= 0 : abs(r) <= _VACUOUS_EQ_TOLERANCE
     end
 end
 
@@ -424,7 +437,7 @@ function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; interven
         # Under :drop only unit terms are dropped, and a constraint left with no term is skipped.
         # One whose terms were all dropped has a zero left-hand side: skipped as vacuous if satisfiable.
         if !unskippable && skip_reason == :unknown_duid && isempty(resolved_terms) &&
-                _is_vacuous(def.CONSTRAINTTYPE, invoked_by_version[version_key].RHS)
+                _is_vacuous(gencon_id, def.CONSTRAINTTYPE, invoked_by_version[version_key].RHS)
             skipped[versioned_name] = :vacuous_unknown_duid
             push!(skipped_detail, _skipped_row(versioned_name, :vacuous_unknown_duid, unique(missing_keys)))
             vacuous_dropped[versioned_name] = dropped_terms
@@ -437,8 +450,7 @@ function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; interven
         end
         isempty(dropped_terms) || (dropped[versioned_name] = dropped_terms)
 
-        sense = def.CONSTRAINTTYPE == "<=" ? ConstraintSense.LE :
-            def.CONSTRAINTTYPE == ">=" ? ConstraintSense.GE : ConstraintSense.EQ
+        sense = _constraint_sense(gencon_id, def.CONSTRAINTTYPE)
 
         # GENCONID alone, not the version triple - fcas_requirements has no version to match
         # against on recent data, so every version of a GENCONID gets the same attribution.

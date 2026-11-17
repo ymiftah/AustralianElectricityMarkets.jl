@@ -98,25 +98,17 @@ With `as_of = nothing`, uses the latest cached snapshot. Throws `ArgumentError` 
 snapshot is available.
 """
 function _current_regions(db; as_of::Union{Nothing, Date, DateTime} = nothing)
-    df = try
-        table = read_hive(db, :DISPATCHREGIONSUM)
-        bound = isnothing(as_of) ? "" : "AND SETTLEMENTDATE <= ?"
-        sql = """
-        SELECT DISTINCT REGIONID FROM $table
-        WHERE REGIONID IS NOT NULL AND SETTLEMENTDATE = (
-            SELECT max(SETTLEMENTDATE) FROM $table
-            WHERE REGIONID IS NOT NULL $bound
-        )
-        """
-        isnothing(as_of) ? _query(db, sql) : _query(db, sql, [as_of])
-    catch err
-        throw(
-            ArgumentError(
-                "read_interconnectors needs a cached DISPATCHREGIONSUM to identify the active regions; " *
-                    "run `populate(db, :DISPATCHREGIONSUM, start_date, end_date)` first ($(sprint(showerror, err)))",
-            ),
-        )
-    end
+    _require_cached(db, :DISPATCHREGIONSUM; context = "read_interconnectors needs it to identify the active regions.")
+    table = read_hive(db, :DISPATCHREGIONSUM)
+    bound = isnothing(as_of) ? "" : "AND SETTLEMENTDATE <= ?"
+    sql = """
+    SELECT DISTINCT REGIONID FROM $table
+    WHERE REGIONID IS NOT NULL AND SETTLEMENTDATE = (
+        SELECT max(SETTLEMENTDATE) FROM $table
+        WHERE REGIONID IS NOT NULL $bound
+    )
+    """
+    df = isnothing(as_of) ? _query(db, sql) : _query(db, sql, [as_of])
     isempty(df) && throw(
         ArgumentError(
             "read_interconnectors found no DISPATCHREGIONSUM snapshot" *

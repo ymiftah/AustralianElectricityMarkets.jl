@@ -57,10 +57,10 @@ _key_values(ic, key; start = DateTime(2025, 1, 1, 11, 55), n = 2) = PowerSystems
         @test isnothing(forward.fixed_load)  # FIXEDLOAD is NULL over the whole range
     end
 
-    @testset "an MNSP without offers fails instead of changing its formulation" begin
+    @testset "an MNSP over an uncached range fails instead of changing its formulation" begin
         sys2 = nem_system(db, RegionalNetworkConfiguration())
         later = DateTime(2030, 1, 1):Minute(5):DateTime(2030, 1, 1, 0, 10)
-        @test_throws r"requires exactly one offer for every interval" set_mnsp_offers!(sys2, db, later)
+        @test_throws r"DISPATCH_MNSPBIDTRK has no cached partition" set_mnsp_offers!(sys2, db, later)
         @test !has_time_series(get_component(AreaInterchange, sys2, "IC2"))
     end
 

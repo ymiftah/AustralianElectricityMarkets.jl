@@ -77,7 +77,13 @@ function AustralianElectricityMarkets.nem_system(
     AustralianElectricityMarkets._set_market_bids!(sys, offers, date_range; resolution)
     set_unit_conditions!(sys, db, date_range; intervention)
     add_nem_constraints!(sys, db, date_range; intervention)
-    attach_interconnector_losses!(sys, db, first(date_range))
+    _, unmodelled = attach_interconnector_losses!(sys, db, first(date_range))
+    isempty(unmodelled) || throw(
+        ArgumentError(
+            "interconnectors without a loss model would run lossless: $(join(sort!(collect(keys(unmodelled))), ", ")); " *
+                "check their LOSSMODEL breakpoints, then repopulate with populate(...; force_new = true)",
+        ),
+    )
 
     # 5. Time series
     set_demand!(sys, demand, date_range; resolution)

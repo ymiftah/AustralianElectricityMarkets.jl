@@ -25,7 +25,8 @@ using DuckDB
 
 Writes the mock Hive-partitioned cache under `hive_root`. With `complete_inputs`, the invoked
 constraints whose terms cannot all resolve (`N_PHANTOM_TEST`, `N_ONE_PHANTOM_TERM`) are removed and
-`PUMP2` is inactive in `DISPATCHLOAD`, so a strict replay can run on it.
+`PUMP2` is inactive in `DISPATCHLOAD`, so a strict replay can run on it. Every interconnector also
+gets a `LOSSMODEL`.
 """
 function create_mock_data(hive_root::String; complete_inputs::Bool = false)
     db = DuckDB.DB()
@@ -76,10 +77,11 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
         ), :INTERCONNECTORCONSTRAINT
     )
 
-    # 2b. LOSSMODEL — IC1..IC5 only, so an interconnector with loss parameters but no breakpoints
-    # exercises `interconnector_loss_models`'s skip-and-warn path. IC1 additionally carries a
-    # superseded EFFECTIVEDATE, so version resolution is exercised rather than assumed.
-    let ics = ["IC$i" for i in 1:5], breaks = [-500.0, -250.0, 0.0, 250.0, 500.0]
+    # 2b. LOSSMODEL: IC1..IC5 only, so an interconnector with loss parameters but no breakpoints
+    # exercises `interconnector_loss_models`'s skip-and-warn path. With `complete_inputs` IC6 is
+    # modelled too, since a NEMDE build throws on an unmodelled interconnector. IC1 additionally
+    # carries a superseded EFFECTIVEDATE, so version resolution is exercised rather than assumed.
+    let ics = ["IC$i" for i in 1:(complete_inputs ? n : 5)], breaks = [-500.0, -250.0, 0.0, 250.0, 500.0]
         nb = length(breaks)
         current = DataFrame(
             INTERCONNECTORID = repeat(ics; inner = nb),

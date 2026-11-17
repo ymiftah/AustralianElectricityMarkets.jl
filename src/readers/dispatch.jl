@@ -69,8 +69,8 @@ upper limit NEMDE applies to each semi-scheduled unit in each dispatch interval.
 
 # Returns
 A `DataFrame` with `SETTLEMENTDATE`, `DUID` and `UIGF` (MW). Throws an `ArgumentError` when
-`DISPATCHLOAD` or `DUDETAILSUMMARY` is not cached or `DUDETAILSUMMARY` has no `SCHEDULE_TYPE`;
-warns and returns an empty frame when no cached `DISPATCHLOAD` partition has a `UIGF` column.
+`DISPATCHLOAD` or `DUDETAILSUMMARY` is not cached, `DUDETAILSUMMARY` has no `SCHEDULE_TYPE`, or
+`DISPATCHLOAD` has no `UIGF` column in its cached partitions.
 
 # Example
 ```julia
@@ -81,10 +81,7 @@ function read_uigf(db, date_range; resolution::Dates.Period = Minute(5), interve
     start_date = first(date_range)
     end_date = last(date_range)
     _require_cached(db, :DISPATCHLOAD)
-    if !("UIGF" in _table_schema(db, read_hive(db, :DISPATCHLOAD)))
-        @warn "DISPATCHLOAD is cached, but none of its cached partitions have a UIGF column (they predate AEMO adding it); returning no UIGF rows."
-        return DataFrame(SETTLEMENTDATE = DateTime[], DUID = String[], UIGF = Float64[])
-    end
+    _require_columns(:DISPATCHLOAD, _table_schema(db, read_hive(db, :DISPATCHLOAD)), ["UIGF"])
     _require_cached(db, :DUDETAILSUMMARY)
     dudetailsummary = read_hive(db, :DUDETAILSUMMARY)
     "SCHEDULE_TYPE" in _table_schema(db, dudetailsummary) || throw(

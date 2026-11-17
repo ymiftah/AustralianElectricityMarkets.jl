@@ -231,7 +231,7 @@ let
         # The last interval of the trading day ends at 04:00 the next calendar day.
         edge = read_mnsp_offers(db, DateTime(2025, 1, 2, 3, 55):Dates.Minute(5):DateTime(2025, 1, 2, 4, 5))
         @test nrow(edge) == 4
-        @test isempty(read_mnsp_offers(db, DateTime(2030, 1, 1):Dates.Minute(5):DateTime(2030, 1, 1, 1)))
+        @test_throws ArgumentError read_mnsp_offers(db, DateTime(2030, 1, 1):Dates.Minute(5):DateTime(2030, 1, 1, 1))
     end
 
     @testset "read_mnsp_links" begin
@@ -256,7 +256,15 @@ let
         edge = named_files(read_hive(db, :MNSP_DAYOFFER, DateTime(2024, 12, 31, 22):Dates.Minute(5):DateTime(2025, 1, 1, 2)))
         @test sort(partition_dirs(edge)) == ["archive_month=2024-12", "archive_month=2025-01"]
         @test sort(edge) == sort(vcat(partition_files("MNSP_DAYOFFER", "2024-12"), partition_files("MNSP_DAYOFFER", "2025-01")))
-        @test read_hive(db, :DISPATCHLOAD, DateTime(2030, 1, 1):Dates.Minute(5):DateTime(2030, 1, 1, 1)) ==
-            read_hive(db, :DISPATCHLOAD)
+        # No cached month in range: the error names the months and the populate call, with no all-partitions fallback.
+        uncached = try
+            read_hive(db, :DISPATCHLOAD, DateTime(2030, 1, 1):Dates.Minute(5):DateTime(2030, 1, 1, 1))
+            nothing
+        catch e
+            e
+        end
+        @test uncached isa ArgumentError
+        @test occursin("2029-12, 2030-01", uncached.msg)
+        @test occursin("populate(db, :DISPATCHLOAD, 2029-12-01, 2030-01-31)", uncached.msg)
     end
 end

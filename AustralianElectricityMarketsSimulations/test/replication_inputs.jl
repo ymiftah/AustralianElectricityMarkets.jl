@@ -57,11 +57,10 @@ end
     @test_throws r"IC2.*MNSP" replay_template(sys)
 end
 
-@testset "a cached table without the requested constraint intervals cannot replay" begin
+@testset "a cached table without the requested interval cannot be read" begin
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR))
     later = DateTime(2030, 1, 1):Minute(5):DateTime(2030, 1, 1, 0, 10)
-    sys, _ = constrained_system(db; date_range = later)
-    @test_throws r"missing.*constraint.*2030" replay_template(sys)
+    @test_throws r"BIDPEROFFER_D has no cached partition for 2029-12, 2030-01" constrained_system(db; date_range = later)
 end
 
 @testset "a unit registered mid-chunk passes the replay template" begin

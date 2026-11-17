@@ -605,7 +605,6 @@ end
 
 
 """
-    _fcas_offer_groups(name, devices, bid_type) -> Vector{_FCASOfferGroup}
     _fcas_offer_groups(name, devices, directions) -> Vector{_FCASOfferGroup}
 
 The offers of an `FCASService` named `name`, grouped by the capacity variable container they sum
@@ -613,14 +612,11 @@ to: [`_FCASOfferGroup`](@ref)s of `(meta, variable, offers)` with `offers` a vec
 devices form the group `meta = name` on [`FCASCapacityVariable`](@ref); a `PSY.Storage` device
 bidding both sides of a regulation market has one offer in each of `"<name>_gen"` and
 `"<name>_load"` on [`FCASSideCapacityVariable`](@ref). `directions` maps each device name to its
-[`_fcas_direction`](@ref), computed from `bid_type` when not given.
+[`_fcas_direction`](@ref).
 
 # Returns
 `Vector{_FCASOfferGroup}`.
 """
-function _fcas_offer_groups(name::AbstractString, devices, bid_type::BidType)
-    return _fcas_offer_groups(name, devices, Dict(PSY.get_name(d) => _fcas_direction(d, bid_type) for d in devices))
-end
 function _fcas_offer_groups(name::AbstractString, devices, directions::AbstractDict)
     D = eltype(devices)
     both = D[d for d in devices if directions[PSY.get_name(d)] == FCASBidDirection.BOTH]
@@ -771,9 +767,7 @@ function PSI.construct_service!(
     time_steps = PSI.get_time_steps(container)
     jm = PSI.get_jump_model(container)
 
-    groups = get(_build_scratch(container), (:fcas_offer_groups, name)) do
-        return _fcas_offer_groups(name, devices, bid_type)
-    end
+    groups = _build_scratch(container)[(:fcas_offer_groups, name)]
 
     # Contingency services carry the regulation targets: `RaiseReg` upper, `LowerReg` lower, swapped for a load.
     if !is_regulation

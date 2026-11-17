@@ -249,13 +249,9 @@ function get_generators_dataframe(bus_df, units)
     bus = select(bus_df, :bus_id, :name)
     units = _map_unit_technology(units)
     # Scheduled loads (some have a GENUNITS row) are built by `get_scheduled_loads_dataframe`.
-    "DISPATCHTYPE" in names(units) && subset!(units, :DISPATCHTYPE => ByRow(!isequal("LOAD")))
+    subset!(units, :DISPATCHTYPE => ByRow(!isequal("LOAD")))
     # A battery registered as separate generator and load units: its generator half has no storage data.
-    units.legacy_battery = if "DISPATCHTYPE" in names(units)
-        isequal.(units.TECHNOLOGY, Ref(PrimeMovers.BA)) .& isequal.(units.DISPATCHTYPE, "GENERATOR")
-    else
-        falses(nrow(units))
-    end
+    units.legacy_battery = isequal.(units.TECHNOLOGY, Ref(PrimeMovers.BA)) .& isequal.(units.DISPATCHTYPE, "GENERATOR")
 
     return @chain units begin
         select!(
@@ -367,8 +363,7 @@ end
 Generates a DataFrame of loads (`DISPATCHTYPE = LOAD` units, scheduled pumps and the
 non-scheduled ancillary-service and demand-response loads alike), each on its region's generator
 bus. A non-scheduled load starts unavailable: it carries no energy bid, and
-[`set_market_bids!`](@ref) makes it available only when it offers FCAS. Empty when `units` has no
-`DISPATCHTYPE` column.
+[`set_market_bids!`](@ref) makes it available only when it offers FCAS.
 
 # Arguments
 - `bus_df`: A `DataFrame` of bus data, as returned by `get_bus_dataframe`.
@@ -380,9 +375,6 @@ A `DataFrame` with `name`, `bus_id`, `region`, `base_power`, `max_active_power` 
 """
 function get_scheduled_loads_dataframe(bus_df, units)
     bus = select(bus_df, :bus_id, :name)
-    columns = (:DISPATCHTYPE, :SCHEDULE_TYPE, :REGISTEREDCAPACITY, :MAXCAPACITY)
-    all(c -> c in propertynames(units), columns) ||
-        return DataFrame(name = String[], bus_id = Int[], region = String[], base_power = Float64[], max_active_power = Float64[], available = Bool[], scheduled = Bool[], commissioned = Bool[])
     loads = @chain units begin
         subset(
             :DISPATCHTYPE => ByRow(isequal("LOAD")), :SCHEDULE_TYPE => ByRow(in(("SCHEDULED", "NON-SCHEDULED"))),

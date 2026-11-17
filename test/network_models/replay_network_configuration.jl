@@ -115,6 +115,12 @@ end
         @test_throws r"BW02 GEN" nem_system(db, NEMDEConfiguration(); date_range = interval)
     end
 
+    @testset "an interchange with fewer than two loss breakpoints throws" begin
+        # Leaving one breakpoint for IC1 leaves it unmodelled, which would otherwise run it lossless.
+        damaged = damaged_cache(hive, :LOSSMODEL, "DELETE FROM input WHERE INTERCONNECTORID = 'IC1' AND LOSSSEGMENT > 1")
+        @test_throws r"without a loss model would run lossless: IC1;" nem_system(damaged, NEMDEConfiguration(); date_range = interval)
+    end
+
 end
 
 @testset "the NEMDE build validates its replay inputs" begin
@@ -225,6 +231,12 @@ end
             "INSERT INTO input SELECT 'V-S-MNSP1' AS INTERCONNECTORID, TIMESTAMP '2025-01-01 00:00:00' AS EFFECTIVEDATE, " *
                 "1 AS VERSIONNO, 200.0 AS MAXMWIN, 200.0 AS MAXMWOUT, 0.1 AS FROMREGIONLOSSSHARE, 0.01 AS LOSSCONSTANT, " *
                 "0.001 AS LOSSFLOWCOEFFICIENT, 'REGULATED' AS ICTYPE, '2025-01' AS archive_month",
+        )
+        # A NEMDE build throws on an interchange without a loss model, so it borrows IC1's breakpoints.
+        zero = damaged_cache(
+            zero.config.hive_location, :LOSSMODEL,
+            "INSERT INTO input SELECT * REPLACE ('V-S-MNSP1' AS INTERCONNECTORID) FROM input " *
+                "WHERE INTERCONNECTORID = 'IC1' AND EFFECTIVEDATE = TIMESTAMP '2025-01-01 00:00:00'",
         )
         zero = damaged_cache(
             zero.config.hive_location, :DISPATCHCONSTRAINT,

@@ -528,6 +528,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `nem_system` throws an `ArgumentError` naming the interconnectors when one has no loss model, where it previously ran them lossless.
+
+- `GENCONDATA` `CONSTRAINTTYPE` accepts only `<=`, `>=` and `=`; any other value throws an `ArgumentError` naming the constraint, where it previously built an equality.
+
 - `populate` streams each NEMWEB download to disk and memory-maps the ZIP when reading it, instead of buffering the whole body in memory twice. The month window of a month-filtered table (`DISPATCH_FCAS_REQ_CONSTRAINT`) is applied once, in a quoting-aware field parser that no longer splits every line (about four times faster on 1.5 million lines); the redundant SQL filter is removed, and a configured filter column absent from the file now throws instead of silently disabling the filter.
 
 - `populate` lists a table's cached months once, and `show(::AEMDB)` and `cached_date_range` reuse one DuckDB connection, where a remote (`s3`/`gs`) cache previously opened a connection per partition. Local-filesystem behaviour is unchanged.
@@ -944,6 +948,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The replay default HiGHS relative MIP gap is 1e-8 (was 0), matching the batch runner; the absolute gap stays 1e-10.
 
 - `DISPATCHREGIONSUM` caches `SS_SOLAR_UIGF` and `SS_WIND_UIGF`, which `set_regional_availability!` reads for the regional capacity factor in place of `SS_SOLAR_AVAILABILITY` and `SS_WIND_AVAILABILITY`. Cached months need `populate(db, :DISPATCHREGIONSUM, start, stop; force_new = true)` to gain the columns.
+
+- `read_hive(db, table, date_range)` throws an `ArgumentError` naming the uncached months and the `populate` call when none of them is cached, where it previously read every partition of the table.
+
+- `read_uigf` throws an `ArgumentError` when the cached `DISPATCHLOAD` has no `UIGF` column, where it previously warned and returned no rows.
+
+- `get_scheduled_loads_dataframe` and `get_generators_dataframe` no longer guard on a missing `DISPATCHTYPE` column, since `read_units` always returns it.
+
+- `_current_regions` checks the cached `DISPATCHREGIONSUM` with `_require_cached` and no longer rewraps every query error as a missing-cache message.
+
+- The FCAS model stage reads its offer groups from the build scratch directly, so a missing entry throws a `KeyError` instead of silently recomputing them.
+
+- `populate` clears a month's local partition only after its archive is fetched and extracted, so a failed download keeps the cached month.
+
+- `_extract_d_lines` throws an `ArgumentError` when the parts of one archive have different column lists.
 
 ### Removed
 

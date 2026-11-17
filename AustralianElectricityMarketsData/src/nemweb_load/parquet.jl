@@ -188,6 +188,12 @@ function _extract_d_lines(
             for zip_path in zip_paths
                 part_cols = _write_d_lines(out, zip_path; month_filter_column, lo, hi)
                 isempty(available_cols) && (available_cols = part_cols)
+                part_cols == available_cols || throw(
+                    ArgumentError(
+                        "$(basename(zip_path)) has columns $(part_cols), but the first part has $(available_cols); " *
+                            "the parts of one archive must share a column list.",
+                    ),
+                )
             end
         end
     catch

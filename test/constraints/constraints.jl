@@ -625,10 +625,10 @@ end
     end
 
     @testset "warns and returns empty when DISPATCHCONSTRAINT is cached but has no rows in range" begin
-        # DISPATCHCONSTRAINT is cached (the fixture is 2025-01), just not for this range - a
+        # DISPATCHCONSTRAINT is cached (the fixture is 2025-01), just with no rows on this day - a
         # real answer, not missing data, so this must warn rather than throw (contrast with
         # the "not cached at all" case above).
-        far_future_range = DateTime(2030, 1, 1):Minute(5):(DateTime(2030, 1, 1) + Hour(1))
+        far_future_range = DateTime(2025, 1, 20):Minute(5):(DateTime(2025, 1, 20) + Hour(1))
         far_sys = nem_system(db, RegionalNetworkConfiguration())
         added_far, skipped_far = nothing, nothing
         @test_logs (:warn, r"No constraints invoked") match_mode = :any begin
@@ -648,7 +648,7 @@ end
         @test get_missing_constraint_intervals(late_sys) == expected
 
         # A range wholly outside the cache records every interval.
-        none = DateTime(2030, 1, 1):Minute(5):DateTime(2030, 1, 1, 0, 15)
+        none = DateTime(2025, 1, 20):Minute(5):DateTime(2025, 1, 20, 0, 15)
         none_sys = nem_system(db, RegionalNetworkConfiguration())
         build_constraints!(none_sys, db, none)
         @test get_missing_constraint_intervals(none_sys) == collect(none)[1:(end - 1)]
@@ -667,6 +667,14 @@ end
         @test isempty(get_dropped_terms(weight_sys))
         @test get_missing_constraint_intervals(weight_sys) == collect(none)[1:(end - 1)]
     end
+end
+
+@testset "GENCONDATA CONSTRAINTTYPE must be <=, >= or =" begin
+    start_date = DateTime(2025, 1, 1, 0, 0)
+    date_range = start_date:Minute(5):(start_date + Hour(1))
+    bad = damaged_cache(AEM_TEST_HIVE_DIR, :GENCONDATA, "UPDATE input SET CONSTRAINTTYPE = '<' WHERE GENCONID = 'N_BAYSW_THERMAL'")
+    sys = first(nem_network(bad))
+    @test_throws r"N_BAYSW_THERMAL has CONSTRAINTTYPE \"<\"" build_constraints!(sys, bad, date_range)
 end
 
 @testset "vacuous constraints on unknown units" begin
@@ -766,7 +774,8 @@ end
     @test isnothing(check_with_registration(false))
 
     # Sense table of the zero left-hand side.
-    vac = AustralianElectricityMarkets._is_vacuous
+    vac = (constraint_type, rhs) -> AustralianElectricityMarkets._is_vacuous("N_TEST", constraint_type, rhs)
+    @test_throws r"N_TEST has CONSTRAINTTYPE \"<\"" vac("<", [0.0])
     @test vac("<=", [0.0, 3.0]) && !vac("<=", [-1.0])
     @test vac(">=", [0.0, -3.0]) && !vac(">=", [1.0])
     @test vac("=", [0.0, 1.0e-9]) && !vac("=", [0.5])

@@ -38,7 +38,6 @@ skipped; any other failure is rethrown.
 """
 function _add_data(source::DataSource, year::Int, month::Int; fetch_archive = _get_archive)
     partition_dir = joinpath(source.path, "$ARCHIVE_MONTH_PARTITION=$(Date(year, month, 1))")
-    _clear_local_partition(source, partition_dir)
 
     try
         @info "Fetching data" table = source.table_name year month
@@ -53,6 +52,8 @@ function _add_data(source::DataSource, year::Int, month::Int; fetch_archive = _g
         end
 
         try
+            # Clearing only here keeps the existing partition if the download or extraction fails.
+            _clear_local_partition(source, partition_dir)
             @info "Writing Hive-partitioned parquet" path = source.path
             conn = _new_duckdb_connection(get_filesystem(source))
             try

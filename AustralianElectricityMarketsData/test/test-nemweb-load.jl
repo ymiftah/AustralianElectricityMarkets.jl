@@ -246,6 +246,20 @@ end
     end
 end
 
+@testset "_extract_d_lines(::Vector): throws when a later part's columns differ from the first part's" begin
+    csv1 = make_nemweb_csv("DISPATCHPRICE", ["REGIONID", "RRP"], [("NSW1", "1.0")])
+    csv2 = make_nemweb_csv("DISPATCHPRICE", ["REGIONID", "RRP", "EXTRA"], [("VIC1", "2.0", "9")])
+    zip1, zip2 = make_zip_with_csv(csv1), make_zip_with_csv(csv2)
+    tmp_dir = AustralianElectricityMarketsData._local_tmp_dir()
+    before = Set(readdir(tmp_dir))
+    try
+        @test_throws ArgumentError _extract_d_lines([zip1, zip2])
+        @test Set(readdir(tmp_dir)) == before
+    finally
+        foreach(p -> isfile(p) && rm(p), (csv1, csv2, zip1, zip2))
+    end
+end
+
 # Interval-ending stamps around June 2026: an interval ending at 00:00 on the 1st belongs to the previous month.
 const MONTH_FILTER_ROWS = [
     ("2026/05/31 23:55:00", "PREV"), ("2026/06/01 00:00:00", "PREV_BOUNDARY"), ("2026/06/01 00:05:00", "FIRST"),
@@ -637,6 +651,25 @@ end
 
     AustralianElectricityMarketsData._clear_local_partition(remote_source, partition_dir)
     @test isfile(sentinel)
+end
+
+@testset "_add_data: a failed fetch leaves the month's existing partition intact" begin
+    tmpdir = mktempdir()
+    source = DataSource("DISPATCHPRICE", ["SETTLEMENTDATE", "REGIONID", "RRP"], HiveConfiguration(hive_location = tmpdir))
+    partition_dir = joinpath(source.path, "archive_month=2024-01-01")
+    mkpath(partition_dir)
+    stub = joinpath(partition_dir, "data.parquet")
+    write(stub, UInt8[1, 2, 3])
+
+    transient_fetch(table, year, month) = throw(TransientDownloadError("rate limited"))
+    @test_throws TransientDownloadError AustralianElectricityMarketsData._add_data(source, 2024, 1; fetch_archive = transient_fetch)
+    @test isfile(stub)
+
+    unpublished_fetch(table, year, month) = throw(MissingDataError("HTTP 404"))
+    @test_logs (:error, r"not published") match_mode = :any AustralianElectricityMarketsData._add_data(
+        source, 2024, 1; fetch_archive = unpublished_fetch,
+    )
+    @test isfile(stub)
 end
 
 @testset "populate(::AEMDB, start, end; tables): only the requested tables are processed" begin

@@ -74,12 +74,6 @@
         @test all(==("NSW1"), df.region)
         @test all(==(100.0), df.base_power)
         @test all(==(1.0), df.max_active_power)
-        # Without the DISPATCHTYPE column no load can be identified
-        @test isempty(
-            AustralianElectricityMarkets.RegionModel.get_scheduled_loads_dataframe(
-                bus_df, select(read_units(db), Not(:DISPATCHTYPE)),
-            )
-        )
     end
 
     @testset "get_interfaces_dataframe" begin

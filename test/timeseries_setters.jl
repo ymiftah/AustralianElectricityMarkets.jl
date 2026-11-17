@@ -126,9 +126,7 @@
             @test occursin("DISPATCHLOAD", err.msg)
         end
 
-        @testset "read_uigf warns and returns empty when cached DISPATCHLOAD predates the UIGF column" begin
-            # Legitimate schema evolution (read_hive's union_by_name exists to tolerate it),
-            # not a missing download - must not throw, unlike the "not cached at all" case above.
+        @testset "read_uigf throws when cached DISPATCHLOAD predates the UIGF column" begin
             no_uigf_hive = mktempdir()
             ddb = DuckDB.DB()
             conn = DuckDB.connect(ddb)
@@ -144,12 +142,15 @@
             DuckDB.unregister_table(conn, "tmp_table")
 
             no_uigf_db = aem_connect(HiveConfiguration(hive_location = no_uigf_hive, filesystem = "file"))
-            result = nothing
-            @test_logs (:warn, r"UIGF column") match_mode = :any begin
-                result = read_uigf(no_uigf_db, date_range; resolution = resolution)
+            err = try
+                read_uigf(no_uigf_db, date_range; resolution = resolution)
+                nothing
+            catch e
+                e
             end
-            @test isempty(result)
-            @test Set(names(result)) == Set(["SETTLEMENTDATE", "DUID", "UIGF"])
+            @test err isa ArgumentError
+            @test occursin("no UIGF column", err.msg)
+            @test occursin("force_new = true", err.msg)
         end
 
         @testset "read_uigf throws without DUDETAILSUMMARY's SCHEDULE_TYPE" begin
