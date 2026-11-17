@@ -131,6 +131,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` now covers FY2021-22 to FY2023-24 (\$15,100, \$15,500, \$16,600/MWh), so replays from the start of 5-minute settlement (October 2021) build without a `"market_price_cap"` override.
+
 - Fast-start state and the kernel of NEMDE's two dispatch runs, as nempy implements them. `read_unit_conditions` reads `DISPATCHMODETIME`, and `NEMObservedState` gains `dispatch_mode_time`, the previous interval's value (series `observed_dispatch_mode_time`). `NEMUnitState` gains `time_in_mode`, the published time capped at the mode's length (`fast_start_time_in_mode`), and `observed_unit_states` fills it. `nem_system` writes `NEM_FAST_START_SERIES` (fast-start flag, starting mode, time in mode) for each unit whose energy offer has a fast-start profile, read with `fast_start_unit_inputs`.
 
 - The pure fast-start kernel `fast_start_end_state` (commitment above 0 MW and the mode advance of nempy's `_update_modes`), `fast_start_envelope` (profile bounds by end mode and the ramp treatment), `fast_start_ramp_up_limit`, `fast_start_ramp_exempt` and `is_fast_start` are exported, with `FAST_START_CVP_FACTOR` (1130, AEMO *Schedule of Constraint Violation Penalty Factors* v8.0 item 10). AEMO *Fast Start Inflexibility Profile* sections 2, 3 and 5. The dispatch model does not use them yet.

@@ -29,6 +29,7 @@ module SimulationStatistics
     const PRICE_BANDS = ("above_300", "0_to_300", "below_0")
     # Mirrors MARKET_PRICE_CAP_BY_FINANCIAL_YEAR in src/system/penalties.jl, keyed by financial-year start.
     const MARKET_PRICE_CAP_BY_FINANCIAL_YEAR = [
+        Date(2021, 7, 1) => 15_100.0, Date(2022, 7, 1) => 15_500.0, Date(2023, 7, 1) => 16_600.0,
         Date(2024, 7, 1) => 17_500.0, Date(2025, 7, 1) => 20_300.0, Date(2026, 7, 1) => 23_200.0,
     ]
     const MARKET_FLOOR_PRICE = -1000.0

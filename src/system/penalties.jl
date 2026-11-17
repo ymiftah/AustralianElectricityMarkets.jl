@@ -8,10 +8,13 @@ const DISPATCH_INTERVAL = Dates.Minute(5)
     MARKET_PRICE_CAP_BY_FINANCIAL_YEAR
 
 Published Market Price Cap (`\$/MWh`), by the `Date` its financial year starts (1 July).
-Source: AEMC *Schedule of reliability settings, 2026-27 financial year* (FY2024-25: AEMC's
-2024-25 schedule).
+Source: AEMC *Schedule of reliability settings, 2026-27 financial year*; earlier years are
+AEMC's schedules for FY2021-22 to FY2024-25.
 """
 const MARKET_PRICE_CAP_BY_FINANCIAL_YEAR = [
+    Date(2021, 7, 1) => 15_100.0,
+    Date(2022, 7, 1) => 15_500.0,
+    Date(2023, 7, 1) => 16_600.0,
     Date(2024, 7, 1) => 17_500.0,
     Date(2025, 7, 1) => 20_300.0,
     Date(2026, 7, 1) => 23_200.0,
