@@ -46,6 +46,8 @@
     @testset "every bid field equals its read_offers column, on the grid" begin
         offers = read_offers(db, interval)
         n = length(grid)
+        mismatches = String[]
+        check(ok, device, bid, field) = (ok || push!(mismatches, "$(get_name(device)) $(bid.direction) $field"); return)
         for device in get_components(Device, bid_sys)
             name = get_name(device)
             cost = AEM._nem_offer_cost(device)
@@ -54,66 +56,66 @@
                 by = rows_by_stamp(offers, name, BidType.ENERGY, bid.direction)
                 curves = bid_value(device, bid, :offer_curves, first(interval), n)
                 expected = expected_curves(by, bid.direction)
-                @test _matches(get_x_coords.(curves), [e.x for e in expected])
-                @test _matches(get_y_coords.(curves), [e.y for e in expected])
+                check(_matches(get_x_coords.(curves), [e.x for e in expected]), device, bid, :x)
+                check(_matches(get_y_coords.(curves), [e.y for e in expected]), device, bid, :y)
                 for (field, column) in (
                         (:max_avail, :MAXAVAIL), (:roc_up, :ROCUP), (:roc_down, :ROCDOWN), (:fixed_load, :FIXEDLOAD),
                         (:minimum_load, :MINIMUMLOAD), (:daily_energy_constraint, :DAILYENERGYCONSTRAINT), (:energy_limit, :ENERGYLIMIT),
                     )
-                    if isnothing(getfield(bid, field))
+                    ok = if isnothing(getfield(bid, field))
                         # FIXEDLOAD of zero is no fixed load, as set_market_bids! reads it.
-                        @test all(r -> ismissing(r[column]) || (field == :fixed_load && iszero(r[column])), values(by))
+                        all(r -> ismissing(r[column]) || (field == :fixed_load && iszero(r[column])), values(by))
                     elseif field == :fixed_load
-                        @test isequal(bid_value(device, bid, field, first(interval), n), nan_on_grid(by, column))
+                        isequal(bid_value(device, bid, field, first(interval), n), nan_on_grid(by, column))
                     else
-                        @test _matches(bid_value(device, bid, field, first(interval), n), on_grid(by, column))
+                        _matches(bid_value(device, bid, field, first(interval), n), on_grid(by, column))
                     end
+                    check(ok, device, bid, field)
                 end
                 if isnothing(bid.fast_start_profile)
-                    @test all(r -> all(ismissing, (r.T1, r.T2, r.T3, r.T4)), values(by))
+                    check(all(r -> all(ismissing, (r.T1, r.T2, r.T3, r.T4)), values(by)), device, bid, :fast_start_profile)
                 else
                     profile = [[_num(get(by, t, (T1 = missing, T2 = missing, T3 = missing, T4 = missing))[c]) for c in (:T1, :T2, :T3, :T4)] for t in grid]
-                    @test _matches([collect(p) for p in bid_value(device, bid, :fast_start_profile, first(interval), n)], profile)
+                    check(_matches([collect(p) for p in bid_value(device, bid, :fast_start_profile, first(interval), n)], profile), device, bid, :fast_start_profile)
                 end
                 if isnothing(bid.normal_status)
-                    @test all(r -> ismissing(r.NORMALSTATUS), values(by))
+                    check(all(r -> ismissing(r.NORMALSTATUS), values(by)), device, bid, :normal_status)
                 else
                     normal = [haskey(by, t) && isequal(by[t].NORMALSTATUS, "ON") for t in grid]
-                    @test bid_value(device, bid, :normal_status, first(interval), n) == normal
+                    check(bid_value(device, bid, :normal_status, first(interval), n) == normal, device, bid, :normal_status)
                 end
             end
             for bid in AEM.get_fcas_bids(cost)
                 by = rows_by_stamp(offers, name, bid.service, bid.direction)
                 curves = bid_value(device, bid, :offer_curves, first(interval), n)
                 expected = expected_curves(by, bid.direction)
-                @test _matches(get_x_coords.(curves), [e.x for e in expected])
-                @test _matches(get_y_coords.(curves), [e.y for e in expected])
-                @test _matches(bid_value(device, bid, :max_avail, first(interval), n), on_grid(by, :MAXAVAIL))
+                check(_matches(get_x_coords.(curves), [e.x for e in expected]), device, bid, :x)
+                check(_matches(get_y_coords.(curves), [e.y for e in expected]), device, bid, :y)
+                check(_matches(bid_value(device, bid, :max_avail, first(interval), n), on_grid(by, :MAXAVAIL)), device, bid, :max_avail)
                 points = bid_value(device, bid, :trapezium, first(interval), n)
                 trapezium = [
                     haskey(by, t) ? [_num(by[t][c]) for c in (:ENABLEMENTMIN, :LOWBREAKPOINT, :HIGHBREAKPOINT, :ENABLEMENTMAX)] : zeros(4)
                         for t in grid
                 ]
-                @test _matches([collect(p) for p in points], trapezium)
+                check(_matches([collect(p) for p in points], trapezium), device, bid, :trapezium)
             end
         end
+        @test isempty(mismatches)
     end
 
     @testset "each bid's series keys are the keys the series were stored under" begin
-        checked = 0
+        keys_checked = Tuple{Any, Any}[]
         for device in get_components(Generator, bid_sys)
             cost = AEM._nem_offer_cost(device)
             isnothing(cost) && continue
             for bid in AEM.get_energy_bids(cost), field in fieldnames(typeof(bid))
                 key = getfield(bid, field)
                 key isa PowerSystems.IS.StaticTimeSeriesKey || continue
-                checked += 1
-                stored = AEM._series_key(device, PowerSystems.IS.get_name(key))
-                @test typeof(key) == typeof(stored)
-                @test all(getfield(key, f) == getfield(stored, f) for f in fieldnames(typeof(key)))
+                push!(keys_checked, (key, AEM._series_key(device, PowerSystems.IS.get_name(key))))
             end
         end
-        @test checked > 0
+        @test !isempty(keys_checked)
+        @test all(((key, stored),) -> typeof(key) == typeof(stored) && all(getfield(key, f) == getfield(stored, f) for f in fieldnames(typeof(key))), keys_checked)
     end
 
     @testset "a registered stamp without an energy row throws, naming the unit" begin
@@ -185,6 +187,7 @@
         offers = read_offers(db, interval)
         factors = Dict(r.DUID => r for r in eachrow(read_loss_factors(db; as_of = first(interval), through = last(interval) - Minute(5))))
         checked = 0
+        mismatches = String[]
         for device in (d for T in (Generator, ControllableLoad, Storage) for d in get_components(T, sys))
             cost = get_operation_cost(device)
             cost isa MarketBidCost || continue
@@ -200,14 +203,15 @@
                 for (k, t) in enumerate(grid)
                     expected = expected_curves(by, direction)[k]
                     cap = haskey(by, t) ? _num(by[t].MAXAVAIL) : 0.0
-                    @test _matches(get_x_coords(stored_curves[k]), min.(expected.x, cap))
-                    @test _matches(get_y_coords(stored_curves[k]), expected.y ./ factor)
+                    _matches(get_x_coords(stored_curves[k]), min.(expected.x, cap)) || push!(mismatches, "$name $direction x $t")
+                    _matches(get_y_coords(stored_curves[k]), expected.y ./ factor) || push!(mismatches, "$name $direction y $t")
                 end
                 checked += 1
             end
-            @test get_available(device)
+            get_available(device) || push!(mismatches, "$name unavailable")
         end
         @test checked > 0
+        @test isempty(mismatches)
         # A regional unit with no GEN offer is set unavailable.
         @test all(d -> get_available(d) == (get_operation_cost(d) isa MarketBidCost), get_components(ThermalStandard, sys))
     end

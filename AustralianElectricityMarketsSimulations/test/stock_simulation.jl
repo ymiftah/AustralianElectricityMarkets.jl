@@ -71,6 +71,9 @@ function stock_simulate(sys; kwargs...)
 end
 stock_price(solved) = only(solved.prices.ROP)
 stock_mw(solved, duid) = only(filter(:DUID => ==(duid), solved.dispatch).TOTALCLEARED)
+stock_dispatch(solved) = Dict(r.DUID => r.TOTALCLEARED for r in eachrow(solved.dispatch))
+# Whether two keyed tables of MW or prices hold the same keys and values to within `atol`.
+stock_close(a, b; atol = TOY_TOLERANCE) = keys(a) == keys(b) && all(k -> isapprox(a[k], b[k]; atol), keys(a))
 const STOCK_SIM = stock_simulate(sentinel_system())
 
 @testset "two simulation steps equal two standalone solves, with no initial conditions" begin
@@ -81,10 +84,7 @@ const STOCK_SIM = stock_simulate(sentinel_system())
         ref = stock_standalone(sentinel_system(), t)
         @test STOCK_SIM.objectives[k] ≈ ref.objective atol = TOY_TOLERANCE
         @test stock_price(STOCK_SIM.solved[k]) ≈ stock_price(ref.solved) atol = TOY_TOLERANCE
-        @test Set(STOCK_SIM.solved[k].dispatch.DUID) == Set(ref.solved.dispatch.DUID)
-        for duid in ref.solved.dispatch.DUID
-            @test stock_mw(STOCK_SIM.solved[k], duid) ≈ stock_mw(ref.solved, duid) atol = TOY_TOLERANCE
-        end
+        @test stock_close(stock_dispatch(STOCK_SIM.solved[k]), stock_dispatch(ref.solved))
     end
 end
 
@@ -202,11 +202,10 @@ const MASK_CASES = [
         gc_sim = stock_gc_duals(sim.results)["N_TOY_LIMIT"]
         for (k, t) in enumerate(STOCK_STEPS)
             new = masked_standalone(masked_system(c.sense, c.duid, c.rhs), t)
+            expected = [c.objective[k], c.cheap[k], c.expensive[k], c.price[k]]
             for run in (new, (; objective = sim.objectives[k], solved = sim.solved[k], gc = gc_sim[t]))
-                @test run.objective ≈ c.objective[k] atol = TOY_TOLERANCE
-                @test stock_mw(run.solved, TOY_CHEAP) ≈ c.cheap[k] atol = TOY_TOLERANCE
-                @test stock_mw(run.solved, TOY_EXPENSIVE) ≈ c.expensive[k] atol = TOY_TOLERANCE
-                @test stock_price(run.solved) ≈ c.price[k] atol = TOY_TOLERANCE
+                @test [run.objective, stock_mw(run.solved, TOY_CHEAP), stock_mw(run.solved, TOY_EXPENSIVE), stock_price(run.solved)] ≈
+                    expected atol = TOY_TOLERANCE
             end
             if k == 1
                 @test stock_gc_price(new.gc) ≈ c.gc_price atol = TOY_TOLERANCE
@@ -472,17 +471,9 @@ const FCAS_CHANGES = (
         ref = stock_fcas_standalone(fcas_toy_system(; FCAS_CHANGES...), t)
         @test sim.objectives[k] ≈ ref.objective atol = TOY_TOLERANCE
         @test stock_price(sim.solved[k]) ≈ stock_price(ref.solved) atol = TOY_TOLERANCE
-        for duid in ref.solved.dispatch.DUID
-            @test stock_mw(sim.solved[k], duid) ≈ stock_mw(ref.solved, duid) atol = TOY_TOLERANCE
-        end
-        @test keys(capacities[k]) == keys(ref.capacities)
-        for (cell, mw) in ref.capacities
-            @test capacities[k][cell] ≈ mw atol = TOY_TOLERANCE
-        end
-        @test keys(prices[k]) == keys(ref.prices)
-        for (market, rop) in ref.prices
-            @test prices[k][market] ≈ rop atol = TOY_TOLERANCE
-        end
+        @test stock_close(stock_dispatch(sim.solved[k]), stock_dispatch(ref.solved))
+        @test stock_close(capacities[k], ref.capacities)
+        @test stock_close(prices[k], ref.prices)
     end
     # Step 2 reads step-2 data: Alta's RAISEREG is disabled and Park City's RAISE6SEC stranded.
     @test capacities[1]["1_RAISEREG $TOY_CHEAP"] > 1.0
@@ -610,12 +601,8 @@ function stock_fcas_case(build, expected)
         capacities = stock_fcas_capacities(sim.results, t)
         @test sim.objectives[k] ≈ e.objective atol = TOY_TOLERANCE
         @test stock_price(sim.solved[k]) ≈ e.price atol = TOY_TOLERANCE
-        for (duid, mw) in e.mw
-            @test stock_mw(sim.solved[k], duid) ≈ mw atol = TOY_TOLERANCE
-        end
-        for (cell, mw) in e.cap
-            @test capacities[cell] ≈ mw atol = TOY_TOLERANCE
-        end
+        @test all(((duid, mw),) -> isapprox(stock_mw(sim.solved[k], duid), mw; atol = TOY_TOLERANCE), e.mw)
+        @test all(((cell, mw),) -> isapprox(capacities[cell], mw; atol = TOY_TOLERANCE), e.cap)
         @test stock_fcas_prices(sim.results, sys, t)[("1", BidType.RAISEREG)] ≈ e.fcas atol = TOY_TOLERANCE
     end
     return sim, sys

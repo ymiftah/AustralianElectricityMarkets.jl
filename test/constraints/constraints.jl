@@ -235,11 +235,8 @@ end
 
     @testset "AEMO provenance fields are typed" begin
         @test isempty(get_ext(gc))
-        @test get_gencon_id(gc) == "F_VIC1_RAISE6SEC"
-        @test get_limit_type(gc) == "FCAS"
-        @test get_source(gc) == "mock"
-        @test get_effective_date(gc) == DateTime(2025, 1, 1)
-        @test get_version_no(gc) == 1
+        @test (get_gencon_id(gc), get_limit_type(gc), get_source(gc), get_effective_date(gc), get_version_no(gc)) ==
+            ("F_VIC1_RAISE6SEC", "FCAS", "mock", DateTime(2025, 1, 1), 1)
     end
 
     network_gc = get_component(GenericConstraint, sys, vname("N_BAYSW_THERMAL"))
@@ -257,10 +254,7 @@ end
         vic1_gc = get_component(GenericConstraint, sys, vname("F_VIC1_RAISE6SEC"))
         unit_terms = filter(t -> t isa UnitTerm, get_terms(vic1_gc))
         @test !isempty(unit_terms)
-        for t in unit_terms
-            device = get_component(Device, sys, get_duid(t))
-            @test has_service(device, vic1_gc)
-        end
+        @test all(t -> has_service(get_component(Device, sys, get_duid(t)), vic1_gc), unit_terms)
 
         # RegionTerm: every Generator/Storage in that region carries the service, not just
         # the constraint's own UnitTerm device. And its `devices` field names exactly that set.
@@ -268,9 +262,7 @@ end
         region_term = only(filter(t -> t isa RegionTerm, get_terms(nsw1_gc)))
         region_devices = AustralianElectricityMarkets._region_devices(sys, get_region(region_term))
         @test !isempty(region_devices)
-        for d in region_devices
-            @test has_service(d, nsw1_gc)
-        end
+        @test all(d -> has_service(d, nsw1_gc), region_devices)
         @test Set(get_devices(region_term)) == Set(get_name.(region_devices))
     end
 
@@ -485,9 +477,7 @@ end
         end
 
         zname(id, ver = 1) = "$id@2013-08-21#$ver"
-        for id in ("SVML_ZERO", "VSML_ZERO", "VT_ZERO", "TV_ZERO")
-            @test zname(id) in added_z
-        end
+        @test all(id -> zname(id) in added_z, ("SVML_ZERO", "VSML_ZERO", "VT_ZERO", "TV_ZERO"))
         @test skipped_z[zname("TV_ZERO", 2)] == :no_definition
 
         # (id, interconnector, factor) of the four built-in rows; VSML_ZERO is checked separately.
@@ -495,12 +485,9 @@ end
                 ("SVML_ZERO", "V-S-MNSP1", -1.0), ("VT_ZERO", "T-V-MNSP1", -1.0), ("TV_ZERO", "T-V-MNSP1", 1.0),
             )
             gc = get_component(GenericConstraint, zero_sys, zname(id))
-            @test get_sense(gc) == ConstraintSense.LE
-            @test get_source(gc) == "built-in"
-            @test get_limit_type(gc) == "Interconnector Zero"
             term = only(get_terms(gc))
-            @test get_interconnector(term) == interconnector
-            @test get_factor(term) == factor
+            @test (get_sense(gc), get_source(gc), get_limit_type(gc), get_interconnector(term), get_factor(term)) ==
+                (ConstraintSense.LE, "built-in", "Interconnector Zero", interconnector, factor)
             @test all(==(0.0), _constraint_series(gc, :rhs))
         end
 

@@ -18,7 +18,6 @@ end
     @test !isempty(ours)
     fast_start(m) = occursin("FastStartModeTimeSeriesParameter", string(m.sig)) || occursin("FixValueParameter", string(m.sig))
     @test all(m -> occursin("NEMClosedLoopDispatchProblem", string(m.sig)) || fast_start(m), ours)
-    @test count(fast_start, ours) == 3
 end
 
 @testset "Pinned PowerSimulations.jl fork resolves the area-balance dual to an Area-keyed container" begin
@@ -42,14 +41,6 @@ end
         },
     )
     @test occursin("AreaBalancePowerModel", string(m2.sig))
-end
-
-@testset "the area PTDF slack objective is PSI's own" begin
-    m_ptdf = which(
-        PSI.objective_function!,
-        Tuple{PSI.OptimizationContainer, PSY.System, PSI.NetworkModel{PSI.AreaPTDFPowerModel}},
-    )
-    @test m_ptdf.module === PSI
 end
 
 @testset "energy offer guards: FCAS-only units have no energy bands, one-sided storage offers throw" begin

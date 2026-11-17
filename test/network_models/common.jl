@@ -90,8 +90,11 @@
         @test all(snowy_rows.available .== false)
     end
 
+    # One regional system, read-only for the two testsets below.
+    regional = nem_system(db, RegionalNetworkConfiguration())
+
     @testset "nem_system" begin
-        system = nem_system(db, RegionalNetworkConfiguration())
+        system = regional
 
         areas = get_components(Area, system) |> collect .|> get_name |> sort!
         @test areas == ["NSW1", "QLD1", "SA1", "SNOWY1", "TAS1", "VIC1"]
@@ -108,10 +111,7 @@
         # BW03 is Solar (RenewableDispatch)
         # BW04 is Wind (RenewableDispatch)
         # ER01, ER02 are ThermalStandard
-        @test length(get_components(ThermalStandard, system)) == 2
-        @test length(get_components(HydroDispatch, system)) == 1
-        @test length(get_components(EnergyReservoirStorage, system)) == 1
-        @test length(get_components(RenewableDispatch, system)) == 2
+        @test length.(get_components.((ThermalStandard, HydroDispatch, EnergyReservoirStorage, RenewableDispatch), Ref(system))) == (2, 1, 1, 2)
 
         # Check battery scaling (fix in a2b1f67)
         bat = get_component(EnergyReservoirStorage, system, "BW01")
@@ -144,7 +144,7 @@
     @testset "regional system carries the ISP operating costs" begin
         # Values from the ISP cost fill on this mock data, captured before the network builder
         # was split from the cost fill. Units of the mock data: fuel in AUD/GJ, O&M in AUD/MWh.
-        sys = nem_system(db, RegionalNetworkConfiguration())
+        sys = regional
         thermal = get_operation_cost(get_component(ThermalStandard, sys, "ER01"))
         fuel = get_variable(thermal)
         @test get_proportional_term(get_value_curve(fuel)) ≈ 9.26
@@ -169,9 +169,8 @@
         # raw isp_technology strings (that package does not depend on PowerSystems); the
         # PM_MAPPING lookup, used by RegionModel._map_primemover!, must have an entry for
         # every isp_technology value present in the bundled ISP2025 data.
-        for tech in unique(vcat(read_isp_variable_opex().isp_technology, read_isp_fixed_opex().isp_technology))
-            @test haskey(AustralianElectricityMarkets.PM_MAPPING, tech)
-        end
+        technologies = unique(vcat(read_isp_variable_opex().isp_technology, read_isp_fixed_opex().isp_technology))
+        @test isempty(filter(!in(keys(AustralianElectricityMarkets.PM_MAPPING)), technologies))
     end
 
 end

@@ -130,6 +130,7 @@ end
     end
     both_sides = 0
     one_side = 0
+    mismatched = String[]
     for device in nem_dispatch_devices(sys)
         for service in unique(b.service for b in get_fcas_bids(AEM._nem_offer_cost(device)))
             direction = fcas_bid_direction(device, service)
@@ -150,8 +151,8 @@ end
                     AEM.fcas_both_sides_stranded_ok(gen_traps[i], load_traps[i], gen_ok[i], load_ok[i], window.states[i])
                         for i in eachindex(stamps)
                 ]
-                @test [flag[1] for flag in derived] == active(false)
-                @test [flag[2] for flag in derived] == active(true)
+                [flag[1] for flag in derived] == active(false) && [flag[2] for flag in derived] == active(true) ||
+                    push!(mismatched, "$(get_name(device)) $service")
                 both_sides += 1
             else
                 traps = AEM._fcas_side(window, device, service, decremental).trapeziums
@@ -160,11 +161,12 @@ end
                     ok[i] && AEM.fcas_state_stranded_ok(traps[i], window.states[i], device isa PowerSystems.Storage)
                         for i in eachindex(stamps)
                 ]
-                @test derived == active(decremental)
+                derived == active(decremental) || push!(mismatched, "$(get_name(device)) $service")
                 one_side += 1
             end
         end
     end
+    @test isempty(mismatched)
     @test one_side > 0
 end
 

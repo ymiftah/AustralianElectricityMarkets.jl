@@ -116,6 +116,11 @@ end
     @test any(k -> entry_and_component(k)[1] === FCASCapacityVariable, var_keys)
     @test any(k -> entry_and_component(k) == (InterconnectorLossVariable, PSY.AreaInterchange), var_keys)
     @test any(k -> entry_and_component(k) == (ActivePowerOutVariable, EnergyReservoirStorage), var_keys)
+    # The solved losses sit on each interconnector's loss curve.
+    gaps = read_interconnector_loss_gaps(result.results, result.sys)
+    @test names(gaps) == ["interconnector", "DateTime", "flow_mw", "solved_loss_mw", "curve_loss_mw", "gap_mw", "weighted_loss_price"]
+    @test !isempty(gaps) && Set(gaps.DateTime) == Set([t1, t2])
+    @test all(isfinite, gaps.gap_mw) && all(<(1.0e-3), abs.(gaps.gap_mw))
 end
 
 @testset "replay_chunks splits a replay into simulations" begin

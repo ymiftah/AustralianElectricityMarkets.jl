@@ -36,16 +36,11 @@ end
     @test_throws r"incomplete dispatch inputs for .*; build sys with nem_system" replay_template(sys)
 end
 
-@testset "an MNSP cannot enter the regulated formulation without its offers" begin
-    sys = nem_system(aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR)), RegionalNetworkConfiguration())
-    # With every dispatch device unavailable, the template reaches the MNSP check.
-    foreach(d -> set_available!(d, false), AustralianElectricityMarkets.nem_dispatch_devices(sys))
-    @test_throws r"IC2.*MNSP" replay_template(sys)
-end
+# One regional system: read by the fixed-load test, then made unavailable by the MNSP test.
+const _RI_REGIONAL = nem_system(aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR)), RegionalNetworkConfiguration())
 
 @testset "fixed loads retain the dispatch variable's direction" begin
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR))
-    sys = nem_system(db, RegionalNetworkConfiguration())
+    sys = _RI_REGIONAL
     t = DateTime(2025, 1, 1, 0, 5)
     rows = DataFrame(INTERVAL_DATETIME = [t, t], DUID = ["PUMP1", "BW01"], DIRECTION = ["LOAD", "LOAD"], FIXEDLOAD = [30.0, 5.0])
     targets = AustralianElectricityMarkets._fixed_load_series(sys, rows)
@@ -53,6 +48,13 @@ end
     @test by_key[("PUMP1", t)] == 30.0
     @test by_key[("BW01", t)] == -5.0
     @test !haskey(by_key, ("PUMP1", t + Minute(5)))
+end
+
+@testset "an MNSP cannot enter the regulated formulation without its offers" begin
+    sys = _RI_REGIONAL
+    # With every dispatch device unavailable, the template reaches the MNSP check.
+    foreach(d -> set_available!(d, false), AustralianElectricityMarkets.nem_dispatch_devices(sys))
+    @test_throws r"IC2.*MNSP" replay_template(sys)
 end
 
 @testset "a cached table without the requested constraint intervals cannot replay" begin

@@ -44,17 +44,16 @@ end
     stats = PSI.read_optimizer_stats(
         PSI.get_decision_problem_results(PSI.SimulationResults(only(result.chunks.folder), "replay_workflow"), "dispatch"),
     )
-    for (row, i) in zip(solves, 1:2)
-        @test parse(Float64, row["timed_solve_s"]) ≈ stats.timed_solve_time[i]
-        @test parse(Float64, row["pricing_s"]) ≈ stats.timed_calculate_dual_variables[i]
-        @test parse(Float64, row["auxiliary_s"]) ≈ stats.timed_calculate_aux_variables[i]
-        @test parse(Float64, row["allocated_bytes"]) ≈ stats.solve_bytes_alloc[i]
-        @test parse(Float64, row["gc_s"]) ≈ stats.sec_in_gc[i]
-    end
+    fields = ("timed_solve_s", "pricing_s", "auxiliary_s", "allocated_bytes", "gc_s")
+    @test [parse(Float64, row[f]) for row in solves, f in fields] ≈ hcat(
+        stats.timed_solve_time, stats.timed_calculate_dual_variables, stats.timed_calculate_aux_variables,
+        stats.solve_bytes_alloc, stats.sec_in_gc,
+    )
     @test parse(Float64, solves[1]["timed_solve_s"]) ≈ result.solver_stats.timed_solve_time[1]
-    for row in filter(r -> r["phase"] == "parameter_update", rows)
-        @test all(isnan, parse.(Float64, (row["timed_solve_s"], row["compilation_s"], row["allocated_bytes"])))
-    end
+    @test all(
+        row -> all(isnan, parse.(Float64, (row["timed_solve_s"], row["compilation_s"], row["allocated_bytes"]))),
+        filter(r -> r["phase"] == "parameter_update", rows),
+    )
 end
 
 include("replay_batch.jl")

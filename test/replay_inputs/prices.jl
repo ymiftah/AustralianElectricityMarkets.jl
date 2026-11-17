@@ -26,6 +26,7 @@ end
     AEM = AustralianElectricityMarkets
     sys = _PR_SYS
     checked = Dict(AEM.OfferSide.GEN => 0, AEM.OfferSide.LOAD => 0)
+    wrong = String[]
     for device in AEM._bidding_devices(sys)
         cost = AEM._nem_offer_cost(device)
         isnothing(cost) && continue
@@ -41,10 +42,11 @@ end
             factor = side == AEM.OfferSide.LOAD ? registration.load_loss_factor : registration.gen_loss_factor
             y = PowerSystems.get_y_coords(first(raw))
             expected = ntuple(i -> i <= length(y) ? AEM.referred_price(y[i], factor) : 0.0, 10)
-            @test bid.band_prices == expected
+            bid.band_prices == expected || push!(wrong, "$(PowerSystems.get_name(device)) $side")
             checked[side] += 1
         end
     end
+    @test isempty(wrong)
     @test checked[AEM.OfferSide.GEN] > 0
     @test checked[AEM.OfferSide.LOAD] > 0
 end
@@ -94,14 +96,16 @@ end
     AEM = AustralianElectricityMarkets
     sys = _PR_SYS
     checked = Dict(AEM.OfferSide.GEN => 0, AEM.OfferSide.LOAD => 0)
+    wrong = String[]
     for (device, bid) in _prices_fcas_bids(sys)
         raw = PowerSystems.get_time_series_values(
             PowerSystems.SingleTimeSeries, device, AEM.IS.get_name(bid.offer_curves); ignore_scaling_factors = true,
         )
         y = PowerSystems.get_y_coords(first(raw))
-        @test bid.band_prices == ntuple(i -> i <= length(y) ? Float64(y[i]) : 0.0, 10)
+        bid.band_prices == ntuple(i -> i <= length(y) ? Float64(y[i]) : 0.0, 10) || push!(wrong, "$(PowerSystems.get_name(device)) $(bid.service)")
         checked[AEM._fcas_bid_side(device, bid)] += 1
     end
+    @test isempty(wrong)
     @test checked[AEM.OfferSide.GEN] > 0
     @test checked[AEM.OfferSide.LOAD] > 0
 end
@@ -141,13 +145,12 @@ end
     sys = _PR_SYS
     bids = _prices_mnsp_bids(sys)
     @test !isempty(bids)
-    for (device, bid) in bids
+    @test all(bids) do (device, bid)
         raw = PowerSystems.get_time_series_values(
             PowerSystems.SingleTimeSeries, device, AEM.IS.get_name(bid.offer_curves); ignore_scaling_factors = true,
         )
         y = PowerSystems.get_y_coords(first(raw))
-        @test length(y) == 10
-        @test bid.band_prices == ntuple(i -> Float64(y[i]), 10)
+        return length(y) == 10 && bid.band_prices == ntuple(i -> Float64(y[i]), 10)
     end
     @test Set(b.direction for (_, b) in bids) == Set([AEM.MNSPDirection.FORWARD, AEM.MNSPDirection.REVERSE])
 end

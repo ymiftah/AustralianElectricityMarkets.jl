@@ -81,22 +81,6 @@
         end
     end
 
-    @testset "set_market_bids! records each direction's bid on the NEMOfferCost" begin
-        sys = deepcopy(sys_base)
-        start_date = DateTime(2025, 1, 1, 0, 0)
-        date_range = start_date:Minute(5):(start_date + Hour(1))
-        set_market_bids!(sys, db, date_range)
-        gen = first(get_components(ThermalStandard, sys))
-        storage = first(get_components(EnergyReservoirStorage, sys))
-        for (device, direction) in ((gen, AustralianElectricityMarkets.BidDirection.GEN), (storage, AustralianElectricityMarkets.BidDirection.GEN), (storage, AustralianElectricityMarkets.BidDirection.LOAD))
-            bid = only(b for b in AustralianElectricityMarkets.get_energy_bids(AustralianElectricityMarkets._nem_offer_cost(device)) if b.direction == direction)
-            @test bid.offer_curves.name == AustralianElectricityMarkets.bid_series_name(AustralianElectricityMarkets.BidType.ENERGY, :offer_curves, direction)
-            @test bid.max_avail.name == AustralianElectricityMarkets.bid_series_name(AustralianElectricityMarkets.BidType.ENERGY, :max_avail, direction)
-            @test get_time_series_timestamps(SingleTimeSeries, device, bid.offer_curves.name)[1] == date_range[1]
-        end
-        @test !any(has_time_series(gen, SingleTimeSeries, n) for n in ("variable_cost", "incremental_initial_input"))
-    end
-
     @testset "set_market_bids! twice keeps one NEMEnergyBid per direction" begin
         sys = deepcopy(sys_base)
         start_date = DateTime(2025, 1, 1, 0, 0)
@@ -104,16 +88,14 @@
         second_range = (start_date + Minute(30)):Minute(5):(start_date + Minute(90))
         set_market_bids!(sys, db, first_range)
         set_market_bids!(sys, db, second_range)
-        for device in vcat(collect(get_components(ThermalStandard, sys)), collect(get_components(EnergyReservoirStorage, sys)))
-            get_available(device) || continue
-            bids = AustralianElectricityMarkets.get_energy_bids(AustralianElectricityMarkets._nem_offer_cost(device))
-            directions = [b.direction for b in bids]
-            @test allunique(directions)
-            @test !isempty(directions)
-            for direction in directions
+        devices = filter(get_available, vcat(collect(get_components(ThermalStandard, sys)), collect(get_components(EnergyReservoirStorage, sys))))
+        @test !isempty(devices)
+        # One bid per direction, each over the second call's window.
+        @test all(devices) do device
+            directions = [b.direction for b in AustralianElectricityMarkets.get_energy_bids(AustralianElectricityMarkets._nem_offer_cost(device))]
+            return !isempty(directions) && allunique(directions) && all(directions) do direction
                 name = AustralianElectricityMarkets.bid_series_name(AustralianElectricityMarkets.BidType.ENERGY, :offer_curves, direction)
-                # The second call's window replaced the first's series.
-                @test get_time_series_timestamps(SingleTimeSeries, device, name)[1] == second_range[1]
+                return get_time_series_timestamps(SingleTimeSeries, device, name)[1] == second_range[1]
             end
         end
     end
@@ -302,20 +284,11 @@
                     sort(:INTERVAL_DATETIME)
                 end
                 @test !isempty(gen_bids)
-
-                for is in buckets
-                    # `ceil` on INTERVAL_DATETIME buckets by the bucket's own end stamp, so the
-                    # first (partial) bucket is the singleton i=0, not a full-width bucket.
-                    bucket_end = start_date + Minute(5 * last(is))
-                    row = only(subset(gen_bids, :INTERVAL_DATETIME => ByRow(==(bucket_end))))
-
-                    expected_maxavail = mean(100.0 .+ is)
-                    @test isapprox(row.MAXAVAIL, expected_maxavail; atol = 1.0e-8)
-                    # 10 bands of 10.0 each, constant across i, so the bucket mean per band is
-                    # still 10.0 and the row's summed BANDAVAILARRAY is 100.0 regardless of
-                    # bucket width - including the partial first bucket.
-                    @test isapprox(sum(row.BANDAVAILARRAY), 100.0; atol = 1.0e-8)
-                end
+                # `ceil` buckets by the bucket's own end stamp, so the first (partial) bucket is the
+                # singleton i=0. The ten 10 MW bands sum to 100 MW in every bucket.
+                rows = [only(subset(gen_bids, :INTERVAL_DATETIME => ByRow(==(start_date + Minute(5 * last(is)))))) for is in buckets]
+                @test [r.MAXAVAIL for r in rows] ≈ [mean(100.0 .+ is) for is in buckets] atol = 1.0e-8
+                @test [sum(r.BANDAVAILARRAY) for r in rows] ≈ fill(100.0, length(buckets)) atol = 1.0e-8
             end
         end
     end
@@ -340,6 +313,7 @@
         for write_mode in ("SYSTEM_BASE", "NATURAL_UNITS")
             @testset "written in $write_mode, read in NATURAL_UNITS" begin
                 s = seed(write_mode)
+                wrong = String[]
                 for load in get_components(PowerLoad, s)
                     region_id = replace(get_name(load), " Load" => "")
                     truth = @chain demand_df begin
@@ -348,11 +322,11 @@
                     end
                     isempty(truth) && continue
                     got = get_time_series_values(SingleTimeSeries, load, "max_active_power")
-                    @test isapprox(got, truth.TOTALDEMAND; atol = 1.0e-6)
                     loss = get_time_series_values(SingleTimeSeries, load, "loss_demand")
-                    @test isapprox(loss, truth.LOSSDEMAND; atol = 1.0e-6)
-                    @test !isapprox(loss, truth.TOTALDEMAND; atol = 1.0e-6)
+                    isapprox(got, truth.TOTALDEMAND; atol = 1.0e-6) && isapprox(loss, truth.LOSSDEMAND; atol = 1.0e-6) &&
+                        !isapprox(loss, truth.TOTALDEMAND; atol = 1.0e-6) || push!(wrong, region_id)
                 end
+                @test isempty(wrong)
             end
         end
     end
@@ -368,16 +342,14 @@
         got = subset(buckets, :DUID => ByRow(==("PUMP1")))
         @test nrow(got) == length(coarse) - 1
         rows = subset(truth, :DUID => ByRow(==("PUMP1")))
-        for b in eachrow(got)
+        @test all(eachrow(got)) do b
             window = sort(
                 subset(rows, :SETTLEMENTDATE => ByRow(x -> b.SETTLEMENTDATE - Minute(30) < x <= b.SETTLEMENTDATE)),
                 :SETTLEMENTDATE,
             )
-            @test length(window.SETTLEMENTDATE) == 6
-            @test b.INITIALMW == first(window.INITIALMW)
-            @test b.RAMPUPRATE == minimum(window.RAMPUPRATE)
-            @test b.RAMPDOWNRATE == minimum(window.RAMPDOWNRATE)
-            @test b.AVAILABILITY == minimum(window.AVAILABILITY)
+            return length(window.SETTLEMENTDATE) == 6 && b.INITIALMW == first(window.INITIALMW) &&
+                (b.RAMPUPRATE, b.RAMPDOWNRATE, b.AVAILABILITY) ==
+                (minimum(window.RAMPUPRATE), minimum(window.RAMPDOWNRATE), minimum(window.AVAILABILITY))
         end
     end
 
@@ -415,16 +387,17 @@
             pump = get_component(InterruptiblePowerLoad, sys, "PUMP1")
             rows = sort(subset(truth, :DUID => ByRow(==("PUMP1"))), :SETTLEMENTDATE)
             telemetry, observed = get_telemetry(pump), get_observed_state(pump)
-            @test unit_values(pump, observed.initial_mw) == rows.INITIALMW
             # The mode is the previous interval's DISPATCHMODE; the mock's prior row at 23:55 is mode 0.
-            @test unit_values(pump, observed.dispatch_mode) == [0.0; rows.DISPATCHMODE[1:(end - 1)]]
-            @test unit_values(pump, telemetry.agc_status) == rows.AGCSTATUS
-            @test unit_values(pump, telemetry.ramp_up_limit) == rows.RAMPUPRATE
-            @test unit_values(pump, telemetry.ramp_down_limit) == rows.RAMPDOWNRATE
-            @test unit_values(pump, telemetry.raise_reg_max_avail) == rows.RAISEREGAVAILABILITY
-            @test unit_values(pump, telemetry.lower_reg_max_avail) == rows.LOWERREGAVAILABILITY
-            @test first.(unit_values(pump, telemetry.lower_reg_enablement)) == rows.LOWERREGENABLEMENTMIN
-            @test last.(unit_values(pump, telemetry.raise_reg_enablement)) == rows.RAISEREGENABLEMENTMAX
+            @test [
+                unit_values(pump, observed.initial_mw), unit_values(pump, observed.dispatch_mode),
+                unit_values(pump, telemetry.agc_status), unit_values(pump, telemetry.ramp_up_limit),
+                unit_values(pump, telemetry.ramp_down_limit), unit_values(pump, telemetry.raise_reg_max_avail),
+                unit_values(pump, telemetry.lower_reg_max_avail), first.(unit_values(pump, telemetry.lower_reg_enablement)),
+                last.(unit_values(pump, telemetry.raise_reg_enablement)),
+            ] == [
+                rows.INITIALMW, [0.0; rows.DISPATCHMODE[1:(end - 1)]], rows.AGCSTATUS, rows.RAMPUPRATE, rows.RAMPDOWNRATE,
+                rows.RAISEREGAVAILABILITY, rows.LOWERREGAVAILABILITY, rows.LOWERREGENABLEMENTMIN, rows.RAISEREGENABLEMENTMAX,
+            ]
             @test isnothing(telemetry.uigf)
             # Ramps, the upper limit and AGC ramp rates are derived in AEMSim, not here.
             @test !has_time_series(pump, SingleTimeSeries, "ramp_up_rate")
@@ -466,15 +439,6 @@
             # The metered ramp rates stay as published, for AGC ramping; AEMSim zeroes the ramp limits.
             @test unit_values(asload, get_telemetry(asload).ramp_up_limit) ≈ subset(truth, :DUID => ByRow(==("ASLOAD1"))).RAMPUPRATE
             @test !is_semi_scheduled(asload)
-        end
-
-        @testset "a battery gets its telemetry ramps and observed initial_mw, with no UIGF" begin
-            sys = deepcopy(sys_base)
-            set_unit_conditions!(sys, db, date_range)
-            battery = get_component(EnergyReservoirStorage, sys, "BW01")
-            @test get_observed_state(battery).initial_mw isa TimeSeriesKey
-            @test get_telemetry(battery).ramp_up_limit isa TimeSeriesKey
-            @test isnothing(get_telemetry(battery).uigf)
         end
 
         @testset "a semi-scheduled unit gets its UIGF, a scheduled unit none" begin

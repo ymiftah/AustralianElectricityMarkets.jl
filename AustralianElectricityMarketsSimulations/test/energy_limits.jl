@@ -153,18 +153,3 @@ end
         @test PSI.JuMP.coefficient(objective, slack[TOY_CHEAP, 1]) ≈ expected
     end
 end
-
-@testset "a range entirely after 1 July replays as standalone single-interval builds" begin
-    start = DateTime(2025, 7, 1, 0, 5)
-    steps = start:TOY_RESOLUTION:(start + TOY_RESOLUTION)
-    optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false)
-    sys = energy_limit_system(; max_avail = 40.0, start)
-    out = run_replay(sys, steps; optimizer)
-    objectives = PSI.read_optimizer_stats(out.results).objective_value
-    for (i, t) in enumerate(steps)
-        model = PSI.DecisionModel(AEMS.NEMDispatchProblem, replay_template(sys), sys; optimizer, initial_time = t)
-        @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-        @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-        @test objectives[i] ≈ only(PSI.read_optimizer_stats(PSI.OptimizationProblemResults(model)).objective_value) rtol = 1.0e-9
-    end
-end

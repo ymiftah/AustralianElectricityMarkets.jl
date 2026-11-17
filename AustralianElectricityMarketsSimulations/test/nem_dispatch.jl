@@ -65,6 +65,9 @@ function nem_dispatch_model(sys; horizon = NEM_DISPATCH_HORIZON, name = "nem_dis
     )
 end
 
+# One read-only mock dispatch system for the testsets that do not mutate it.
+const NEM_DISPATCH_SYS = nem_dispatch_system()
+
 entry_types(keys_) = Set(IS.Optimization.get_entry_type(k) for k in keys_)
 
 # The variables a constraint's affine expression actually references.
@@ -81,12 +84,8 @@ constraint_metas(constraint_keys, ::Type{T}) where {T} =
     [k.meta for k in component_keys(constraint_keys, T) if IS.Optimization.get_entry_type(k) === NEMUnitConstraint]
 
 @testset "participants are discovered from the data, not a fixed type list" begin
-    sys = nem_dispatch_system()
-    types = nem_dispatch_participants(sys)
-    @test ThermalStandard in types
-    @test HydroDispatch in types
-    @test RenewableDispatch in types
-    @test EnergyReservoirStorage in types
+    types = nem_dispatch_participants(NEM_DISPATCH_SYS)
+    @test issubset((ThermalStandard, HydroDispatch, RenewableDispatch, EnergyReservoirStorage), types)
     # A load carries no ramp series, so it is not a participant.
     @test !(PSY.PowerLoad in types)
 
@@ -101,7 +100,7 @@ constraint_metas(constraint_keys, ::Type{T}) where {T} =
 end
 
 @testset "build and solve" begin
-    sys = nem_dispatch_system()
+    sys = NEM_DISPATCH_SYS
     model = nem_dispatch_model(sys)
     @test build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
 
@@ -139,9 +138,7 @@ end
                 for T in generator_participants
         ]
         @test allequal(slack_meta_sets)
-        for meta in ("energy_limit|max_avail", "energy_offer|surplus", "energy_offer|deficit", "unit_ramp|up", "unit_ramp|down")
-            @test meta in first(slack_meta_sets)
-        end
+        @test issubset(("energy_limit|max_avail", "energy_offer|surplus", "energy_offer|deficit", "unit_ramp|up", "unit_ramp|down"), first(slack_meta_sets))
         # NEMUnitConstraint is one entry type, so the unit row shape is compared by (entry type, meta) pairs.
         optional_constraint_metas = ["uigf", "fixed_load|upper", "fixed_load|lower"]
         constraint_sets = [
@@ -241,7 +238,7 @@ end
 end
 
 @testset "a unit carrying NEM unit data under a stock formulation is rejected" begin
-    sys = nem_dispatch_system()
+    sys = NEM_DISPATCH_SYS
     template = ProblemTemplate(NetworkModel(AreaBalancePowerModel; use_slacks = true))
     PSI.set_device_model!(template, ThermalStandard, PSI.ThermalBasicDispatch)
     err = _caught(() -> check_template_against_sys(template, sys))
@@ -271,8 +268,8 @@ end
 end
 
 @testset "the series the formulation reads is the energy bid's MAXAVAIL per unit" begin
-    sys = nem_dispatch_system()
-    checked = 0
+    sys = NEM_DISPATCH_SYS
+    checked, wrong = 0, String[]
     for device in PSY.get_components(PSY.StaticInjection, sys)
         cost = AustralianElectricityMarkets._nem_offer_cost(device)
         isnothing(cost) && continue
@@ -281,12 +278,14 @@ end
             param = device isa PSY.Storage ?
                 (side == OfferSide.GEN ? PSI.ActivePowerOutTimeSeriesParameter : PSI.ActivePowerInTimeSeriesParameter) :
                 EnergyLimitTimeSeriesParameter
-            @test AEMS._availability_series_name(device, param) == bid.max_avail.name
-            @test PSY.has_time_series(device, PSY.SingleTimeSeries, bid.max_avail.name)
-            @test PSI.get_multiplier_value(param(), device, NEMReplayDispatch()) ≈ 1 / PSY.get_base_power(sys)
+            AEMS._availability_series_name(device, param) == bid.max_avail.name &&
+                PSY.has_time_series(device, PSY.SingleTimeSeries, bid.max_avail.name) &&
+                PSI.get_multiplier_value(param(), device, NEMReplayDispatch()) ≈ 1 / PSY.get_base_power(sys) ||
+                push!(wrong, "$(PSY.get_name(device)) $(bid.direction)")
             checked += 1
         end
     end
     @test checked > 0
+    @test isempty(wrong)
     @test any(d -> d isa InterruptiblePowerLoad && !isempty(AustralianElectricityMarkets.get_energy_bids(AustralianElectricityMarkets._nem_offer_cost(d))), PSY.get_components(PSY.StaticInjection, sys))
 end

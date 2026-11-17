@@ -41,14 +41,13 @@
 
         @test Set(added) == Set(keys(expected))
         @test Dict(k => Set(v) for (k, v) in excluded) == left_out
-        for (name, devices) in expected
+        @test all(expected) do (name, devices)
             svc = get_component(FCASService, sys, name)
-            @test get_region(svc) * "_" * string(get_bid_type(svc)) == name
             contributors = Set(
                 get_name(d) for d in Iterators.flatten((get_components(Generator, sys), get_components(Storage, sys)))
                     if has_service(d, svc)
             )
-            @test contributors == devices
+            return get_region(svc) * "_" * string(get_bid_type(svc)) == name && contributors == devices
         end
         # BAT1 bids RAISE6SEC in both directions, which the formulation does not model.
         @test "BAT1" in excluded["1_RAISE6SEC"]

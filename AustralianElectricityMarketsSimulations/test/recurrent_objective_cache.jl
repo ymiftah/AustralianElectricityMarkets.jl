@@ -80,6 +80,8 @@ end
         interval = TOY_RESOLUTION,
     )
     read_energy(start) = PSI.get_time_series_values!(PSY.DeterministicSingleTimeSeries, model, device, "variable_cost", start, 1)
+    # Sampled steps where the energy and FCAS reads, the cache key or the cache size are wrong.
+    wrong = Int[]
     for i in 1:60
         start = TOY_START + (i - 1) * TOY_RESOLUTION
         energy = read_energy(start)
@@ -89,14 +91,14 @@ end
             interval = PSI.get_interval(PSI.get_settings(model)), ignore_scaling_factors = true,
         )
         if i in (1, 24, 25, 48, 49, 60)
-            @test PSY.get_y_coords(only(energy)) == [Float64(i)]
-            @test PSY.get_y_coords(only(forecast)) == [Float64(i)]
             caches = PSI.get_time_series_cache(model)
-            @test any(k -> k isa PSI.IS.TimeSeriesCacheKey && k.name == "variable_cost", keys(caches))
-            @test all(c -> Base.summarysize(PSI.IS._get_time_series(c)) < 100_000, values(caches))
-            @test PSY.get_y_coords(only(read_energy(start))) == [Float64(i)]
+            PSY.get_y_coords(only(energy)) == [Float64(i)] && PSY.get_y_coords(only(forecast)) == [Float64(i)] &&
+                any(k -> k isa PSI.IS.TimeSeriesCacheKey && k.name == "variable_cost", keys(caches)) &&
+                all(c -> Base.summarysize(PSI.IS._get_time_series(c)) < 100_000, values(caches)) &&
+                PSY.get_y_coords(only(read_energy(start))) == [Float64(i)] || push!(wrong, i)
         end
     end
+    @test isempty(wrong)
     @test_throws PSI.IS.InvalidValue read_energy(TOY_START)
     PSI.empty_time_series_cache!(model)
     @test PSY.get_y_coords(only(read_energy(TOY_START))) == [1.0]

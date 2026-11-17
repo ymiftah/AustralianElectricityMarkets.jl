@@ -27,10 +27,8 @@
     constraints = sort!(collect(get_components(GenericConstraint, sys)); by = get_name)
     @test length(constraints) == 7
     @test sort!(get_name.(get_components(GenericConstraint, sys2))) == get_name.(constraints)
-    for gc in constraints
-        @test length(_constraint_series(gc, :rhs)) == length(date_range) - 1
-        @test describe(get_component(GenericConstraint, sys2, get_name(gc))) == describe(gc)
-    end
+    @test all(gc -> length(_constraint_series(gc, :rhs)) == length(date_range) - 1, constraints)
+    @test [describe(get_component(GenericConstraint, sys2, get_name(gc))) for gc in constraints] == describe.(constraints)
     region_term = only(filter(t -> t isa RegionTerm, get_terms(get_component(GenericConstraint, sys2, "F_R1_RAISE6SEC@2025-01-01#1"))))
     @test !isempty(get_devices(region_term))
 

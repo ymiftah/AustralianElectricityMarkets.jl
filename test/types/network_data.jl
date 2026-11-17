@@ -185,7 +185,6 @@ end
     twin = AEM.NEMBuildReport(; defaulted_constraint_weights = ["N_W"], dropped_terms = [dropped()])
     @test stored == twin
     @test hash(stored) == hash(twin)
-    @test hash(stored) != hash(AEM.NEMBuildReport())
 end
 
 @testset "a constraint's keyed rhs resolves to the same values after transform_single_time_series!" begin

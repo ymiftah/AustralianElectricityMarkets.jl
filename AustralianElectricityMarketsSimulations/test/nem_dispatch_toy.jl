@@ -227,33 +227,6 @@ end
     end
 end
 
-@testset "storage availability is elastic without a static or derived ceiling" begin
-    for (gen, load) in ((20.0, 100.0), (100.0, 20.0))
-        sys = nem_toy_system(
-            [TOY_CHEAP => toy_unit(200.0, [(200.0, 20.0)]; initial = 60.0, ramp_up = 100.0)], 0.0;
-            batteries = [
-                TOY_BATTERY => toy_battery(
-                    100.0, 1000.0, 100.0, 50.0;
-                    initial = 0.0, ramp_up = 100.0, gen_avail = gen, load_avail = load
-                ),
-            ],
-            mutate! = function (sys, _)
-                battery = PSY.get_component(EnergyReservoirStorage, sys, TOY_BATTERY)
-                PSY.set_input_active_power_limits!(battery, (min = 0.0, max = 5.0))
-                PSY.set_output_active_power_limits!(battery, (min = 0.0, max = 5.0))
-                return
-            end,
-        )
-        out = solve_toy(sys)
-        @test out.battery_in_mw[TOY_BATTERY] ≈ load atol = TOY_TOLERANCE
-        @test out.battery_out_mw[TOY_BATTERY] ≈ 0.0 atol = TOY_TOLERANCE
-        for variable_type in (PSI.ActivePowerOutVariable, PSI.ActivePowerInVariable)
-            variables = PSI.get_variable(out.container, variable_type(), EnergyReservoirStorage)
-            @test !PSI.JuMP.has_upper_bound(variables[TOY_BATTERY, 1])
-        end
-    end
-end
-
 @testset "a generic constraint binds against NEMReplayDispatch" begin
     function constrained_toy(rhs_mw)
         return nem_toy_system(
@@ -395,15 +368,19 @@ end
         mutate! = function (s, _)
             battery = PSY.get_component(EnergyReservoirStorage, s, TOY_BATTERY)
             PSY.set_input_active_power_limits!(battery, (min = 0.0, max = 40.0))
+            PSY.set_output_active_power_limits!(battery, (min = 0.0, max = 5.0))
             return
         end,
     )
     out = solve_toy(sys)
     mpc = AustralianElectricityMarkets._financial_year_mpc(TOY_START)
-    input_variable = PSI.get_variable(out.container, PSI.ActivePowerInVariable(), EnergyReservoirStorage)
 
     @test out.battery_in_mw[TOY_BATTERY] ≈ 50.0 atol = TOY_TOLERANCE
-    @test !PSI.JuMP.has_upper_bound(input_variable[TOY_BATTERY, 1])
+    # Static ratings impose no bound on either direction's variable.
+    @test !any(
+        PSI.JuMP.has_upper_bound(PSI.get_variable(out.container, V(), EnergyReservoirStorage)[TOY_BATTERY, 1])
+            for V in (PSI.ActivePowerOutVariable, PSI.ActivePowerInVariable)
+    )
     @test out.storage_ramp_slack_mw.up ≈ 0.0 atol = TOY_TOLERANCE
     @test out.objective ≈ (50.0 * 20.0 + 10.0 * AustralianElectricityMarkets.ENERGY_MAX_AVAIL_CVP_FACTOR * mpc) * interval_hours(DISPATCH_INTERVAL) rtol = 1.0e-8
 
@@ -751,7 +728,7 @@ end
 
 @testset "Market Price Cap penalties are priced at build on a non-area-balance network model" begin
     sys = nem_toy_system([TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 0.0, ramp_up = 100.0)], 50.0)
-    template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaPTDFPowerModel; use_slacks = false))
+    template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.CopperPlatePowerModel; use_slacks = false))
     set_nem_dispatch_models!(template, sys)
     PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
     model = toy_model(sys; template)

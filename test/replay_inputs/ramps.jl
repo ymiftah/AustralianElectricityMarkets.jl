@@ -246,13 +246,6 @@ end
     @test written[k] != gen_only[1] / base
 end
 
-@testset "the dispatch-limit writer writes no upper limit series" begin
-    sys = _RP_SYS
-    for device in AustralianElectricityMarkets.nem_dispatch_devices(sys)
-        @test !has_time_series(device, SingleTimeSeries, NEM_SERIES.max_active_power)
-    end
-end
-
 @testset "a NaN telemetered ramp limit is written as a zero ramp rate" begin
     AEM = AustralianElectricityMarkets
     sys = deepcopy(_RP_SYS)

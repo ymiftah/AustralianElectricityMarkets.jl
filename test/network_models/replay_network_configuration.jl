@@ -5,6 +5,10 @@ const _REPLAY_HIVE = let hive = mktempdir()
     hive
 end
 
+# The NEMDE replay system of the shared hive, read-only for the testsets below.
+const _REPLAY_INTERVAL = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
+const _REPLAY_SYS = nem_system(aem_connect(HiveConfiguration(hive_location = _REPLAY_HIVE)), NEMDEConfiguration(); date_range = _REPLAY_INTERVAL)
+
 @testset "Replay requirements include mandatory MNSP metering" begin
     @test :DISPATCHINTERCONNECTORRES in table_requirements(NEMDEConfiguration())
 end
@@ -23,25 +27,20 @@ end
     )
     devices = [d for T in (Generator, ControllableLoad, Storage) for d in get_components(T, sys)]
     @test !isempty(devices)
-    for device in devices
-        name = get_name(device)
-        registration = get_registration(device)
-        unit, factor = units_by_duid[name], factors[name]
-        @test registration.schedule_type == schedule_types[unit.SCHEDULE_TYPE]
-        @test registration.gen_loss_factor == factor.GEN_LOSS_FACTOR
-        @test registration.load_loss_factor == factor.LOAD_LOSS_FACTOR
-        @test registration.registered_from == unit.REGISTERED_FROM
-        @test registration.registered_until == unit.REGISTERED_UNTIL
-        @test isempty(get_ext(device))
+    function registered(device)
+        registration, unit, factor = get_registration(device), units_by_duid[get_name(device)], factors[get_name(device)]
+        return registration.schedule_type == schedule_types[unit.SCHEDULE_TYPE] &&
+            registration.gen_loss_factor == factor.GEN_LOSS_FACTOR && registration.load_loss_factor == factor.LOAD_LOSS_FACTOR &&
+            registration.registered_from == unit.REGISTERED_FROM && registration.registered_until == unit.REGISTERED_UNTIL &&
+            isempty(get_ext(device))
     end
+    @test isempty(filter(!registered, devices))
 
     # Station metadata is typed, attached as one shared NEMStation per station.
     station_of = Dict(get_name(g) => only(get_supplemental_attributes(NEMStation, g)) for g in get_components(Generator, sys))
-    for (name, station) in station_of
+    @test all(station_of) do (name, station)
         unit = units_by_duid[name]
-        @test station.station_id == unit.STATIONID
-        @test station.station_name == unit.STATIONNAME
-        @test station.postcode == unit.POSTCODE
+        return (station.station_id, station.station_name, station.postcode) == (unit.STATIONID, unit.STATIONNAME, unit.POSTCODE)
     end
     @test station_of["BW02"] === station_of["BW03"]
     @test station_of["BW03"] === station_of["BW04"]
@@ -67,13 +66,8 @@ end
     config = NEMDEConfiguration()
     @test_throws ArgumentError nem_system(db, config; date_range = first(interval):Minute(10):last(interval))
     @test_throws ArgumentError nem_system(db, config; date_range = first(interval):Minute(5):first(interval))
-    sys = nem_system(db, config; date_range = interval)
-    for T in (Generator, ControllableLoad, Storage), device in get_components(T, sys)
-        @test isempty(get_ext(device))
-    end
-    for T in (GenericConstraint, AreaInterchange), device in get_components(T, sys)
-        @test isempty(get_ext(device))
-    end
+    sys = _REPLAY_SYS
+    @test all(d -> isempty(get_ext(d)), (d for T in (Generator, ControllableLoad, Storage, GenericConstraint, AreaInterchange) for d in get_components(T, sys)))
     gen = get_component(RenewableDispatch, sys, "BW03")
     @test get_time_series_values(SingleTimeSeries, gen, "bid_energy_max_avail_gen") ≈ [101.0, 102.0, 103.0]
     @test get_time_series_values(SingleTimeSeries, gen, "telemetry_uigf"; ignore_scaling_factors = true) ≈ [41.0, 42.0, 43.0]
@@ -129,17 +123,21 @@ end
     db = aem_connect(HiveConfiguration(hive_location = hive))
     interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
 
+    # One fresh build for the two hand-edited systems; the telemetry is restored before the MNSP edit.
+    edited = nem_system(db, NEMDEConfiguration(); date_range = interval)
     @testset "a dispatch device without its typed fields" begin
-        sys = nem_system(db, NEMDEConfiguration(); date_range = interval)
-        set_telemetry!(get_component(ThermalStandard, sys, "ER01"), nothing)
-        @test_throws r"ER01.*telemetry" AEM._check_nemde_replay_inputs(sys)
+        er01 = get_component(ThermalStandard, edited, "ER01")
+        telemetry = get_telemetry(er01)
+        set_telemetry!(er01, nothing)
+        @test_throws r"ER01.*telemetry" AEM._check_nemde_replay_inputs(edited)
+        set_telemetry!(er01, telemetry)
     end
 
     @testset "an MNSP without two directional links" begin
         damaged = damaged_cache(hive, :MNSP_INTERCONNECTOR, "DELETE FROM input WHERE LINKID = 'BLNKVIC'")
         @test_throws r"IC2.*link" nem_system(damaged, NEMDEConfiguration(); date_range = interval)
         # The build rejects the damaged cache itself; the check also guards a hand-edited system.
-        sys = nem_system(db, NEMDEConfiguration(); date_range = interval)
+        sys = edited
         ic2 = get_component(AreaInterchange, sys, "IC2")
         remove_supplemental_attribute!(sys, ic2, first(get_supplemental_attributes(AEM.NEMMNSPLink, ic2)))
         @test_throws r"IC2.*link" AEM._check_nemde_replay_inputs(sys)
@@ -210,8 +208,7 @@ end
     end
 
     @testset "exact padded coverage and versions" begin
-        t = DateTime(2025, 1, 1, 0, 5)
-        sys = nem_system(db, NEMDEConfiguration(); date_range = t:Minute(5):(t + Minute(10)))
+        sys = _REPLAY_SYS
         @test isempty(get_skipped_constraints(sys))
         @test isempty(get_defaulted_constraint_weights(sys))
         @test isempty(get_missing_constraint_intervals(sys))
@@ -305,10 +302,8 @@ end
     hive = _REPLAY_HIVE
     db = aem_connect(HiveConfiguration(hive_location = hive))
     interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
-    sys = nem_system(db, NEMDEConfiguration(); date_range = interval)
-    for T in (ThermalStandard, HydroDispatch, RenewableDispatch, EnergyReservoirStorage, InterruptiblePowerLoad)
-        @test all(has_nem_unit_data, get_components(T, sys))
-    end
+    sys = _REPLAY_SYS
+    @test all(has_nem_unit_data, (d for T in (ThermalStandard, HydroDispatch, RenewableDispatch, EnergyReservoirStorage, InterruptiblePowerLoad) for d in get_components(T, sys)))
     @test !any(d -> get_operation_cost(d) isa MarketBidCost, Iterators.flatten((get_components(Generator, sys), get_components(Storage, sys), get_components(ControllableLoad, sys))))
     nem_devices = [d for T in (ThermalStandard, HydroDispatch, RenewableDispatch, EnergyReservoirStorage, InterruptiblePowerLoad) for d in get_components(T, sys)]
     @test !isempty(nem_devices)
@@ -316,26 +311,14 @@ end
     # Every recorded bid key resolves to a series on its device.
     bids = [(d, b) for d in nem_devices for b in AustralianElectricityMarkets.get_energy_bids(AustralianElectricityMarkets._nem_offer_cost(d))]
     @test !isempty(bids)
-    for (device, bid) in bids
-        @test has_time_series(device, SingleTimeSeries, bid.offer_curves.name)
-        @test has_time_series(device, SingleTimeSeries, bid.max_avail.name)
-    end
-end
-
-@testset "regional systems keep stock types" begin
-    db = aem_connect(HiveConfiguration(hive_location = _REPLAY_HIVE))
-    sys = nem_system(db, RegionalNetworkConfiguration())
-    for T in (ThermalStandard, HydroDispatch, RenewableDispatch, EnergyReservoirStorage, InterruptiblePowerLoad)
-        @test !any(has_nem_unit_data, get_components(T, sys))
-    end
-    @test !isempty(get_components(ThermalStandard, sys))
+    @test all(((d, b),) -> has_time_series(d, SingleTimeSeries, b.offer_curves.name) && has_time_series(d, SingleTimeSeries, b.max_avail.name), bids)
 end
 
 @testset "units registered mid-chunk are built for the whole chunk" begin
     hive = _REPLAY_HIVE
     interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
     grid = collect(interval)[1:(end - 1)]
-    full = nem_system(aem_connect(HiveConfiguration(hive_location = hive)), NEMDEConfiguration(); date_range = interval)
+    full = _REPLAY_SYS
     series(device, name) = get_time_series_values(SingleTimeSeries, device, name; ignore_scaling_factors = true) .* get_base_power(full)
     # Natural-unit telemetry and observed-state series, as published.
     raw(device, name) = get_time_series_values(SingleTimeSeries, device, name; ignore_scaling_factors = true)
@@ -369,11 +352,11 @@ end
     end
 
     # Every single-time-series input of every injection spans the whole chunk.
-    for device in get_components(StaticInjection, late), key in get_time_series_keys(device)
-        get_time_series_type(key) === SingleTimeSeries || continue
-        stamps = get_time_series_timestamps(SingleTimeSeries, device, get_name(key))
-        @test stamps == grid
-    end
+    short = [
+        (get_name(device), get_name(key)) for device in get_components(StaticInjection, late) for key in get_time_series_keys(device)
+            if get_time_series_type(key) === SingleTimeSeries && get_time_series_timestamps(SingleTimeSeries, device, get_name(key)) != grid
+    ]
+    @test isempty(short)
     @test isempty(get_dropped_terms(late))
     @test isempty(get_skipped_constraints(late))
 
@@ -401,9 +384,10 @@ end
         @test isequal(values[2:3], get_time_series_values(SingleTimeSeries, battery_full, trapezium; ignore_scaling_factors = true)[2:3])
         # Every FCAS offer curve, whichever device carries it, spans the whole chunk.
         bidders = Iterators.flatten((get_components(Generator, sys), get_components(Storage, sys), get_components(ControllableLoad, sys)))
-        for device in bidders, bid in AustralianElectricityMarkets.get_fcas_bids(AustralianElectricityMarkets._nem_offer_cost(device))
-            @test length(get_time_series_values(SingleTimeSeries, device, bid.offer_curves.name; ignore_scaling_factors = true)) == length(grid)
-        end
+        @test all(
+            length(get_time_series_values(SingleTimeSeries, device, bid.offer_curves.name; ignore_scaling_factors = true)) == length(grid)
+                for device in bidders for bid in AustralianElectricityMarkets.get_fcas_bids(AustralianElectricityMarkets._nem_offer_cost(device))
+        )
     end
 
     @testset "a non-scheduled FCAS-only load is zero where its data stops" begin

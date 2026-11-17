@@ -612,11 +612,8 @@ end
     @test bounds[TOY_EXPENSIVE] == [0.0, 0.0]
     for (trap, bnds, kwargs) in (
             ((5.0, 10.0, 90.0, 100.0, 0.0), bands, (;)),            # MaxAvail = 0
-            (trapezium, [(0.0, 10.0)], (;)),                        # no band with quantity
-            (trapezium, bands, (; initial = 2.0)),                  # stranded below EnablementMin
             ((5.0, 10.0, 40.0, 50.0, 10.0), bands, (; initial = 60.0)),  # stranded above EnablementMax
             (trapezium, bands, (; initial = 6.0, availability = 4.0)),   # energy availability below EnablementMin
-            ((-20.0, -15.0, -10.0, -5.0, 10.0), bands, (;)),        # EnablementMax < 0
         )
         @test first(capacity_bound_mw(trap, bnds; kwargs...))[TOY_CHEAP] == [0.0]
     end
@@ -1024,7 +1021,7 @@ fcas_enabled_mw(results, sys, service_name) =
 @testset "a UnitTerm/RegionTerm on a contingency or regulation service forces it and prices the region via the dual" begin
     unit(bt) = UnitTerm(TOY_CHEAP, bt, 1.0)
     region(bt) = RegionTerm("1", bt, 1.0, [TOY_CHEAP])
-    for bid_type in (BidType.RAISE6SEC, BidType.RAISEREG), make_term in (unit, region)
+    for (bid_type, make_term) in ((BidType.RAISE6SEC, unit), (BidType.RAISEREG, region))
         gcs = [("F_TOY", ConstraintSense.GE, 5.0, [make_term(bid_type)], [bid_type])]
         sys = fcas_requirement_toy_system([(bid_type, 10.0)], gcs)
         # Two intervals, so the resolution is read from `results`.

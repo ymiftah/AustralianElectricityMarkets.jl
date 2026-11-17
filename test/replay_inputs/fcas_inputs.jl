@@ -139,6 +139,7 @@ end
         AEM = AustralianElectricityMarkets
         load_side_checks = 0
         bidirectional_checks = 0
+        mismatched = String[]
         with_units_base(sys, "NATURAL_UNITS") do
             for device in nem_dispatch_devices(sys), service in AEM.FCAS_BID_TYPES
                 is_regulation = service in AEM.FCAS_REGULATION_MARKETS
@@ -174,12 +175,13 @@ end
                         ) for i in 1:horizon
                     ]
                     scaled = _scaled_pu(device, service, start_date, horizon; decremental, resolution)
-                    @test all(i -> isequal(Tuple(scaled[i]), Tuple(expected[i])), 1:horizon)
+                    all(i -> isequal(Tuple(scaled[i]), Tuple(expected[i])), 1:horizon) || push!(mismatched, "$(get_name(device)) $service $side")
                     decremental && (load_side_checks += 1)
                     direction == FCASBidDirection.BOTH && (bidirectional_checks += 1)
                 end
             end
         end
+        @test isempty(mismatched)
         @test load_side_checks > 0
         @test bidirectional_checks > 0
     end

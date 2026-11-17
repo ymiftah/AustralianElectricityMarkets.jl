@@ -50,7 +50,6 @@ const TEST_GROUPS = [
     "fast_start" => ("Two-run fast-start dispatch", "fast_start.jl"),
     "replay_workflow" => ("Replay workflow on the mock cache", "replay_workflow.jl"),
     "replay_scripts" => ("Repository replay workflow", "../../test/scripts/replay_workflow.jl"),
-    "baseline_tools" => ("Baseline tools", "baseline_tools.jl"),
 ]
 
 const SELECTED_GROUPS = let known = first.(TEST_GROUPS)
