@@ -20,7 +20,7 @@ LOSSDEMAND = INITIALSUPPLY + DEMANDFORECAST + sum over the region's BIDIRECTIONA
 ## How
 
 - `read_demand` returns `LOSSDEMAND`; `set_demand!` attaches it to each `PowerLoad` as a second series `loss_demand`; `_set_loss_demand_coefficients!` turns the regional sums into the interchange's `"loss_demand_coefficient"` series (`loss_demand_coefficient`), which the loss formulation reads.
-- Unit type and region come from the `DUDETAILSUMMARY` row in force at the interval; `DISPATCHREGIONSUM` and the charging `DISPATCHLOAD` rows are read at the caller's `intervention` (default 0, the pricing run; the MMS Data Model's `INTERVENTION` column marks the run, 0 pricing and 1 physical), so a run never averages the two runs' demand.
+- Unit type and region come from the `DUDETAILSUMMARY` row in force at the interval; `DISPATCHREGIONSUM` and the charging `DISPATCHLOAD` rows are read at the caller's `intervention` (default 0, the pricing run), with each table's run chosen per interval as [0108](0108-intervention-run-selection.md) sets out, so a run never averages the two runs' demand.
 
 ## Why
 

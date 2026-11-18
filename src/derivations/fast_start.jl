@@ -219,9 +219,8 @@ end
 """
     fast_start_ramp_exempt(state::NEMUnitState, fast_start::Bool) -> Bool
 
-Whether a unit's energy ramp rows are left out of NEMDE's commitment run: it is fast-start and starts the interval
-in dispatch mode 0, 1 or 2. The same starting modes exempt it from the joint energy and regulation ramping limits
-([`fcas_joint_ramping_exempt`](@ref)).
+Whether a unit's energy ramp rows, and its joint energy and regulation ramping limits, are left out of NEMDE's
+commitment run: it is fast-start and starts the interval in dispatch mode 0, 1 or 2.
 
 # Arguments
 - `state`: the [`NEMUnitState`](@ref) at the start of the interval.

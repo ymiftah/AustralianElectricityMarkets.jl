@@ -847,17 +847,6 @@ end
 
 
 function _add_area_interfaces!(sys, interconnectors)
-    interface_services = (
-        TransmissionInterface(
-            name = row[:name],
-            available = row[:available],
-            active_power_flow_limits = (; min = 0.0, max = max(row[:max_flow_from], row[:max_flow_to]) / BASE_POWER),
-            violation_penalty = 1.0e5,
-            direction_mapping = Dict(row[:name] => 1),
-        ) for row in eachrow(interconnectors)
-    )
-    add_components!(sys, interface_services)
-
     area_interchanges = (
         AreaInterchange(;
             name = row[:name],
@@ -866,7 +855,6 @@ function _add_area_interfaces!(sys, interconnectors)
             from_area = get_component(Area, sys, row[:from_area]),
             to_area = get_component(Area, sys, row[:to_area]),
             flow_limits = (row[:max_flow_from] / BASE_POWER, row[:max_flow_to] / BASE_POWER),
-            # services=[get_component(TransmissionInterface, sys, row[:name])],
         ) for row in eachrow(interconnectors)
     )
     add_components!(sys, area_interchanges)

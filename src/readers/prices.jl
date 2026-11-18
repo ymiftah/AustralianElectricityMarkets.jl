@@ -9,7 +9,7 @@ administered price cap event). See [`read_fcas_prices`](@ref) for the FCAS marke
 # Arguments
 - `db`: an `AEMDB` connection.
 - `date_range`: the dispatch intervals to read (half-open: `start <= t < stop`).
-- `intervention`: `0` for the pricing run, `1` for the physical run.
+- `intervention`: `0` for the pricing run. `1` for the physical run where the interval has one, else the pricing run.
 
 # Returns
 A `DataFrame` with `SETTLEMENTDATE`, `REGIONID`, `RRP`, `ROP` and `APCFLAG` (`missing` for cached
@@ -32,7 +32,7 @@ that interval (not `RRP`, which may additionally be capped).
 # Arguments
 - `db`: an `AEMDB` connection.
 - `date_range`: the dispatch intervals to read (half-open: `start <= t < stop`).
-- `intervention`: `0` for the pricing run, `1` for the physical run.
+- `intervention`: `0` for the pricing run. `1` for the physical run where the interval has one, else the pricing run.
 
 # Returns
 A `DataFrame` with `SETTLEMENTDATE`, `REGIONID`, `RRP`, `ROP`, `APCFLAG` and `BIDTYPE`. Markets

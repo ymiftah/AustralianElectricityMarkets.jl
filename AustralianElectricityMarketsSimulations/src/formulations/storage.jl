@@ -192,11 +192,7 @@ function PSI.add_constraints!(
     in_ = PSI.get_variable(container, PSI.ActivePowerInVariable(), T)
     _add_nem_ramp_constraints!(
         container, T, devices, (name, t) -> out[name, t] - in_[name, t],
-        names -> _storage_ramp_base_accessor(container, D, T, names, out, in_),
+        names -> _ramp_base_accessor(container, D, T, names, nothing),
     )
     return
 end
-
-
-_storage_ramp_base_accessor(container, ::Type{NEMDispatch}, ::Type{T}, names, out, in_) where {T <: PSY.Storage} =
-    _ramp_base_accessor(container, NEMDispatch, T, names, nothing)

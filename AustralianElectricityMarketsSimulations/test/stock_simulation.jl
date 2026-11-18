@@ -895,3 +895,78 @@ end
     end
     @test checked > 0
 end
+
+# Two batteries outside every FCAS market, so a rebuilt model can leave one of them out.
+const REBUILD_BATTERY_FIRST = "RebuildBatteryFirst"
+const REBUILD_BATTERY_SECOND = "RebuildBatterySecond"
+
+function rebuild_battery_system()
+    units = [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 30.0, ramp_up = 100.0)]
+    batteries = [
+        REBUILD_BATTERY_FIRST => toy_battery(100.0, 5.0, 100.0, 1.0; initial = [20.0, 0.0], ramp_up = 100.0, ramp_down = 1.0, gen_avail = 10.0),
+        REBUILD_BATTERY_SECOND => toy_battery(100.0, 5.0, 100.0, 1.0; initial = [10.0, 0.0], ramp_up = 100.0, ramp_down = 1.0, gen_avail = 10.0),
+    ]
+    return nem_toy_system(units, 40.0; batteries = batteries, horizon = TOY_RESOLUTION)
+end
+
+# A closed-loop simulation of `model` over the stock steps, built by the simulation and run by `execute!`.
+function closed_rebuild_simulation(model)
+    models = PSI.SimulationModels(; decision_models = [model])
+    sequence = PSI.SimulationSequence(; models, ini_cond_chronology = PSI.InterProblemChronology())
+    return PSI.Simulation(;
+        name = "closed_rebuild", steps = length(STOCK_STEPS), models, sequence,
+        simulation_folder = mktempdir(), initial_time = TOY_START,
+    )
+end
+
+@testset "closed loop: a rebuilt model drops the previous build's entries and writes its devices into their own columns" begin
+    sys = rebuild_battery_system()
+    model = PSI.DecisionModel(
+        NEMClosedLoopDispatchProblem, problem_template(sys), sys; optimizer = STOCK_OPTIMIZER, initial_time = TOY_START,
+        name = "closed_rebuild",
+    )
+    first_sim = closed_rebuild_simulation(model)
+    @test PSI.build!(first_sim; store_systems_in_results = false) == PSI.SimulationBuildStatus.BUILT
+    @test PSI.execute!(first_sim) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    old_container = PSI.get_optimization_container(model)
+    @test haskey(AEMS._build_scratch(old_container), :closed_loop_entries)
+
+    # The first battery leaves the device model's set, so the ramp parameter's columns change for the second.
+    PSI.set_device_model!(
+        PSI.get_template(model),
+        PSI.DeviceModel(
+            EnergyReservoirStorage, NEMDispatch;
+            attributes = Dict{String, Any}("filter_function" => d -> PSY.get_name(d) != REBUILD_BATTERY_FIRST),
+        ),
+    )
+    rebuilt = closed_rebuild_simulation(model)
+    @test PSI.build!(rebuilt; store_systems_in_results = false) == PSI.SimulationBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    @test container !== old_container
+    @test !haskey(AEMS._build_scratch(container), :closed_loop_entries)
+    @test PSI.execute!(rebuilt) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    @test haskey(AEMS._build_scratch(container), :closed_loop_entries)
+
+    key = PSI.ParameterKey(RampRateTimeSeriesParameter, EnergyReservoirStorage, "up")
+    param = PSI.get_parameter(container, key)
+    array = PSI.get_parameter_array(param)
+    attributes = PSI.get_attributes(param)
+    series = PSI.get_time_series_name(attributes)
+    names = Set(keys(attributes.component_name_to_ts_uuid))
+    @test names == Set([REBUILD_BATTERY_SECOND])
+
+    results = PSI.get_decision_problem_results(PSI.SimulationResults(rebuilt), "closed_rebuild")
+    solved_1 = stock_at(read_solved_interval(results, sys), TOY_START)
+    t2 = last(STOCK_STEPS)
+    base = PSY.get_base_power(sys)
+    checked = 0
+    for name in names
+        device = PSY.get_component(EnergyReservoirStorage, sys, name)
+        expected = AustralianElectricityMarkets.closed_loop_input(device, series, t2, stock_mw(solved_1, name), base)
+        isnothing(expected) && continue
+        actual = PSI.JuMP.fix_value(array[attributes.component_name_to_ts_uuid[name], 1])
+        @test actual ≈ expected atol = 1.0e-9
+        checked += 1
+    end
+    @test checked == 1
+end

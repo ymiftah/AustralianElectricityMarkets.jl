@@ -156,7 +156,7 @@ One interval of a regulation market's ramping limits, in the unit of `inactive`:
 `joint` is the AEMO *FCAS Model in NEMDE* §6.1 right-hand side, [`fcas_ramping_limit`](@ref) of the
 AGC ramping `capability` on the upper or lower form, and `±inactive` where the row is inactive: the
 capability is zero or absent, the unit is not `enabled` for the market, or the unit is exempt on a
-fast-start interval ([`fcas_joint_ramping_exempt`](@ref)). `bdu` is the §6.4 right-hand side of a
+fast-start interval ([`fast_start_ramp_exempt`](@ref)). `bdu` is the §6.4 right-hand side of a
 `PSY.Storage` device bidding both sides, its AGC ramping capability on the market, and `inactive`
 where that is zero. A caller with an unknown starting output writes `±inactive` itself.
 
@@ -176,7 +176,7 @@ function fcas_ramping_limits(
         capability::Float64, bdu_capability::Float64, enabled::Bool, upper::Bool, fast_start::Bool,
         inactive::Float64, state::NEMUnitState,
     )::NTuple{2, Float64}
-    active = enabled && fcas_ramping_active(capability, state) && !fcas_joint_ramping_exempt(state, fast_start)
+    active = enabled && fcas_ramping_active(capability, state) && !fast_start_ramp_exempt(state, fast_start)
     joint = active ? fcas_ramping_limit(capability, upper, state) : (upper ? inactive : -inactive)
     bdu = iszero(bdu_capability) ? inactive : bdu_capability
     return (joint, bdu)

@@ -126,25 +126,6 @@ end
 
 
 """
-    fcas_joint_ramping_exempt(state::NEMUnitState, fast_start::Bool) -> Bool
-
-Whether a unit's joint energy and FCAS ramping limits are not applied in the interval. AEMO's
-*FCAS Model in NEMDE* footnote 11 to Table 3 excludes a fast-start unit that starts in dispatch mode
-0, 1 or 2 from the joint ramping constraints. A unit without a fast-start profile is never exempt.
-
-# Arguments
-- `state`: the [`NEMUnitState`](@ref) at the start of the interval.
-- `fast_start`: whether the unit carries a fast-start inflexibility profile in the interval.
-
-# Returns
-`Bool`.
-"""
-function fcas_joint_ramping_exempt(state::NEMUnitState, fast_start::Bool)
-    return fast_start && state.dispatch_mode in (0, 1, 2)
-end
-
-
-"""
     fcas_ramping_limit(capability, upper::Bool, state::NEMUnitState) -> Float64
 
 The joint energy and FCAS limit of one direction: `state.initial_mw` plus the AGC ramping
@@ -163,30 +144,6 @@ A `Float64`.
 """
 function fcas_ramping_limit(capability::Real, upper::Bool, state::NEMUnitState)
     return upper ? state.initial_mw + capability : state.initial_mw - capability
-end
-
-
-"""
-    mnsp_ramp_envelope(initial_flow, up_rate, down_rate, interval_minutes) -> (Float64, Float64)
-
-The flow envelope of an MNSP link about its metered starting flow, MW: at most
-`up_rate × interval_minutes` above `initial_flow` and `down_rate × interval_minutes` below it. The
-rates are MW per minute, the forward direction's limit on the flow's increase and the reverse
-direction's limit on its decrease.
-
-# Arguments
-- `initial_flow`: the metered flow at the start of the interval, MW, `NaN` where unpublished.
-- `up_rate`: the forward ramp rate, MW/min.
-- `down_rate`: the reverse ramp rate, MW/min.
-- `interval_minutes`: the interval length in minutes.
-
-# Returns
-`(upper, lower)` as `Float64`s in MW.
-"""
-function mnsp_ramp_envelope(
-        initial_flow::Real, up_rate::Real, down_rate::Real, interval_minutes::Real,
-    )
-    return (initial_flow + up_rate * interval_minutes, initial_flow - down_rate * interval_minutes)
 end
 
 

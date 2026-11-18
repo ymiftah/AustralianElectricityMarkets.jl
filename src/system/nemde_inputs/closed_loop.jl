@@ -47,27 +47,6 @@ limits.
 is_state_dependent_input(series_name::AbstractString) = !isnothing(_closed_loop_family(series_name))
 
 
-"""
-    closed_loop_unit_state(device, t, initial_mw) -> NEMUnitState
-
-The state of `device` at the start of the interval beginning at `t` in a closed-loop run: the starting
-output `initial_mw`, in MW, with the observed dispatch mode and time in mode at `t`: a closed loop does not carry
-the fast-start state of its own solves.
-
-# Arguments
-- `device`: the NEM device.
-- `t`: the first timestamp of the interval.
-- `initial_mw`: the starting output, MW.
-
-# Returns
-A [`NEMUnitState`](@ref).
-"""
-function closed_loop_unit_state(device, t::DateTime, initial_mw::Real)
-    observed = only(observed_unit_states(device, [t]))
-    return NEMUnitState(Float64(initial_mw), observed.dispatch_mode, observed.time_in_mode)
-end
-
-
 # The storage ramp inputs of one device over the System's range, as `_storage_ramp_at` reads them.
 struct _ClosedLoopRamp
     minutes::Float64

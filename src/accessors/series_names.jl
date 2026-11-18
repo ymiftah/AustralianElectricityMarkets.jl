@@ -33,8 +33,6 @@ Names of the per-device `SingleTimeSeries` the setters attach, by field:
 - `ramp_up_rate`, `ramp_down_rate`: the dispatch ramp rates the formulation reads, system-base per-unit
   per minute, derived by the NEMDE input stage from the telemetry ramp limits.
 - `max_active_power`: the device's upper dispatch limit, a multiplier of its `max_active_power`.
-- `fixed_load`: a unit's participant fixed loading, net injection in system-base per-unit.
-- `fixed_load_invoked`: `1` at the intervals a fixed loading applies, `0` elsewhere.
 - `loss_demand_coefficient`: an interchange's demand term of its loss factor.
 
 The unit condition series are named by [`NEM_TELEMETRY_SERIES`](@ref) and [`NEM_OBSERVED_SERIES`](@ref),
@@ -47,8 +45,6 @@ const NEM_SERIES = (
     ramp_up_rate = "ramp_up_rate",
     ramp_down_rate = "ramp_down_rate",
     max_active_power = "max_active_power",
-    fixed_load = "fixed_load",
-    fixed_load_invoked = "fixed_load_invoked",
     loss_demand_coefficient = "loss_demand_coefficient",
 )
 

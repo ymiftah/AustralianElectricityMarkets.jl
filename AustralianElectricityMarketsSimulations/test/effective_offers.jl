@@ -130,13 +130,6 @@ end
         @test effective_fixed_load(NaN, NEMUnitState(10.0, 4)) == 0.0
     end
 
-    @testset "the MNSP flow envelope starts from the metered flow" begin
-        @test mnsp_ramp_envelope(100.0, 2.0, 3.0, 5.0) == (110.0, 85.0)
-        @test mnsp_ramp_envelope(-50.0, 0.0, 0.0, 5.0) == (-50.0, -50.0)
-        @test mnsp_ramp_envelope(0.0, 2.0, 3.0, 5.0) == (10.0, -15.0)
-        @test isnan(first(mnsp_ramp_envelope(NaN, 2.0, 3.0, 5.0)))
-    end
-
     @testset "the composite ramp rate clears a unit across zero" begin
         # Wholly on one side the starting side's own rates stand: from the load side, up is its ramp-down rate.
         @test composite_ramp_rates(3.0, 4.0, 5.0, 6.0, 5.0, NEMUnitState(50.0, 4)) == (3.0, 4.0)

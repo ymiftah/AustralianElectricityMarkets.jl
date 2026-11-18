@@ -993,6 +993,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The MNSP offer check of the NEMDE inputs runs only for an interchange under `NEMInterconnectorLoss`, since a lossless interchange carries no MNSP offers.
 
+- `intervention = 1` selects the physical run per interval, falling back to the pricing run where an interval has none, and `read_published_interval` reads prices from the pricing run.
+
 ### Removed
 
 - The `energy_max_avail[_decremental]` time series: the derived energy availability is
@@ -1081,7 +1083,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `mnsp_series_name`, and the `NEM_SERIES.from_to_flow_limit` and `NEM_SERIES.to_from_flow_limit` constants. MNSP series names are in `NEM_MNSP_SERIES` and interconnector flow limits are read through `NEMInterconnectorLimits` and `NEM_INTERCONNECTOR_SERIES`.
 
+- Removed the unused exports `closed_loop_unit_state`, `mnsp_ramp_envelope` and `fcas_joint_ramping_exempt` (callers use `fast_start_ramp_exempt`, which has the same body), the unused `NEM_SERIES.fixed_load` and `NEM_SERIES.fixed_load_invoked` names, and the unused `TransmissionInterface` services that `nem_system` added.
+
 ### Fixed
+
+- A closed-loop model rebuilt for a new `Simulation`, for example after a change to its template, starts its state-dependent values afresh: it no longer fails with a `KeyError` on a device the new build leaves out, writes into the previous build's parameter columns, or reuses the previous run's FCAS values at the same interval.
 
 - `set_market_bids!` works again on a system without NEM unit data, such as one built with `RegionalNetworkConfiguration`: each bidding unit gets a `MarketBidCost` with incremental (`GEN`) and decremental (`LOAD`) offer curves for PowerSimulations' own formulations, its prices divided by the unit's loss factor and its quantity capped at `MAXAVAIL`. Only energy bids are read. The `market_bids`, `interchanges` and `clearing-with-batteries` how-tos run again.
 

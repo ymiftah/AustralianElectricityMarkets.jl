@@ -9,9 +9,10 @@ read only the raw intervals contributing to aggregate timestamps in `[first(date
 - `db`: The database connection.
 - `date_range`: Optional range of aggregate timestamps, with an inclusive start and exclusive end.
 - `resolution::Dates.Period`: The time resolution to which timestamps are rounded up. Defaults to 5 minutes.
-- `intervention::Integer`: `0` for the pricing run, `1` for the physical run. Applies to both
-  `DISPATCHREGIONSUM` and `DISPATCHLOAD`; ignored where the cached partitions predate the
-  `INTERVENTION` column.
+- `intervention::Integer`: `0` for the pricing run. `1` for the physical run where the interval has
+  one, else the pricing run. Each of `DISPATCHREGIONSUM` and `DISPATCHLOAD` decides its run per
+  interval; AEMO publishes both runs for an intervention interval, so region sums and unit loads
+  come from the same run. Ignored where the cached partitions predate the `INTERVENTION` column.
 
 # Returns
 A `DataFrame` with regional demand, aggregated by the specified resolution.
@@ -28,13 +29,11 @@ println(demand_df)
 """
 function read_demand(db, date_range = nothing; resolution::Dates.Period = Dates.Minute(5), intervention::Integer = 0)
     summary = read_hive(db, :DUDETAILSUMMARY)
-    demand_where = ""
-    charging_where = ""
-    charging_params = Any[]
-    demand_params = Any[]
     if isnothing(date_range)
         source = read_hive(db, :DISPATCHREGIONSUM)
         dispatchload = read_hive(db, :DISPATCHLOAD)
+        interval_bounds = "TRUE"
+        interval_params = Any[]
     else
         # Each rounded-up timestamp includes the raw bin ending at it, even before the requested start.
         lower = ceil(DateTime(first(date_range)), resolution) - resolution
@@ -42,20 +41,22 @@ function read_demand(db, date_range = nothing; resolution::Dates.Period = Dates.
         window = (lower, DateTime(last(date_range)))
         source = read_hive(db, :DISPATCHREGIONSUM, window)
         dispatchload = read_hive(db, :DISPATCHLOAD, window)
-        charging_where = "AND SETTLEMENTDATE > ? AND SETTLEMENTDATE <= ?"
-        demand_where = "AND r.SETTLEMENTDATE > ? AND r.SETTLEMENTDATE <= ?"
-        append!(charging_params, (lower, upper))
-        append!(demand_params, (lower, upper))
+        interval_bounds = "SETTLEMENTDATE > ? AND SETTLEMENTDATE <= ?"
+        interval_params = Any[lower, upper]
     end
-    # Parameters bind in the order of the `?` placeholders: charging, then demand, then bounds.
     source_schema = _table_schema(db, source)
     dispatchload_schema = _table_schema(db, dispatchload)
-    charging_intervention = _intervention_where(dispatchload_schema)
-    demand_intervention = _intervention_where(source_schema)
+    # Each table decides its run per interval. AEMO publishes both runs for an intervention interval,
+    # so the region sums and the unit loads agree.
+    charging_rows, charging_params = _run_rows(
+        dispatchload, dispatchload_schema, intervention, "SETTLEMENTDATE", interval_bounds, interval_params,
+    )
+    demand_rows, demand_params = _run_rows(
+        source, source_schema, intervention, "SETTLEMENTDATE", interval_bounds, interval_params,
+    )
+    # Parameters bind in the order of the `?` placeholders: charging, then demand, then bounds.
     params = Any[]
-    _push_intervention!(params, dispatchload_schema, intervention)
     append!(params, charging_params)
-    _push_intervention!(params, source_schema, intervention)
     append!(params, demand_params)
     bucket = _ceil_timestamp_sql("r.SETTLEMENTDATE", resolution)
     bounds = isnothing(date_range) ? "" : "WHERE SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ?"
@@ -74,8 +75,7 @@ function read_demand(db, date_range = nothing; resolution::Dates.Period = Dates.
                  SELECT d.SETTLEMENTDATE, bdu.REGIONID, sum(least(d.INITIALMW, 0.0)) AS INITIALCHARGE
                  FROM (
                      SELECT DUID, SETTLEMENTDATE, INITIALMW
-                     FROM $dispatchload
-                     WHERE TRUE $charging_intervention $charging_where
+                     FROM $charging_rows AS dl
                      QUALIFY row_number() OVER (
                          PARTITION BY DUID, SETTLEMENTDATE ORDER BY archive_month DESC
                      ) = 1
@@ -88,12 +88,10 @@ function read_demand(db, date_range = nothing; resolution::Dates.Period = Dates.
              raw_demand AS (
                  SELECT $bucket AS SETTLEMENTDATE, r.REGIONID, r.TOTALDEMAND,
                         r.INITIALSUPPLY + r.DEMANDFORECAST + COALESCE(c.INITIALCHARGE, 0.0) AS LOSSDEMAND
-                 FROM $source r
+                 FROM $demand_rows r
                  LEFT JOIN charging c ON c.SETTLEMENTDATE = r.SETTLEMENTDATE AND c.REGIONID = r.REGIONID
                  WHERE r.SETTLEMENTDATE IS NOT NULL AND r.REGIONID IS NOT NULL
                    AND r.TOTALDEMAND IS NOT NULL
-                   $demand_intervention
-                   $demand_where
              )
         SELECT SETTLEMENTDATE, REGIONID, avg(TOTALDEMAND) AS TOTALDEMAND,
                COALESCE(avg(LOSSDEMAND), 'NaN'::DOUBLE) AS LOSSDEMAND
@@ -146,8 +144,8 @@ onto `resolution` as [`read_demand`](@ref) aggregates demand.
 - `db`: an `AEMDB` connection.
 - `date_range`: the range of aggregate timestamps, with an inclusive start and exclusive end.
 - `resolution`: the `Dates.Period` to aggregate onto.
-- `intervention`: `0` for the pricing run, `1` for the physical run. Ignored when the cached
-  partitions predate the `INTERVENTION` column.
+- `intervention`: `0` for the pricing run. `1` for the physical run where the interval has one, else
+  the pricing run.
 
 # Returns
 A `DataFrame` with `SETTLEMENTDATE`, `REGIONID`, `SS_SOLAR_UIGF` and `SS_WIND_UIGF`.
@@ -158,8 +156,9 @@ function _read_regional_renewable_uigf(db, date_range; resolution::Dates.Period,
     upper = ceil(DateTime(last(date_range)), resolution) - resolution
     source = read_hive(db, :DISPATCHREGIONSUM, (lower, DateTime(last(date_range))))
     schema = _table_schema(db, source)
-    params = Any[lower, upper]
-    _push_intervention!(params, schema, intervention)
+    rows, params = _run_rows(
+        source, schema, intervention, "SETTLEMENTDATE", "SETTLEMENTDATE > ? AND SETTLEMENTDATE <= ?", [lower, upper],
+    )
     append!(params, (DateTime(first(date_range)), DateTime(last(date_range))))
     bucket = _ceil_timestamp_sql("r.SETTLEMENTDATE", resolution)
     return _query(
@@ -167,10 +166,8 @@ function _read_regional_renewable_uigf(db, date_range; resolution::Dates.Period,
         """
         WITH raw_regional AS (
             SELECT $bucket AS SETTLEMENTDATE, r.REGIONID, r.SS_SOLAR_UIGF, r.SS_WIND_UIGF
-            FROM $source r
+            FROM $rows r
             WHERE r.SETTLEMENTDATE IS NOT NULL AND r.REGIONID IS NOT NULL
-              AND r.SETTLEMENTDATE > ? AND r.SETTLEMENTDATE <= ?
-              $(_intervention_where(schema))
         )
         SELECT SETTLEMENTDATE, REGIONID,
                avg(SS_SOLAR_UIGF) AS SS_SOLAR_UIGF,

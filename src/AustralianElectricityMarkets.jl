@@ -39,10 +39,10 @@ export FCASService, add_fcas_services!, Readers
 export FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, fcas_offer_sides, fcas_upper_regulation_service,
     fcas_preconditions_ok, fcas_effective_offer, fcas_ramping_limits
 export effective_energy_availability
-export is_state_dependent_input, closed_loop_unit_state, closed_loop_input, closed_loop_inputs, ClosedLoopInputs
+export is_state_dependent_input, closed_loop_input, closed_loop_inputs, ClosedLoopInputs
 export NEMUnitState, in_fast_start_profile, fixed_load_invoked, effective_fixed_load,
     fcas_state_stranded_ok, fcas_both_sides_stranded_ok, fcas_ramping_active, fcas_ramping_limit,
-    fcas_joint_ramping_exempt, mnsp_ramp_envelope, composite_ramp_rates,
+    composite_ramp_rates,
     effective_ramp_limit, effective_regulation_max_avail, agc_ramp_rate
 export is_fast_start, fast_start_mode_length, fast_start_time_in_mode, FastStartEndState, fast_start_end_state,
     FastStartEnvelope, fast_start_envelope, fast_start_ramp_up_limit, fast_start_ramp_exempt,

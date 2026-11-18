@@ -259,7 +259,7 @@ named `GENCONID@EFFECTIVEDATE#VERSIONNO` and attached via `add_service!` to its 
 - `date_range`: the dispatch intervals to run.
 - `invoked_all`: the invoked constraint rows over `date_range`, as `_read_constraint_inputs` returns them.
 - `fixed`: the fixed-loading rows over `date_range`, as `_read_constraint_inputs` returns them.
-- `intervention`: the `DISPATCHCONSTRAINT.INTERVENTION` the rows were read with (default `0`).
+- `intervention`: the `DISPATCHCONSTRAINT.INTERVENTION` run the rows were read with (default `0`).
 
 # Returns
 `(added, skipped)`: `added::Vector{String}` of component names, `skipped::Dict{String, Symbol}`
@@ -574,7 +574,7 @@ recorded on `sys` (see [`get_skipped_constraints`](@ref)).
 - `sys`: the `System` to add to.
 - `db`: an `AEMDB` connection.
 - `date_range`: the dispatch intervals to run; its last timestamp ends the final interval.
-- `intervention`: the `DISPATCHCONSTRAINT.INTERVENTION` run to read, 0 for pricing or 1 for physical.
+- `intervention`: the `DISPATCHCONSTRAINT.INTERVENTION` run to read: `0` for the pricing run. `1` for the physical run where the interval has one, else the pricing run.
 
 # Returns
 `nothing`. A second call on the same system throws an `ArgumentError` at the first constraint already

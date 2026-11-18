@@ -18,7 +18,7 @@ each ramp rate and `AVAILABILITY` across its intervals.
 # Arguments
 - `db`: an `AEMDB` connection.
 - `date_range`: the dispatch intervals to read (half-open: `start <= t < stop`).
-- `intervention`: `0` for the pricing run, `1` for the physical run.
+- `intervention`: `0` for the pricing run. `1` for the physical run where the interval has one, else the pricing run.
 - `resolution`: the `Dates.Period` to aggregate onto. Defaults to 5 minutes.
 
 # Returns
@@ -65,7 +65,7 @@ upper limit NEMDE applies to each semi-scheduled unit in each dispatch interval.
 - `db`: an `AEMDB` connection.
 - `date_range`: the range of interval timestamps to read (half-open: `start <= t < stop`).
 - `resolution`: the resolution to aggregate onto. Defaults to 5 minutes.
-- `intervention`: 0 for the pricing run, 1 for the physical run.
+- `intervention`: `0` for the pricing run. `1` for the physical run where the interval has one, else the pricing run.
 
 # Returns
 A `DataFrame` with `SETTLEMENTDATE`, `DUID` and `UIGF` (MW). Throws an `ArgumentError` when
@@ -127,7 +127,7 @@ the lesser of bid and telemetered rate.
 # Arguments
 - `db`: an `AEMDB` connection.
 - `date_range`: the five-minute dispatch intervals to read (half-open: `start <= t < stop`).
-- `intervention`: `0` for the pricing run, `1` for the physical run.
+- `intervention`: `0` for the pricing run. `1` for the physical run where the interval has one, else the pricing run.
 
 # Returns
 A `DataFrame` with `SETTLEMENTDATE`, `DUID`, `INITIALMW`, `AVAILABILITY`, `RAMPUPRATE`,

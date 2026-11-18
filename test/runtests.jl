@@ -23,6 +23,7 @@ create_pscb_nemweb_data(AEM_TEST_PSCB_HIVE_DIR)
 const TEST_GROUPS = [
     "package_boundaries" => ("Package boundaries", ["package_boundaries.jl"]),
     "raw_readers" => ("Raw reader tests", ["readers/raw.jl", "readers/intervals.jl"]),
+    "intervention" => ("Intervention run selection", ["readers/intervention.jl"]),
     "isp" => ("ISP reader tests", ["readers/isp.jl"]),
     "datareader" => ("Data reader tests", ["datareader.jl"]),
     "reader_aggregation" => ("Reader aggregation and historical regions", ["readers/aggregation.jl"]),

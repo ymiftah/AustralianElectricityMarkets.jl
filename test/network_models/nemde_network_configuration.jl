@@ -99,6 +99,16 @@ end
     physical = nem_system(physical_db, config; date_range = interval, intervention = 1)
     physical_gen = get_component(RenewableDispatch, physical, "BW03")
     @test get_time_series_values(SingleTimeSeries, physical_gen, "observed_initial_mw"; ignore_scaling_factors = true) .- get_time_series_values(SingleTimeSeries, gen, "observed_initial_mw"; ignore_scaling_factors = true) ≈ fill(10.0, 3)
+    @testset "a mixed range takes the physical run only where the interval has one" begin
+        # Only 00:10 has a physical run in DISPATCHLOAD; 00:05 and 00:15 fall back to the pricing run.
+        mixed_db = damaged_cache(
+            hive, :DISPATCHLOAD,
+            "INSERT INTO input SELECT * REPLACE (1 AS INTERVENTION, INITIALMW + CASE WHEN DUID = 'BW03' THEN 10 ELSE 0 END AS INITIALMW) FROM input WHERE INTERVENTION = 0 AND SETTLEMENTDATE = TIMESTAMP '2025-01-01 00:10'",
+        )
+        mixed = nem_system(mixed_db, config; date_range = interval, intervention = 1)
+        mixed_gen = get_component(RenewableDispatch, mixed, "BW03")
+        @test get_time_series_values(SingleTimeSeries, mixed_gen, "observed_initial_mw"; ignore_scaling_factors = true) .- get_time_series_values(SingleTimeSeries, gen, "observed_initial_mw"; ignore_scaling_factors = true) ≈ [0.0, 10.0, 0.0]
+    end
     @testset "missing bids and demand cannot remove participants or create zero demand" begin
         interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 15)
         for (table, query, expected) in [

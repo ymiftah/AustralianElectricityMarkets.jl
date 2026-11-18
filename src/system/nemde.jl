@@ -46,7 +46,7 @@ availability and offers nothing. A missing input inside a registration is an err
 - `db`: the market cache connection.
 - `date_range`: five-minute interval-ending timestamps, including the exclusive stop; at least three stamps. The
   dispatch intervals, all but the last two stamps, must fall in one trading day and one financial year.
-- `intervention`: `0` for pricing or `1` for physical dispatch inputs.
+- `intervention`: the run of the dispatch inputs: `0` for the pricing run. `1` for the physical run where the interval has one, else the pricing run.
 - `interval_flow_limits`: attach published interval flow limits for diagnostic runs; default `false`.
   These limits are computed after dispatch and must not be used to validate simulated flows.
 - `time_series_in_memory`: store time series in memory when `true`.
@@ -160,7 +160,7 @@ Non-scheduled units and loads are not checked.
 - `date_range`: the dispatch range.
 - `units`: the unit table over `date_range`, as [`nem_network`](@ref) returns it; its regions need demand.
 - `offers`: the [`read_offers`](@ref) rows of `date_range`, whose `ENERGY` rows carry the energy coverage.
-- `intervention`: the `DISPATCHLOAD` run, 0 for pricing and 1 for physical.
+- `intervention`: the `DISPATCHLOAD` run: `0` for the pricing run. `1` for the physical run where the interval has one, else the pricing run.
 - `resolution`: the spacing of the dispatch intervals that `DISPATCHLOAD` and regional demand are aggregated to.
 
 # Returns

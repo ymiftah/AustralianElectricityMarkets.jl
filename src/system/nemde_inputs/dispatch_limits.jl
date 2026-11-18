@@ -118,7 +118,7 @@ end
 
 # The effective availability of `service` over the grid of `like`, per unit of the system base.
 function _regulation_availability(device, service::BidType, key, like, base::Real)
-    telemetry = _grid_values(device, key, like)
+    telemetry = _aligned_values(device, key, like)
     bid = _regulation_bid_max_avail(device, service, like)
     return [effective_regulation_max_avail(bid[i], telemetry[i]) for i in eachindex(telemetry)] ./ base
 end

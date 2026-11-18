@@ -98,7 +98,7 @@ end
             # The evaluator's own enablement is the non-state half of the ramping rule.
             isapprox(last(AEM._fcas_values_at(prep, device, service, i))[1], written[i]; rtol = 1.0e-12) ||
                 push!(bad, (get_name(device), name, i, :evaluator))
-            if AEM.fcas_ramping_active(caps[i], state) && !AEM.fcas_joint_ramping_exempt(state, window.fast_start[i]) && !(written[i] ≈ sentinel)
+            if AEM.fcas_ramping_active(caps[i], state) && !AEM.fast_start_ramp_exempt(state, window.fast_start[i]) && !(written[i] ≈ sentinel)
                 isapprox(AEM.fcas_ramping_limit(caps[i], upper, state), written[i]; rtol = 1.0e-12) ||
                     push!(bad, (get_name(device), name, i, :active))
                 active_rows += 1

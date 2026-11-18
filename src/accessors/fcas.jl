@@ -1,32 +1,4 @@
 """
-    _fcas_units_multiplier(component) -> Float64
-
-Factor to bring a per-unit-of-system-base FCAS value stored on `component` into its
-`System`'s current display units: `get_base_power(sys)` under `NATURAL_UNITS`, `1.0` under
-`SYSTEM_BASE`. Throws under `DEVICE_BASE`.
-"""
-function _fcas_units_multiplier(component)
-    info = IS.get_internal(component).units_info
-    isnothing(info) && return 1.0
-    # FCAS values are per-unit of the *system* base, while a device's own fields are per-unit
-    # of its `base_power`. Under DEVICE_BASE the two would read as the same number meaning
-    # different MW, so refuse rather than return a mislabelled value.
-    if info.unit_system == UnitSystem.DEVICE_BASE
-        throw(
-            ArgumentError(
-                "FCAS values cannot be read while \"$(get_name(component))\"'s `System` is in " *
-                    "DEVICE_BASE: they are stored per-unit of the system base " *
-                    "($(info.base_value) MVA), not of the device's own base power " *
-                    "($(PSY.get_base_power(component)) MVA). Read them under NATURAL_UNITS or " *
-                    "SYSTEM_BASE, e.g. `with_units_base(sys, \"NATURAL_UNITS\") do ... end`.",
-            ),
-        )
-    end
-    return info.unit_system == UnitSystem.NATURAL_UNITS ? info.base_value : 1.0
-end
-
-
-"""
     _fcas_system_base(component) -> Float64
 
 The system base power, in MVA, that `component`'s FCAS offer curves are divided by on read. Throws
@@ -103,26 +75,4 @@ function _fcas_offer_series_name(component, service::BidType, decremental::Bool)
         ),
     )
     return IS.get_name(key)
-end
-
-
-"""
-    _get_fcas_offer_curve(component, service, initial_time, horizon; decremental = false) -> Vector{PSY.PiecewiseStepData}
-
-Full-series read of `component`'s FCAS offer curve for `service`, `horizon` steps from
-`initial_time`. The series is stored in MW and divided by the system base on read. Quantities
-(`x_coords`) are then in `component`'s `System`'s current display units (MW under `NATURAL_UNITS`,
-per-unit of the system base under `SYSTEM_BASE`); prices (`y_coords`) are always \$/MW, never
-per-unitized. `decremental` selects the load-side curve, or `name` reads the series of that name,
-by default the `offer_curves` series of the bid ([`_fcas_offer_key`](@ref)). Throws `ArgumentError` if
-the series isn't attached.
-"""
-function _get_fcas_offer_curve(
-        component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false,
-        name::AbstractString = _fcas_offer_series_name(component, service, decremental),
-    )
-    rows = _read_fcas_series("curve", component, name, service, decremental, initial_time, horizon)
-    base_power = _fcas_system_base(component)
-    multiplier = _fcas_units_multiplier(component)
-    return [PSY.PiecewiseStepData(get_x_coords(c) ./ base_power .* multiplier, get_y_coords(c)) for c in rows]
 end

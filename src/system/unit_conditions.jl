@@ -34,7 +34,7 @@ and registration span of a device come from its [`NEMRegistration`](@ref).
   with FCAS bids available.
 - `db`: an `AEMDB` connection.
 - `date_range`: the five-minute dispatch intervals to run, including the exclusive stop timestamp.
-- `intervention`: the `DISPATCHLOAD` run, `0` for pricing or `1` for physical dispatch.
+- `intervention`: the `DISPATCHLOAD` run: `0` for the pricing run. `1` for the physical run where the interval has one, else the pricing run.
 
 # Returns
 `nothing`.

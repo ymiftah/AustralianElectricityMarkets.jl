@@ -8,11 +8,56 @@ _query(db::AEMDB, sql::String) = DataFrame(DuckDB.execute(db.db, sql))
 
 _query(db::AEMDB, sql::String, params) = DataFrame(DuckDB.execute(db.db, sql, params))
 
-# Partitions that predate the INTERVENTION column are the normal run, so the filter applies
-# only when the column exists: naming a column absent from every file is a DuckDB Binder Error.
-_intervention_where(schema) = "INTERVENTION" in schema ? "AND COALESCE(INTERVENTION, 0) = ?" : ""
+# Only 0 (pricing run) and 1 (physical run, pricing run where the interval has none) are runs.
+function _check_intervention(intervention::Integer)
+    intervention in (0, 1) || throw(
+        ArgumentError("intervention must be 0 (pricing run) or 1 (physical run), got $intervention"),
+    )
+    return
+end
 
-_push_intervention!(params, schema, intervention) = "INTERVENTION" in schema ? push!(params, intervention) : params
+
+"""
+    _run_rows(table, schema, intervention, time_col, bounds, bound_params) -> (sql, params)
+
+A subquery over `table` holding the rows of the dispatch run `intervention` selects, restricted
+by `bounds`, a SQL predicate with `?` placeholders bound to `bound_params`. Run 0 keeps the rows
+with `COALESCE(INTERVENTION, 0) = 0`. Run 1 keeps, for each `time_col` value, the rows of the
+highest run that interval has: run 1 where it has any, else run 0. The run is decided after
+`bounds` and before the caller's own predicates, so a filter on units cannot change an interval's run.
+
+Without an `INTERVENTION` column in `schema` the rows are returned unfiltered, since partitions
+that predate the column are the normal run.
+
+# Arguments
+- `table`: the `FROM` source fragment of the table, e.g. from [`read_hive`](@ref).
+- `schema`: the column names of `table`.
+- `intervention`: `0` or `1`.
+- `time_col`: the interval column the run is decided over, `SETTLEMENTDATE` for every dispatch table.
+- `bounds`: the SQL predicate restricting the rows read.
+- `bound_params`: the values for the `?` placeholders of `bounds`.
+
+# Returns
+The subquery text and the parameters in placeholder order.
+"""
+function _run_rows(table, schema, intervention::Integer, time_col::AbstractString, bounds::AbstractString, bound_params)
+    _check_intervention(intervention)
+    params = Any[bound_params...]
+    if !("INTERVENTION" in schema)
+        sql = "(SELECT * FROM $table WHERE $bounds)"
+    elseif intervention == 0
+        push!(params, 0)
+        sql = "(SELECT * FROM $table WHERE $bounds AND COALESCE(INTERVENTION, 0) = ?)"
+    else
+        sql = """
+        (SELECT * EXCLUDE (RUN_MAX) FROM (
+            SELECT *, max(COALESCE(INTERVENTION, 0)) OVER (PARTITION BY $time_col) AS RUN_MAX
+            FROM $table WHERE $bounds
+        ) WHERE COALESCE(INTERVENTION, 0) = RUN_MAX)
+        """
+    end
+    return sql, params
+end
 
 # One partition storing a numeric column as VARCHAR widens it to VARCHAR across the whole glob.
 _cast_double(col) = "TRY_CAST($col AS DOUBLE) AS $col"
@@ -91,7 +136,8 @@ row and the `intervention` run.
 - `table_name`: the cached table, which must exist.
 - `key`: the column identifying a row within an interval, e.g. `"DUID"`.
 - `date_range`: the half-open interval range.
-- `intervention`: `0` for the pricing run, `1` for the physical run.
+- `intervention`: `0` for the pricing run. `1` for the physical run where the interval has one,
+  else the pricing run (see `_run_rows`).
 - `where`: an extra SQL predicate starting with `AND`; the table is aliased `src`.
 - `order`: sort the rows by `SETTLEMENTDATE` and `key`.
 
@@ -106,14 +152,16 @@ function _read_dispatch_table(
     table = read_hive(db, table_name, date_range)
     schema = _table_schema(db, table)
     select_cols = columns isa Function ? columns(schema) : columns
-    params = Any[first(date_range), last(date_range)]
-    _push_intervention!(params, schema, intervention)
+    source, params = _run_rows(
+        table, schema, intervention, "SETTLEMENTDATE", "SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ?",
+        [first(date_range), last(date_range)],
+    )
     return _query(
         db,
         """
         SELECT $(join(["SETTLEMENTDATE", key, select_cols...], ", "))
-        FROM $table AS src
-        WHERE SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ? $(_intervention_where(schema)) $where
+        FROM $source AS src
+        WHERE TRUE $where
         QUALIFY row_number() OVER (PARTITION BY SETTLEMENTDATE, $key ORDER BY archive_month DESC) = 1
         $(order ? "ORDER BY SETTLEMENTDATE, $key" : "")
         """,

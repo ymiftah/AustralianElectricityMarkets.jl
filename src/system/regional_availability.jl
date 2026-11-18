@@ -28,7 +28,7 @@ series is per-unit of each device's own `max_active_power`. A repeat call replac
   `first(date_range) <= t < last(date_range)`. The first value must be a multiple of `resolution` on
   the epoch grid, or an `ArgumentError` is thrown.
 - `resolution`: the spacing of the stamps. Defaults to 30 minutes.
-- `intervention`: `0` for the pricing run, `1` for the physical run.
+- `intervention`: `0` for the pricing run. `1` for the physical run where the interval has one, else the pricing run.
 
 # Returns
 `nothing`.

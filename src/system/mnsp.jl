@@ -24,7 +24,7 @@ before any offers in `sys` are changed. Calling it again replaces earlier data, 
 - `sys`: the `PSY.System` to add to.
 - `db`: an `AEMDB` connection holding MNSP registration, offers and dispatch bid tracking.
 - `date_range`: five-minute interval-ending timestamps, with an exclusive final timestamp.
-- `intervention`: `0` for pricing-run metered flow, `1` for physical dispatch.
+- `intervention`: the run of the metered flow: `0` for the pricing run. `1` for the physical run where the interval has one, else the pricing run.
 
 # Returns
 The names of the interconnectors that received offers. Regulated interconnectors require none.

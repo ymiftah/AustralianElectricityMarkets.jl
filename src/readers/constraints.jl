@@ -238,32 +238,36 @@ series across the cut rather than silently empty results for recent dates.
 
 Two columns have no successor and come back `NULL` for post-cut rows:
 `GENCONEFFECTIVEDATE`/`GENCONVERSIONNO`, so a constraint's `GENCONDATA` version can only be
-resolved by exact equality on the old side (see [`read_fcas_requirements`](@ref) for the
-fallback). The new table also drops `INTERVENTION` entirely — `intervention` therefore
-filters the old side only, and post-cut rows are whatever runs AEMO published.
+resolution with exact equality on the old side (see [`read_fcas_requirements`](@ref) for the
+fallback).
+
+`intervention` applies to the old side only: `DISPATCH_FCAS_REQ_CONSTRAINT` has no `INTERVENTION`
+column and publishes one run per key, so its rows are read as published.
 
 Either table may have no cached partition for the range; such a table contributes no rows, so a cache
 covering only one side of the cut still works. Throws an `ArgumentError` when neither has one.
 """
 function _fcas_req_union_sql(db, start_date, end_date, intervention::Integer)
+    _check_intervention(intervention)
     branches = String[]
     params = Any[]
 
     if _cached_in_range(db, :DISPATCH_FCAS_REQ, (start_date, end_date))
         table = read_hive(db, :DISPATCH_FCAS_REQ, (start_date, end_date))
         schema = _table_schema(db, table)
+        rows, rows_params = _run_rows(
+            table, schema, intervention, "SETTLEMENTDATE", "SETTLEMENTDATE BETWEEN ? AND ?", [start_date, end_date],
+        )
         push!(
             branches,
             """
             SELECT SETTLEMENTDATE, GENCONID, REGIONID, BIDTYPE,
                    TRY_CAST(MARGINALVALUE AS DOUBLE) AS MARGINALVALUE,
                    GENCONEFFECTIVEDATE, GENCONVERSIONNO
-            FROM $table
-            WHERE SETTLEMENTDATE BETWEEN ? AND ? $(_intervention_where(schema))
+            FROM $rows
             """,
         )
-        push!(params, start_date, end_date)
-        _push_intervention!(params, schema, intervention)
+        append!(params, rows_params)
     end
 
     if _cached_in_range(db, :DISPATCH_FCAS_REQ_CONSTRAINT, (start_date, end_date))

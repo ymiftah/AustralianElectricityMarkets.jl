@@ -56,12 +56,6 @@ function _bid_series(device, value, field::Symbol)
     )
 end
 
-# The values of a telemetry key over the grid of `like`: a static value is repeated.
-function _grid_values(device, key, like)
-    key isa IS.StaticTimeSeriesKey || return fill(Float64(key), length(like.values))
-    return _bid_series(device, key, :availability).values
-end
-
 # The values of `key` on the timestamps of `like`: a static value is repeated, and a stamp the
 # series does not cover is `NaN`, so a bid on another window limits nothing.
 function _aligned_values(device, key, like)

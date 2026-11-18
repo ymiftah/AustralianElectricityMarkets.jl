@@ -194,9 +194,10 @@ mutable struct _ClosedLoopStepCache
     fcas::Dict{Tuple{AustralianElectricityMarkets.ClosedLoopInputs, BidType}, _FCASStepValues}
 end
 
+# Per-container stores: a rebuilt model starts with empty stores.
 function _closed_loop_cache!(model, t::DateTime)
-    ext = PSI.get_ext(PSI.get_settings(model))
-    cache = get!(() -> _ClosedLoopStepCache(t, Dict{Tuple{AustralianElectricityMarkets.ClosedLoopInputs, BidType}, _FCASStepValues}()), ext, "closed_loop_cache")
+    scratch = _build_scratch(PSI.get_optimization_container(model))
+    cache = get!(() -> _ClosedLoopStepCache(t, Dict{Tuple{AustralianElectricityMarkets.ClosedLoopInputs, BidType}, _FCASStepValues}()), scratch, :closed_loop_cache)
     cache = cache::_ClosedLoopStepCache
     if cache.time != t
         empty!(cache.fcas)
@@ -205,10 +206,10 @@ function _closed_loop_cache!(model, t::DateTime)
     return cache
 end
 
-# Each device's prepared closed-loop inputs, read once for the whole simulation.
+# Each device's prepared closed-loop inputs, read once per build of the model.
 function _closed_loop_inputs!(model, device, base::Float64)
-    ext = PSI.get_ext(PSI.get_settings(model))
-    store = get!(() -> Dict{Tuple{DataType, String}, AustralianElectricityMarkets.ClosedLoopInputs}(), ext, "closed_loop_inputs")
+    scratch = _build_scratch(PSI.get_optimization_container(model))
+    store = get!(() -> Dict{Tuple{DataType, String}, AustralianElectricityMarkets.ClosedLoopInputs}(), scratch, :closed_loop_inputs)
     store = store::Dict{Tuple{DataType, String}, AustralianElectricityMarkets.ClosedLoopInputs}
     return get!(() -> AustralianElectricityMarkets.closed_loop_inputs(device, base), store, (typeof(device), PSY.get_name(device)))
 end
@@ -241,8 +242,8 @@ end
 
 # The devices a state-dependent parameter overwrites, built on first use: those with a value for `family`.
 function _state_entries!(model, key, param_container, ::Type{T}, family, cache, t, output, base) where {T}
-    ext = PSI.get_ext(PSI.get_settings(model))
-    store = get!(() -> Dict{PSI.ParameterKey, _StateEntries}(), ext, "closed_loop_entries")
+    scratch = _build_scratch(PSI.get_optimization_container(model))
+    store = get!(() -> Dict{PSI.ParameterKey, _StateEntries}(), scratch, :closed_loop_entries)
     store = store::Dict{PSI.ParameterKey, _StateEntries}
     return get!(store, key) do
         attributes = PSI.get_attributes(param_container)
