@@ -60,8 +60,9 @@ end
 
 @testset "lossless interchange rejects network models other than AreaBalancePowerModel" begin
     sys = _lossless_sentinel_system()
-    template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaPTDFPowerModel; use_slacks = false))
-    PSI.set_device_model!(template, PSY.AreaInterchange, AEMS.NEMInterconnectorLossless)
+    template = _lossless_template()
+    PSI.set_network_model!(template, PSI.NetworkModel(PSI.CopperPlatePowerModel; use_slacks = false))
     model = PSI.DecisionModel(AEMS.NEMDispatchProblem, template, sys; optimizer = HiGHS.Optimizer, initial_time = TOY_START)
-    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.FAILED
+    PSI.set_output_dir!(model, mktempdir())
+    @test_throws r"NEMInterconnectorLossless supports PSI.AreaBalancePowerModel only" PSI.build_impl!(model)
 end
