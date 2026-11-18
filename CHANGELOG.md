@@ -90,6 +90,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- The how-to pages that need the full local NEMWEB cache (`run_nemde` and the five NEMDE templates) are frozen: `docs/prerender.jl` renders them into the committed `docs/frozen/`, and `docs/make.jl` copies that output instead of executing them.
+
+- Added how-to pages for the five NEMDE template presets: energy only, lossless interconnectors, interconnector losses, FCAS markets and generic constraints.
+
 - Restored the regional how-to pages, built with `set_regional_availability!`; fixed their series plots and output directories.
 
 - Removed the "Inspect an FCAS interval" how-to; building a system with `NEMDEConfiguration`

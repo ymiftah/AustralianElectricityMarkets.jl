@@ -9,6 +9,7 @@ using CairoMakie
 
 include(joinpath(@__DIR__, "literate", "shared", "inline_source.jl"))
 include(joinpath(@__DIR__, "formulation_pages.jl"))
+include(joinpath(@__DIR__, "frozen_pages.jl"))
 
 DocMeta.setdocmeta!(
     AustralianElectricityMarkets,
@@ -27,7 +28,7 @@ for (group, names) in [
             "formulation" => FORMULATION_PAGES,
             "overview" => ["nem"],
             "tutorials" => ["nemde_jump", "nemde_psi", "nemde_aem"],
-            "howto" => ["build_system", "economic_dispatch", "market_bids", "interchanges", "clearing-with-batteries", "run_nemde"],
+            "howto" => ["build_system", "economic_dispatch", "market_bids", "interchanges", "clearing-with-batteries"],
         ], name in names
     figure_options = name in FORMULATION_PAGES ? (; image_formats = [(MIME("image/png"), ".png")]) : (;)
     Literate.markdown(
@@ -40,6 +41,7 @@ for (group, names) in [
         postprocess = content -> name in FORMULATION_PAGES ? formulation_figure_descriptions(content, name) : content,
     )
 end
+foreach(name -> copy_frozen_page(name, joinpath(@__DIR__, "src", "examples")), FROZEN_PAGES)
 
 makedocs(;
     modules = [
@@ -92,6 +94,7 @@ makedocs(;
             "Interchanges" => "examples/interchanges.md",
             "Clearing with batteries" => "examples/clearing-with-batteries.md",
             "Run NEMDE dispatch" => "examples/run_nemde.md",
+            "NEMDE templates" => ["Energy-only template" => "examples/template_energy_only.md", "Lossless interconnectors" => "examples/template_interconnected.md", "Interconnector losses" => "examples/template_losses.md", "FCAS markets" => "examples/template_fcas.md", "Generic constraints" => "examples/template_constraints.md"],
             "Batch runs and benchmark" => "batch_run.md",
         ],
         "Roadmap" => "roadmap.md",

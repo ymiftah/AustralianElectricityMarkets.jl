@@ -28,3 +28,21 @@ To render just the formulation chapters and figures for local review:
 ```sh
 julia --project=docs docs/render_formulation_review.jl
 ```
+
+## Frozen pages
+
+Some how-to pages need the full local NEMWEB cache and minutes of solve time, so CI cannot run
+them. These pages are listed in `FROZEN_PAGES` in `docs/frozen_pages.jl`: `run_nemde` and the
+five `template_*` pages. Run `pre-commit run -a` before rendering, since a reformatted source changes its stamp.
+Render one or more of them locally with:
+
+```sh
+julia --project=docs docs/prerender.jl run_nemde template_fcas
+```
+
+With no arguments the script renders every frozen page. The rendered Markdown and its figures are
+written to `docs/frozen/` and committed. `docs/make.jl` copies them into the examples folder instead
+of executing the pages.
+
+The build fails when a frozen page's source changed since it was rendered. Re-render the page and
+commit the output in that case, and also after a dependency update that changes its output.

@@ -45,7 +45,7 @@ steps = DateTime(2025, 1, 2, 8, 5):DISPATCH_INTERVAL:DateTime(2025, 1, 2, 8, 15)
 # before any model is built.
 
 horizon = first(steps):DISPATCH_INTERVAL:(last(steps) + 2DISPATCH_INTERVAL)
-sys = nem_system(db, NEMDEConfiguration(); date_range = horizon)
+sys = nem_system(db, NEMDEConfiguration(); date_range = horizon);
 dispatch_intervals(sys)
 
 # ## Step 2: the template and the decision models
@@ -54,7 +54,7 @@ dispatch_intervals(sys)
 # the PowerSimulations decision models of the run and the sequence that runs them.
 # `nemde_optimizer()` is HiGHS with tight MIP gaps.
 
-template = template_nemde()
+template = template_nemde();
 (; models, sequence, dispatch, commitment) = nem_dispatch_sequence(
     NEMDispatchProblem, template, sys;
     optimizer = nemde_optimizer(; output_flag = false), initial_time = first(steps),
@@ -99,8 +99,8 @@ execute_status = PSI.execute!(simulation)
 # `read_solved_interval` reads the solved outcome in the keys and columns of
 # `read_published_interval`, so `compare_intervals` joins the two:
 
-results = PSI.get_decision_problem_results(PSI.SimulationResults(simulation), "dispatch")
-solved = read_solved_interval(results, sys)
+results = PSI.get_decision_problem_results(PSI.SimulationResults(simulation), "dispatch");
+solved = read_solved_interval(results, sys);
 comparison = compare_intervals(read_published_interval(db, steps), solved);
 
 # Energy prices are compared with the regional original price (ROP), the price straight from
@@ -129,40 +129,21 @@ read_constraint_violations(results, sys)
 # ## Simpler templates
 #
 # `template_nemde()` is the full model. Its keyword builder takes parts out one at a time, and
-# five presets are one-line calls to it. The presets follow the nempy examples, which add the
-# parts of NEMDE one at a time:
+# five presets are one-line calls to it, each following one of the nempy examples:
 #
 # | Preset | Interchanges | FCAS | Generic constraints | nempy example |
 # | --- | --- | --- | --- | --- |
-# | `template_energy_only()` | none | no | no | 1 and 2: bid stack, ramps |
-# | `template_interconnected()` | lossless | no | no | 3, its lossless counterpart (nempy's constant 5 percent loss is not modelled) |
-# | `template_losses()` | dynamic losses | no | no | 4: dynamic losses |
-# | `template_fcas()` | dynamic losses | yes | FCAS requirements only | 5: FCAS markets |
-# | `template_constraints()` | dynamic losses | no | all | none |
+# | [`template_energy_only()`](@ref template-energy-only) | none | no | no | 1 and 2: bid stack, ramps |
+# | [`template_interconnected()`](@ref template-interconnected) | lossless | no | no | 3, its lossless counterpart (nempy's constant 5 percent loss is not modelled) |
+# | [`template_losses()`](@ref template-losses) | dynamic losses | no | no | 4: dynamic losses |
+# | [`template_fcas()`](@ref template-fcas) | dynamic losses | yes | FCAS requirements only | 5: FCAS markets |
+# | [`template_constraints()`](@ref template-constraints) | dynamic losses | no | all | none |
 #
 # None of the presets has tie-break, which only the full `template_nemde()` models. Ramp
 # limits are always kept.
 #
-# ```julia
-# template_energy_only()
-# template_interconnected()
-# template_losses(; loss_breakpoints = 4)
-# template_fcas(; loss_breakpoints = 4)
-# template_constraints(; loss_breakpoints = 4)
-# ```
-#
-# `loss_breakpoints = N` keeps at most `N` breakpoints of each interchange's loss model, always
-# the first and the last, with the interior thinned evenly by index. The `System` is not changed,
-# and `read_interconnector_loss_gaps` still reads the full curve, so its `gap_mw` column shows the
-# error the thinning adds.
-#
-# Fast start is an option of the sequence, not of the template. The nempy examples have no
-# fast-start unit, so run a preset with `fast_start = false` to build the single model:
-#
-# ```julia
-# nem_dispatch_sequence(NEMDispatchProblem, template_losses(), sys; fast_start = false)
-# ```
-#
+# Each preset has its own how-to page, run with `fast_start = false`.
+
 # ## Going further
 #
 # - Run a whole trading day with `trading_day_steps(day)`, split by `dispatch_chunks` into

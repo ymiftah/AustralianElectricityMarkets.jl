@@ -19,6 +19,7 @@ JuMP = "4076af6c-e467-56ae-b986-b466b2749572"
 Literate = "98b081ad-f1c9-55d3-8b20-4c87d4299306"
 PowerSimulations = "e690365d-45e2-57bb-ac84-44ba829e73c4"
 PowerSystems = "bcd98974-b02a-5e2f-9ee0-a103f5c450dd"
+SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
 StorageSystemsSimulations = "e2f1a126-19d0-4674-9252-42b2384f8e3c"
 
 [compat]
