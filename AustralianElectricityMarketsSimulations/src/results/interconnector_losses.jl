@@ -66,8 +66,9 @@ end
     read_interconnector_loss_gaps(results, sys::PSY.System) -> DataFrame
 
 Reads each interconnector's solved loss against the loss curve at its solved flow, for every interval
-with a solved flow. `gap_mw` is zero where the segment allocation reproduces the curve, and positive
-where the solver dissipated more than the curve at that flow.
+with a solved flow. The reference is the full curve stored on the `System`, so under `loss_breakpoints`
+`gap_mw` also includes the thinning error (the solver used the thinned curve), and it can be negative.
+`gap_mw` is zero where the solved loss equals the full curve.
 
 # Arguments
 - `results`: `PSI.OptimizationProblemResults` of a model using `NEMInterconnectorLoss`, or

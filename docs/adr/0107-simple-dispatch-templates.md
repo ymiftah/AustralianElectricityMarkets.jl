@@ -8,7 +8,7 @@ Accepted. Extends ADR 0090, the template is the problem scope, with presets and 
 
 - `template_nemde(; interconnectors, fcas, constraints, tie_break, exclude_constraints, loss_breakpoints)` is the one keyword builder. Six templates come from it: the full default and five presets, each a call with fixed keywords.
 - `template_energy_only()`: no interchange, FCAS, constraints or tie-break. nempy examples 1 and 2 (bid stack, ramps).
-- `template_interconnected()`: lossless interchanges and no other part. nempy example 3 without its constant 5 percent loss.
+- `template_interconnected()`: lossless interchanges and no other part. The lossless counterpart of nempy example 3, which takes a constant 5 percent loss that is not modelled here.
 - `template_losses()`: dynamic losses. nempy example 4.
 - `template_fcas()`: dynamic losses and the FCAS market, with constraints `:fcas_requirements`. nempy example 5.
 - `template_constraints()`: dynamic losses and every generic constraint, no FCAS. No nempy counterpart.
@@ -18,6 +18,12 @@ Accepted. Extends ADR 0090, the template is the problem scope, with presets and 
 - `loss_breakpoints = N` keeps the first and last breakpoints of each loss model and thins the interior evenly by index.
 - `constraints = :fcas_requirements` keeps only the generic constraints that carry FCAS requirements.
 - `MWLOSSES` is `missing` in a lossless run.
+- Lossless departs from NEMDE, which always applies the LOSSMODEL quadratic. Regional prices differ from NEMDE only through binding flow limits, never through a loss factor.
+- The kept flow rows are AEMO's Constraint Violation Penalty item 5, "Interconnector Capacity Limit" (FlowDeficit and FlowSurplus, factor 1150 x Market Price Cap). Bounds are IMPORTLIMIT <= flow <= EXPORTLIMIT from DISPATCHINTERCONNECTORRES, clamped to [-MAXMWIN, MAXMWOUT] and applied to MWFLOW.
+- Under lossless an MNSP also loses its availability CVP and MAXAVAIL offer, the ramp rows (CVP item 4, 1155), the Total Band MW Offer row (item 9), the MNSP operating limits and MNSPSlack, the link-end loss factors and the NEMInitialFlow closed-loop state. Its balance is a plain `-flow` at the from area and `+flow` at the to area, and its flow is bounded only by the item 5 rows.
+- Basslink ceases MNSP registration from 1 July 2026, so after that date the MNSP departure no longer applies to Basslink.
+- `loss_breakpoints` departs from linearising on every MWBREAKPOINT. When a dropped breakpoint was zero, the zero-flow lift moves to the chord that brackets zero.
+- Under `constraints = :fcas_requirements`, skipped constraints (no component) stay strict in the input check. Dropped terms and defaulted weights are checked only for in-scope constraints.
 
 ## How
 
@@ -28,7 +34,7 @@ Accepted. Extends ADR 0090, the template is the problem scope, with presets and 
 - `read_interconnector_loss_gaps` reads the full curve from the `System`, so a thinned run reports the thinning error in `gap_mw`.
 - `constraints = :fcas_requirements` filters the generic constraints at build, and `template_skipped_constraints` leaves the filtered-out constraints out of its report.
 - A lossless run has no `InterconnectorLossVariable`: `read_solved_interval` gives `MWLOSSES = missing` and `read_interconnector_loss_gaps` returns an empty table.
-- Invalid keyword combinations throw `ArgumentError` at build. `:fcas_requirements` needs `fcas = true`, and `loss_breakpoints` needs `interconnectors = :losses`.
+- Invalid keyword combinations throw `ArgumentError` when the template is constructed, not at build. `:fcas_requirements` needs `fcas = true`, and `loss_breakpoints` needs `interconnectors = :losses` and at least 2.
 
 ## Why
 

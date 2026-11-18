@@ -229,7 +229,8 @@ The `GenericConstraint`s of `sys` that a run of `template` leaves out, without c
 every other available constraint the template cannot build, with the number of failing terms.
 A template with no `GenericConstraint` service model reports the unavailable constraints only. Available
 constraints outside the template's constraint scope (with `constraints = :fcas_requirements`, those without
-FCAS requirements) are left out of the run by design, so they are neither reported nor diagnosed. It reads the
+FCAS requirements) are left out of the run by design, so they are neither reported nor diagnosed. Out-of-scope
+constraints that are unavailable still appear among the unavailable rows. It reads the
 caller's template or the expanded template of a built model alike.
 
 # Arguments

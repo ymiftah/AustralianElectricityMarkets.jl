@@ -135,7 +135,7 @@ read_constraint_violations(results, sys)
 # | Preset | Interchanges | FCAS | Generic constraints | nempy example |
 # | --- | --- | --- | --- | --- |
 # | `template_energy_only()` | none | no | no | 1 and 2: bid stack, ramps |
-# | `template_interconnected()` | lossless | no | no | 3, without its constant 5 percent loss |
+# | `template_interconnected()` | lossless | no | no | 3, its lossless counterpart (nempy's constant 5 percent loss is not modelled) |
 # | `template_losses()` | dynamic losses | no | no | 4: dynamic losses |
 # | `template_fcas()` | dynamic losses | yes | FCAS requirements only | 5: FCAS markets |
 # | `template_constraints()` | dynamic losses | no | all | none |

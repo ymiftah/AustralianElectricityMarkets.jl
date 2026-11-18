@@ -2,12 +2,12 @@
 
 ## Status
 
-Accepted. Absorbs the removed ADR 0088 (data-free problem template). The run interface is in [0092](0092-psi-shaped-problem-interface.md) and [0101](0101-aem-writes-aemsim-reads.md).
+Accepted. Absorbs the removed ADR 0088 (data-free problem template). The run interface is in [0092](0092-psi-shaped-problem-interface.md) and [0101](0101-aem-writes-aemsim-reads.md). The keyword builder and presets that model less are in [0107](0107-simple-dispatch-templates.md).
 
 ## What
 
 - `template_nemde(; exclude_constraints)` builds a `PSI.ProblemTemplate` from type-level arguments only; no system, database, interval or price. It models `NEMDispatch` for each type of `NEM_DISPATCH_DEVICE_TYPES` (batteries included), `NEMInterconnectorLoss` for `PSY.AreaInterchange`, an `FCASMarket` per `FCASService`, the aggregated `LinearFactorLimit` for `GenericConstraint` and `TieBreakMarket` for `EnergyTieBreak`.
-- The template is the scope. There is no list of optional parts: a run that models less builds its own `PSI.ProblemTemplate`.
+- The template is the scope. There is no list of optional parts. The keyword builder `template_nemde` and its presets are the supported way to model less ([0107](0107-simple-dispatch-templates.md)).
 - Checks read the scope from the template (`_has_device_model`, `_has_service_model`): `check_template_against_sys`, `check_fcas_services`, the NEMDE inputs check and `template_skipped_constraints`.
 - Every dispatch participant type of the system must have a device model in the template, batteries included; otherwise `check_template_against_sys` throws.
 - A template without an FCAS service model or an `AreaInterchange` model records the generic constraints that depend on them as skipped. Any other unbuildable constraint throws.

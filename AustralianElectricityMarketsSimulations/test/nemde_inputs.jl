@@ -102,3 +102,27 @@ end
     set_build_report!(sys, NEMBuildReport(; skipped_constraints = skipped, dropped_terms = [term(false)]))
     @test isnothing(AEMS._check_nemde_constraint_inputs(sys))
 end
+
+@testset "constraint-build records are judged only for the constraints in the template's scope" begin
+    # `N_ENERGY` is energy-only, so `template_fcas` leaves it out and `template_nemde` judges it.
+    sys = fcas_toy_system(;
+        extra! = (sys, stamps) -> begin
+            gc = GenericConstraint(; name = "N_ENERGY", sense = ConstraintSense.LE, rhs = 50.0, terms = ConstraintTerm[UnitTerm(TOY_CHEAP, BidType.ENERGY, 1.0)])
+            PSY.add_service!(sys, gc, [PSY.get_component(ThermalStandard, sys, TOY_CHEAP)])
+            add_toy_constraint_series!(sys, gc, stamps, fill(50.0, length(stamps)), fill(1.0, length(stamps)))
+            return
+        end,
+    )
+    dropped = Dict{String, Any}(
+        "constraint" => "N_ENERGY", "kind" => "UNIT", "key" => "GONE_DUID", "bid_type" => "ENERGY",
+        "factor" => 1.0, "registered" => true,
+    )
+    set_build_report!(sys, NEMBuildReport(; dropped_terms = [dropped]))
+    @test problem_template(sys; template = template_fcas()) isa PSI.ProblemTemplate
+    @test_throws r"incomplete constraint terms: N_ENERGY.*GONE_DUID" problem_template(sys; template = template_nemde())
+    @test_throws r"incomplete constraint terms: N_ENERGY.*GONE_DUID" AEMS._check_nemde_constraint_inputs(sys)
+
+    set_build_report!(sys, NEMBuildReport(; defaulted_constraint_weights = ["N_ENERGY"]))
+    @test problem_template(sys; template = template_fcas()) isa PSI.ProblemTemplate
+    @test_throws r"NULL GENERICCONSTRAINTWEIGHT: N_ENERGY" problem_template(sys; template = template_nemde())
+end

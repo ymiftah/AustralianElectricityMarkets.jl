@@ -27,7 +27,8 @@ struct NEMInterconnectorLoss <: PSI.AbstractBranchFormulation end
     NEMInterconnectorLossless
 
 Device formulation for `PSY.AreaInterchange` with the same flow variable, flow limits and priced
-flow slacks as [`NEMInterconnectorLoss`](@ref), and the balance terms `-flow` and `+flow` only. It
+flow slacks as [`NEMInterconnectorLoss`](@ref), and the balance terms only: `-flow` at the from area and
+`+flow` at the to area. It
 has no loss variables, loss curve or MNSP link offers, so an MNSP is a regulated flow within its
 limits. Supports `PSI.AreaBalancePowerModel` only; other network models throw `ArgumentError`.
 """

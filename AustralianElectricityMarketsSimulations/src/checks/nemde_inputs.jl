@@ -21,7 +21,7 @@ device, the resolution and five-minute alignment of the series keyed by each dev
 `nothing`. Throws an `ArgumentError` naming the first incomplete input and how to supply it.
 """
 function _check_nemde_system_inputs(sys::PSY.System, template::PSI.ProblemTemplate; has_limits = _has_nem_dispatch_limits)
-    _has_service_model(template, GenericConstraint) && _check_nemde_constraint_inputs(sys)
+    _has_service_model(template, GenericConstraint) && _check_nemde_constraint_inputs(sys; scope = _constraint_scope(template))
     devices = nem_dispatch_devices(sys)
     uncovered = [PSY.get_name(device) for device in devices if !has_limits(device)]
     isempty(uncovered) || throw(
@@ -77,9 +77,23 @@ function _check_state_series_alignment(device)
 end
 
 
-# The constraint-build records of `sys` are empty: every invoked constraint, weight and term was read. A vacuous
-# constraint is skipped, but its dropped terms fail when the unit is registered over the range.
-function _check_nemde_constraint_inputs(sys::PSY.System)
+"""
+    _check_nemde_constraint_inputs(sys; scope = :all)
+
+Verifies that the constraint-build records of `sys` are complete: no missing dispatch constraint interval, no
+defaulted weight, no skipped constraint, and no dropped unit term of a registered unit. A vacuous constraint is
+skipped, but its dropped terms fail when the unit is registered over the range. Defaulted weights and dropped
+terms are judged only for the constraints of `scope`; a record naming no `GenericConstraint` of `sys` is always
+judged. Skipped constraints and missing intervals are always judged.
+
+# Arguments
+- `sys`: the `PSY.System` to check.
+- `scope`: the constraint scope of the template, `:all` or `:fcas_requirements`, as [`_in_constraint_scope`](@ref) reads it.
+
+# Returns
+`nothing`. Throws an `ArgumentError` naming the first incomplete input.
+"""
+function _check_nemde_constraint_inputs(sys::PSY.System; scope::Symbol = :all)
     missing_intervals = get_missing_constraint_intervals(sys)
     isempty(missing_intervals) || throw(
         ArgumentError(
@@ -87,7 +101,7 @@ function _check_nemde_constraint_inputs(sys::PSY.System)
                 "populate DISPATCHCONSTRAINT for the requested range",
         ),
     )
-    defaulted_weights = get_defaulted_constraint_weights(sys)
+    defaulted_weights = filter(n -> _record_in_scope(sys, n, scope), get_defaulted_constraint_weights(sys))
     isempty(defaulted_weights) || throw(
         ArgumentError(
             "check_template_against_sys: constraints with a NULL GENERICCONSTRAINTWEIGHT: $(join(defaulted_weights, ", ")); " *
@@ -102,7 +116,7 @@ function _check_nemde_constraint_inputs(sys::PSY.System)
                 "SPD*CONSTRAINT tables with populate(...; force_new = true)",
         ),
     )
-    dropped_inputs = filter(:registered => identity, get_dropped_terms(sys))
+    dropped_inputs = filter(:registered => identity, filter(:constraint => n -> _record_in_scope(sys, n, scope), get_dropped_terms(sys)))
     isempty(dropped_inputs) || throw(
         ArgumentError(
             "check_template_against_sys: incomplete constraint terms: " *
@@ -111,6 +125,14 @@ function _check_nemde_constraint_inputs(sys::PSY.System)
         ),
     )
     return
+end
+
+
+# Whether the constraint record `name` is judged under `scope`. A name with no `GenericConstraint` of `sys` is always judged.
+function _record_in_scope(sys::PSY.System, name::AbstractString, scope::Symbol)
+    gc = PSY.get_component(GenericConstraint, sys, name)
+    isnothing(gc) && return true
+    return _in_constraint_scope(gc, scope)
 end
 
 

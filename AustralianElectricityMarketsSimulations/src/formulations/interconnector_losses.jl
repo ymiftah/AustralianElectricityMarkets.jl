@@ -7,8 +7,8 @@ function PSI.convert_result_to_natural_units(::Type{InterconnectorLossSegmentVar
 end
 
 
-# PSI's flow-limit series names for `AreaInterchange`, plus the loss-factor demand coefficient. The MNSP
-# offer, availability and operating parameters are added with their series names, one type per family.
+# PSI's flow-limit series names for `AreaInterchange`, shared by both interchange formulations. The loss-factor
+# demand coefficient is added for `NEMInterconnectorLoss` only; the MNSP parameters are added with their series names.
 function PSI.get_default_time_series_names(::Type{PSY.AreaInterchange}, ::Type{F}) where {F <: _NEMInterchangeFormulation}
     names = Dict{Type{<:PSI.TimeSeriesParameter}, String}(
         PSI.FromToFlowLimitParameter => NEM_INTERCONNECTOR_SERIES.from_to_limit,
@@ -77,8 +77,8 @@ function _missing_loss_model_error(name::AbstractString, n::Int)
     return ArgumentError(
         "AreaInterchange \"$name\" carries $n InterconnectorLossModel supplemental attribute(s); " *
             "NEMInterconnectorLoss requires exactly one. Build the system with `nem_system`, which " *
-            "attaches it (`attach_interconnector_losses!` in the root package), or give \"$name\" a " *
-            "lossless formulation such as `PSI.StaticBranch`.",
+            "attaches it (`attach_interconnector_losses!` in the root package), or give \"$name\" the " *
+            "`NEMInterconnectorLossless` formulation (templates: `interconnectors = :lossless`).",
     )
 end
 
@@ -140,6 +140,13 @@ end
 
 The loss model each of `devices` is built with, keyed by name: its attached model, checked for convex segments
 on all its breakpoints and then thinned to the `"loss_breakpoints"` attribute of `device_model`.
+
+# Arguments
+- `devices`: the `PSY.AreaInterchange` devices of the formulation.
+- `device_model`: the `PSI.DeviceModel` whose `"loss_breakpoints"` attribute caps the breakpoints, if set.
+
+# Returns
+A `Dict{String, InterconnectorLossModel}` keyed by device name.
 """
 function _build_loss_models(devices, device_model::PSI.DeviceModel)
     cap = PSI.get_attribute(device_model, "loss_breakpoints")
@@ -429,8 +436,9 @@ Bounds `PSI.FlowActivePowerVariable` by the static `flow_limits`, or by the from
 flow-limit parameters when every device carries those time series. Each row carries an
 [`InterconnectorFlowSlack`](@ref) with meta `"surplus"` (upper) or `"deficit"` (lower) priced at [`INTERCONNECTOR_FLOW_CVP_FACTOR`](@ref) times the Market Price Cap, always,
 whatever the device model's `use_slacks`, as NEMDE's limit is always soft, so
-limits that conflict with each other or with the loss breakpoint range are violated at that price
-instead of making the model infeasible. The breakpoint range itself stays a hard bound. Because
+limits that conflict with each other, or with the loss breakpoint range under [`NEMInterconnectorLoss`](@ref), are
+violated at that price instead of making the model infeasible. Under `NEMInterconnectorLoss` the breakpoint range
+itself stays a hard bound. Because
 the slacks are priced from the Market Price Cap of the build's initial interval, building requires a cap
 for that interval, whether the cap comes from `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` (from FY2021-22) or from the
 `"market_price_cap"` entry of the model's settings, even when `use_slacks` is `false`.

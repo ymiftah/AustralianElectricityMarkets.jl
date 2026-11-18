@@ -59,8 +59,10 @@ Sources for CVP factors: AEMO *Schedule of Constraint Violation Penalty Factors*
 | Missing loss inputs, V-SA NSW term, Basslink share 1.0 | [0091](0091-interconnector-loss-input-assumptions.md) | Reconstructions, not AEMO values |
 | MNSP directional offers | [0035](0035-mnsp-link-offers.md), [0076](0076-mnsp-operating-limits.md) | Follows; the direction binary is always imposed; Basslink converter loss and no-go zone are `unverified` |
 | Interconnector loss on every flow, from the loss curve | [0107](0107-simple-dispatch-templates.md) | Departure in `NEMInterconnectorLossless` runs only: no loss at all; flow limits and CVP x MPC flow slacks kept (item 5, 1150) |
-| MNSP link offers, loss and direction binary | [0107](0107-simple-dispatch-templates.md) | Departure in lossless runs only: an MNSP is a regulated flow within its limits, with no offers, loss or direction binary |
-| Full loss curve on every `LOSSMODEL` breakpoint | [0107](0107-simple-dispatch-templates.md) | Departure in runs with `loss_breakpoints` only: interior breakpoints thinned evenly by index; `read_interconnector_loss_gaps` still reads the full curve |
+| MNSP link offers, loss and direction binary | [0107](0107-simple-dispatch-templates.md) | Departure in lossless runs only: an MNSP is a regulated flow within its limits, with no offers, loss or direction binary. From 1 July 2026, when Basslink ceases MNSP registration, this departure no longer applies to it |
+| MNSP availability CVP and MAXAVAIL, ramp rows (item 4, 1155), Total Band MW offer (item 9, 1135), operating limits, MNSPSlack, link-end loss factors, NEMInitialFlow state | [0107](0107-simple-dispatch-templates.md) | Departure in lossless runs only: none of these apply to an MNSP, so its flow is bounded only by the item 5 interconnector capacity rows |
+| Full loss curve on every `LOSSMODEL` breakpoint | [0107](0107-simple-dispatch-templates.md) | Departure in runs with `loss_breakpoints` only: interior breakpoints thinned evenly by index, and when a dropped breakpoint was zero the zero-flow lift moves to the chord that brackets zero; `read_interconnector_loss_gaps` still reads the full curve |
+| Generic constraints outside the FCAS requirements | [0107](0107-simple-dispatch-templates.md) | Departure in `template_fcas` and `constraints = :fcas_requirements` runs only: the other generic constraints are not modelled. Skipped constraints stay strict in the input check; dropped terms and defaulted weights are checked only for in-scope constraints |
 
 ## Solver and prices
 

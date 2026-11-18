@@ -683,3 +683,33 @@ end
     container = PSI.get_optimization_container(model)
     @test Set(axes(PSI.get_constraint(container, NEMConstraintLimit(), GenericConstraint), 1)) == union(fcas_names, ["N_TOY_ENERGY"])
 end
+
+@testset "an out-of-scope energy constraint with a missing unit does not block the FCAS run, and blocks the full run" begin
+    # `N_GHOST` is energy-only and names a unit absent from `sys`: out of the FCAS scope, blocking under every constraint.
+    sys = fcas_toy_system(;
+        extra! = (sys, stamps) -> begin
+            gc = GenericConstraint(;
+                name = "N_GHOST", sense = ConstraintSense.LE, rhs = 50.0,
+                terms = ConstraintTerm[UnitTerm("GHOST", BidType.ENERGY, 1.0)],
+            )
+            PSY.add_service!(sys, gc, [PSY.get_component(ThermalStandard, sys, TOY_CHEAP)])
+            add_toy_constraint_series!(sys, gc, stamps, fill(50.0, length(stamps)), fill(1.0, length(stamps)))
+            return
+        end,
+    )
+    fcas = template_fcas()
+    @test !("N_GHOST" in template_skipped_constraints(sys, fcas).constraint)
+    @test !any(r -> r.constraint == "N_GHOST", AEMS._template_fact_rows(sys, fcas))
+    @test problem_template(sys; template = fcas) isa PSI.ProblemTemplate
+    optimizer = PSI.optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false)
+    model = PSI.DecisionModel(AEMS.NEMDispatchProblem, fcas, sys; optimizer, initial_time = TOY_START, name = "dispatch")
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    @test !("N_GHOST" in axes(PSI.get_constraint(container, NEMConstraintLimit(), GenericConstraint), 1))
+
+    # The full template judges every constraint, so the missing unit blocks it.
+    full = template_nemde()
+    @test only(template_skipped_constraints(sys, full)[template_skipped_constraints(sys, full).constraint .== "N_GHOST", :reason]) ==
+        :missing_component
+    @test_throws r"missing_component" problem_template(sys; template = full)
+end

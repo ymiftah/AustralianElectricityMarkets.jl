@@ -87,7 +87,7 @@ function _validate_template_arguments(
             throw(ArgumentError("loss_breakpoints thins the loss model; set interconnectors = :losses"))
         loss_breakpoints >= 2 || throw(ArgumentError("loss_breakpoints must be at least 2, got $loss_breakpoints"))
     end
-    return nothing
+    return
 end
 
 
@@ -121,9 +121,9 @@ end
     template_interconnected() -> PSI.ProblemTemplate
 
 The energy run with the interchanges lossless: [`template_energy_only`](@ref) plus each `PSY.AreaInterchange` under
-[`NEMInterconnectorLossless`](@ref), so its flow limits bind and no loss is taken. It leaves out losses, FCAS, generic
-constraints and tie-break, and an MNSP is a regulated flow within its limits. It corresponds to nempy example 3, which
-is a constant 5 percent loss rather than lossless. Run it with `fast_start = false`, as in
+[`NEMInterconnectorLossless`](@ref), so its flow limits apply and no loss is taken. It leaves out losses, FCAS, generic
+constraints and tie-break, and an MNSP is a regulated flow within its limits. It is the lossless counterpart of nempy
+example 3, whose constant percentage loss is not modelled here. Run it with `fast_start = false`, as in
 `nem_dispatch_sequence(NEMDispatchProblem, template_interconnected(), sys; fast_start = false)`.
 
 # Returns
@@ -236,8 +236,8 @@ FCAS requirements for `:fcas_requirements`.
 """
 function _in_constraint_scope(gc::GenericConstraint, scope::Symbol)
     scope === :all && return true
-    scope === :fcas_requirements && return !isempty(AustralianElectricityMarkets.get_fcas_requirements(gc))
-    throw(ArgumentError("unknown constraint scope :$scope; choose :all or :fcas_requirements"))
+    scope === :fcas_requirements || throw(ArgumentError("unknown constraint scope :$scope; choose :all or :fcas_requirements"))
+    return !isempty(AustralianElectricityMarkets.get_fcas_requirements(gc))
 end
 
 
