@@ -167,6 +167,19 @@ end
         @test nrow(subset(overlap, :GENCONID => ByRow(==("F_NSW1_RAISE6SEC")))) == 1
     end
 
+    @testset "read_constraint_fcas_requirements skips a FCAS_REQ table that is cached only for other months" begin
+        # A real cache can hold DISPATCH_FCAS_REQ for earlier months only; the range is then served by the new table.
+        other_months = mktempdir()
+        create_mock_data(other_months)
+        table_dir = joinpath(other_months, "DISPATCH_FCAS_REQ")
+        for partition in readdir(table_dir)
+            mv(joinpath(table_dir, partition), joinpath(table_dir, "archive_month=2024-06-01"))
+        end
+        other_db = aem_connect(HiveConfiguration(hive_location = other_months, filesystem = "file"))
+        reqs = read_constraint_fcas_requirements(other_db, start_date:Minute(5):(start_date + Minute(5 * 10)))
+        @test "F_NSW1_RAISE6SEC" in reqs.GENCONID
+    end
+
 end
 
 @testset "constraint build" begin

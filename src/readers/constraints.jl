@@ -242,14 +242,14 @@ resolved by exact equality on the old side (see [`read_fcas_requirements`](@ref)
 fallback). The new table also drops `INTERVENTION` entirely — `intervention` therefore
 filters the old side only, and post-cut rows are whatever runs AEMO published.
 
-Either table may be absent from the cache; a missing one contributes no rows, so a cache covering
-only one side of the cut still works. Throws an `ArgumentError` when neither is cached.
+Either table may have no cached partition for the range; such a table contributes no rows, so a cache
+covering only one side of the cut still works. Throws an `ArgumentError` when neither has one.
 """
 function _fcas_req_union_sql(db, start_date, end_date, intervention::Integer)
     branches = String[]
     params = Any[]
 
-    if _table_is_cached(db, :DISPATCH_FCAS_REQ)
+    if _cached_in_range(db, :DISPATCH_FCAS_REQ, (start_date, end_date))
         table = read_hive(db, :DISPATCH_FCAS_REQ, (start_date, end_date))
         schema = _table_schema(db, table)
         push!(
@@ -266,7 +266,7 @@ function _fcas_req_union_sql(db, start_date, end_date, intervention::Integer)
         _push_intervention!(params, schema, intervention)
     end
 
-    if _table_is_cached(db, :DISPATCH_FCAS_REQ_CONSTRAINT)
+    if _cached_in_range(db, :DISPATCH_FCAS_REQ_CONSTRAINT, (start_date, end_date))
         table = read_hive(db, :DISPATCH_FCAS_REQ_CONSTRAINT, (start_date, end_date))
         push!(
             branches,
