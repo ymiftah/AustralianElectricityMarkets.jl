@@ -8,7 +8,7 @@ of the setters that built it: with a `GenericConstraint` service model, [`get_mi
 `SPDCONNECTIONPOINTCONSTRAINT`, `SPDREGIONCONSTRAINT`, `SPDINTERCONNECTORCONSTRAINT`); the
 dispatch-limit series of the dispatch-limits build (`DISPATCHLOAD`) on every dispatch
 device, the resolution and five-minute alignment of the series keyed by each device's
-[`NEMObservedState`](@ref AustralianElectricityMarkets.NEMObservedState); and, with a `PSY.AreaInterchange` device model, the offers of
+[`NEMObservedState`](@ref AustralianElectricityMarkets.NEMObservedState); and, with an [`NEMInterconnectorLoss`](@ref) interchange model, the offers of
 `set_mnsp_offers!` (`INTERCONNECTORCONSTRAINT`, `MNSP_INTERCONNECTOR`, `MNSP_DAYOFFER`,
 `MNSP_BIDOFFERPERIOD`, `DISPATCH_MNSPBIDTRK`) on every available MNSP.
 
@@ -31,7 +31,7 @@ function _check_nemde_system_inputs(sys::PSY.System, template::PSI.ProblemTempla
         ),
     )
     foreach(_check_state_series_alignment, devices)
-    _has_device_model(template, PSY.AreaInterchange) &&
+    _has_interconnector_loss_model(template) &&
         foreach(_check_mnsp_offers, PSY.get_components(PSY.get_available, PSY.AreaInterchange, sys))
     return
 end

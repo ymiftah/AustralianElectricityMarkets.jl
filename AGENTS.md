@@ -9,7 +9,7 @@ four packages sharing the root `Manifest.toml`:
 | `AustralianElectricityMarketsCache` | `AustralianElectricityMarketsCache/` | Shared configuration, DuckDB connections, cache metadata and partition inspection. No market readers or population pipeline. |
 | `AustralianElectricityMarketsData` | `AustralianElectricityMarketsData/` | NEMWEB download and Hive-partitioned parquet population. Depends on Cache, with no AEM, AEMSim or PowerSystems dependency. |
 | `AustralianElectricityMarkets` | repo root (`src/`) | Domain types, Readers submodule, PSY system construction and modification, attached-data accessors, per-interval NEM inputs and market-rule tables (CVP factors, MPC). Depends on Cache, with no Data or Simulations dependency. |
-| `AustralianElectricityMarketsSimulations` | `AustralianElectricityMarketsSimulations/` | NEMDE problems in PSI: `AbstractNEMDispatch` device formulations (batteries included), FCAS market and trapezium formulations, NEM constraint formulations, NEMDE template, decision-model constructor and pre-flight checks. The overnight batch runner is in `scripts/batch_run.jl`. |
+| `AustralianElectricityMarketsSimulations` | `AustralianElectricityMarketsSimulations/` | NEMDE problems in PSI: `AbstractNEMDispatch` device formulations (batteries included), FCAS market and trapezium formulations, NEM constraint formulations, NEMDE template builder and its presets, decision-model constructor and pre-flight checks. The overnight batch runner is in `scripts/batch_run.jl`. |
 
 ## Quick start
 
@@ -82,7 +82,7 @@ front, so every group runs on its own.
 | `…Simulations/src/types/` | PSI parameter, variable, constraint and slack types and formulation structs; `state.jl` holds the initial-condition types and the telemetry and observed-state accessors of a NEMDE unit |
 | `…Simulations/src/formulations/` | `AbstractNEMDispatch` device formulations, FCAS, generic-constraint, loss, MNSP, slack and tie-break formulations |
 | `…Simulations/src/offers/derivation.jl` | The energy `MAXAVAIL` series name the dispatch parameters register |
-| `…Simulations/src/templates/` | `template_nemde`, the NEMDE template |
+| `…Simulations/src/templates/` | `template_nemde`, the keyword builder, and its presets |
 | `…Simulations/src/problems/` | `NEMDispatchProblem`, the closed-loop sequence and the HiGHS optimizer settings |
 | `…Simulations/src/results/` | Solved and violation readers of PSI results: `read_solved_interval`, `read_constraint_violations`, the `read_prices` / `read_fcas_prices` methods, and the comparison against published outcomes |
 | `…Simulations/src/checks/` | Pre-flight checks run before a build, one file per thing checked |

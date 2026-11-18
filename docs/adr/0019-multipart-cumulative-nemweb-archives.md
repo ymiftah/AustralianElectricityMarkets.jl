@@ -13,6 +13,7 @@ Accepted
 
 - `_write_d_lines` streams one ZIP's D-lines into an `IO` and drops an out-of-month line before it reaches disk; `_extract_d_lines` has single-ZIP and `Vector{String}` methods that stream every part into one temp file, and delete the temp CSV on failure.
 - The column's raw text is compared lexicographically with `_month_filter_bounds`' `"YYYY/MM/DD HH:MM:SS"` strings (NEMWEB zero-pads). `_csv_to_parquet`'s `WHERE`/`DISTINCT ON` remain a second check. `DataSource` carries `month_filter_column`.
+- The `Vector{String}` method takes the column list from the first part and throws an `ArgumentError` when a later part's `I` header differs, so rows are never written under the wrong columns.
 - Boundary rule: `INTERVAL_DATETIME` is the interval end, so a month is `archive_month < t <= archive_month + 1 month`.
 
 ## Why

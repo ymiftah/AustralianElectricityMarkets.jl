@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted as to the conventions below. The single-interval pipeline and its entry points (`nemde_system`, `nemde_template`, `replicate_interval`) are gone: see [0061](0061-problem-core-stock-simulation.md), [0101](0101-aem-writes-aemsim-reads.md) and [0090](0090-template-is-the-problem-scope.md).
+Accepted as to the conventions below. The single-interval pipeline and its entry points (`nemde_system`, `nemde_template` and the single-interval entry point) are gone: see [0061](0061-problem-core-stock-simulation.md), [0101](0101-aem-writes-aemsim-reads.md) and [0090](0090-template-is-the-problem-scope.md).
 
 ## What
 

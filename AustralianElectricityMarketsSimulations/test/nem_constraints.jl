@@ -655,3 +655,31 @@ end
     @test again.skipped_constraints == rows
     @test PSY.get_time_series_counts(sys) == counts
 end
+
+@testset "constraint scope :fcas_requirements builds only the constraints with FCAS requirements" begin
+    stamps = TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION)
+    sys = fcas_toy_system(; extra! = (sys, stamps) -> add_toy_generic_constraint!(sys, stamps, TOY_CHEAP, 50.0; name = "N_TOY_ENERGY"))
+    fcas_names = Set(["F_REG", "F_R6", "F_L6"])
+    optimizer = PSI.optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false)
+
+    scoped = template_nemde(; interconnectors = :none, constraints = :fcas_requirements, tie_break = false)
+    rows = template_skipped_constraints(sys, scoped)
+    @test !any(in(fcas_names), rows.constraint)
+    @test !("N_TOY_ENERGY" in rows.constraint)
+    model = PSI.DecisionModel(AEMS.NEMDispatchProblem, scoped, sys; optimizer, initial_time = TOY_START, name = "dispatch")
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    built = Set(axes(PSI.get_constraint(container, NEMConstraintLimit(), GenericConstraint), 1))
+    @test built == fcas_names
+
+    # The unscoped template builds the energy-only constraint as well.
+    full = template_nemde(; interconnectors = :none, tie_break = false)
+    all_rows = template_skipped_constraints(sys, full)
+    @test !("N_TOY_ENERGY" in all_rows.constraint)
+    model = PSI.DecisionModel(AEMS.NEMDispatchProblem, full, sys; optimizer, initial_time = TOY_START, name = "dispatch")
+    status, log = _toy_build_log(model)
+    @test status == PSI.ModelBuildStatus.BUILT
+    status == PSI.ModelBuildStatus.BUILT || println(log)
+    container = PSI.get_optimization_container(model)
+    @test Set(axes(PSI.get_constraint(container, NEMConstraintLimit(), GenericConstraint), 1)) == union(fcas_names, ["N_TOY_ENERGY"])
+end

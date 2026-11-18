@@ -6,7 +6,7 @@ Accepted. Input ownership and the problem-type switch are in [0101](0101-aem-wri
 
 ## What
 
-- The run is plain PowerSimulations (PSI) code: `nem_system`, `DecisionModel(NEMDispatchProblem, template, sys; kwargs...)`, `SimulationModels`, `SimulationSequence`, `Simulation`, `build!`, `execute!`, then the readers. There is no `replicate_range` function.
+- The run is plain PowerSimulations (PSI) code: `nem_system`, `DecisionModel(NEMDispatchProblem, template, sys; kwargs...)`, `SimulationModels`, `SimulationSequence`, `Simulation`, `build!`, `execute!`, then the readers.
 - `scripts/` keeps only the overnight batch runner, built on these calls.
 
 ## How

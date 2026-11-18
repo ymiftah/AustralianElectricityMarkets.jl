@@ -11,7 +11,7 @@ Accepted; unit handling amended by [0012](0012-per-unit-storage.md).
 
 ## How
 
-- `attach_interconnector_losses!(sys, db, as_of)` looks each `AreaInterchange` up in `interconnector_loss_models(db, as_of)` and calls `add_supplemental_attribute!`. An interconnector with no model is skipped and returned in `skipped`, with one aggregated `@warn`, never thrown.
+- `attach_interconnector_losses!(sys, db, as_of)` looks each `AreaInterchange` up in `interconnector_loss_models(db, as_of)` and calls `add_supplemental_attribute!`. An interconnector with no model is skipped and returned in `skipped`, with one aggregated `@warn`, never thrown. The NEMDE build (`nem_system(db, NEMDEConfiguration(); date_range)`) refuses any skipped interconnector with an `ArgumentError`, since NEMDE always applies a loss model.
 - `nem_system(db, NEMDEConfiguration(); date_range)` calls it with `first(date_range)`; the regional builder does not.
 - Formulations read the model from the `AreaInterchange` and never see `db` or `as_of`.
 

@@ -1,5 +1,3 @@
-# TODO split between constants.jl and a utils.jl
-
 "Length of one NEM dispatch interval."
 const DISPATCH_INTERVAL = Dates.Minute(5)
 

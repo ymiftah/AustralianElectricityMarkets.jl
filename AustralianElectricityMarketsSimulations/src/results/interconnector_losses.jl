@@ -78,18 +78,17 @@ where the solver dissipated more than the curve at that flow.
 A `DataFrame` with columns `interconnector`, `DateTime`, `flow_mw`, `solved_loss_mw`, `curve_loss_mw`,
 `gap_mw` (MW) and `weighted_loss_price` (`\$/MWh`), where `weighted_loss_price` is
 `share * ROP_from + (1 - share) * ROP_to` from [`read_prices`](@ref). The table is empty when the
-results hold no interchange flow. Throws when they hold flows but no `InterconnectorLossVariable`.
+results hold no interchange flow or no `InterconnectorLossVariable`, as in a lossless run.
 """
 function read_interconnector_loss_gaps(results, sys::PSY.System)
     flow_key = _interchange_key(results, PSI.FlowActivePowerVariable)
-    isnothing(flow_key) && return DataFrame(
-        interconnector = String[], DateTime = DateTime[], flow_mw = Float64[], solved_loss_mw = Float64[],
-        curve_loss_mw = Float64[], gap_mw = Float64[], weighted_loss_price = Float64[],
-    )
     loss_key = _interchange_key(results, InterconnectorLossVariable)
-    isnothing(loss_key) && throw(
-        ArgumentError("read_interconnector_loss_gaps: the results hold AreaInterchange flows but no InterconnectorLossVariable."),
-    )
+    if isnothing(flow_key) || isnothing(loss_key)
+        return DataFrame(
+            interconnector = String[], DateTime = DateTime[], flow_mw = Float64[], solved_loss_mw = Float64[],
+            curve_loss_mw = Float64[], gap_mw = Float64[], weighted_loss_price = Float64[],
+        )
+    end
     frames = _read_variable_frames(results, [flow_key, loss_key])
     rows, weights = _interconnector_loss_rows(sys, frames[flow_key], frames[loss_key])
     prices = read_prices(results, sys)

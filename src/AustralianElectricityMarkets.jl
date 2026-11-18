@@ -65,7 +65,6 @@ export fcas_series_name, fcas_effective_series_name, fcas_ramping_series_name, F
     energy_offer_sides
 
 include("constants.jl")
-include("utils.jl")
 include("types/bid_types.jl")
 include("network_configurations/NetworkConfigurations.jl")
 using .NetworkConfigurations: NetworkConfiguration, RegionalNetworkConfiguration, NEMDEConfiguration

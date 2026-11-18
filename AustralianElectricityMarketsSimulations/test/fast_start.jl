@@ -82,6 +82,13 @@ const FS_POWER = "ActivePowerVariable__ThermalStandard"
     @test isempty(subset(read_constraint_violations(out.dispatch_results, PSI.get_system(out.dispatch)), :family => ByRow(==("fast_start_profile"))))
 end
 
+@testset "the energy-only preset builds the commitment run only with fast start" begin
+    sys = fast_start_system()
+    options = (; optimizer = FS_OPTIMIZER, initial_time = TOY_START)
+    @test isnothing(nem_dispatch_sequence(NEMDispatchProblem, template_energy_only(), sys; fast_start = false, options...).commitment)
+    @test !isnothing(nem_dispatch_sequence(NEMDispatchProblem, template_energy_only(), sys; options...).commitment)
+end
+
 @testset "fast_start = false runs one model without inflexibility profiles" begin
     out = fs_problem(fast_start_system(); fast_start = false)
     @test isnothing(out.commitment)

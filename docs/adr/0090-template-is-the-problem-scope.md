@@ -12,6 +12,7 @@ Accepted. Absorbs the removed ADR 0088 (data-free problem template). The run int
 - Every dispatch participant type of the system must have a device model in the template, batteries included; otherwise `check_template_against_sys` throws.
 - A template without an FCAS service model or an `AreaInterchange` model records the generic constraints that depend on them as skipped. Any other unbuildable constraint throws.
 - A raw `DecisionModel(template_nemde(), sys)` prices balance slacks at PSI's default slack cost; only `DecisionModel{NEMDispatchProblem}` prices them at the Market Price Cap ([0085](0085-build-time-market-price-cap.md)).
+- The presets `template_energy_only`, `template_interconnected`, `template_losses`, `template_fcas` and `template_constraints` are fixed-keyword calls to the same builder, described in [0107](0107-simple-dispatch-templates.md).
 
 ## Why
 

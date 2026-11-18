@@ -194,6 +194,7 @@ function _add_mnsp_link_variables!(container::PSI.OptimizationContainer, devices
     _build_scratch(container)[:mnsp_names] = Set(PSY.get_name.(mnsp))
     isempty(mnsp) && return
     foreach(_require_mnsp_fixed_loads, mnsp)
+    loss_models = _build_loss_models(mnsp, device_model)
     time_steps = PSI.get_time_steps(container)
     names = PSY.get_name.(mnsp)
     base_power = PSI.get_base_power(container)
@@ -237,7 +238,7 @@ function _add_mnsp_link_variables!(container::PSI.OptimizationContainer, devices
 
     for d in mnsp
         name = PSY.get_name(d)
-        lower_loss, upper_loss = _loss_range(d, _loss_model(d))
+        lower_loss, upper_loss = _loss_range(d, loss_models[name])
         tlf = Dict(dir => _mnsp_link_tlfs(d, dir) for dir in _MNSP_DIRECTIONS)
         bound = Dict(dir => _mnsp_link_bound(d, dir) for dir in _MNSP_DIRECTIONS)
         area = (forward = PSY.get_name(PSY.get_from_area(d)), reverse = PSY.get_name(PSY.get_to_area(d)))
@@ -277,7 +278,7 @@ end
 
 
 """
-    _add_mnsp_link_constraints!(container, devices)
+    _add_mnsp_link_constraints!(container, devices, device_model)
 
 Adds, for each device in `devices` carrying MNSP offers, the rows over the variables of
 [`_add_mnsp_link_variables!`](@ref): each band within its offered width, the bands plus an offer surplus summing to the
@@ -289,9 +290,10 @@ one direction at a time (`"direction"`), each directional loss zero on the inact
 # Returns
 `nothing`.
 """
-function _add_mnsp_link_constraints!(container::PSI.OptimizationContainer, devices)
+function _add_mnsp_link_constraints!(container::PSI.OptimizationContainer, devices, device_model)
     mnsp = _modeled_mnsp(container, devices)
     isempty(mnsp) && return
+    loss_models = _build_loss_models(mnsp, device_model)
     time_steps = PSI.get_time_steps(container)
     names = PSY.get_name.(mnsp)
     base_power = PSI.get_base_power(container)
@@ -330,7 +332,7 @@ function _add_mnsp_link_constraints!(container::PSI.OptimizationContainer, devic
 
     for d in mnsp
         name = PSY.get_name(d)
-        lower_loss, upper_loss = _loss_range(d, _loss_model(d))
+        lower_loss, upper_loss = _loss_range(d, loss_models[name])
         bound = Dict(dir => _mnsp_link_bound(d, dir) for dir in _MNSP_DIRECTIONS)
         widths = Dict(dir => PSI.get_parameter_column_refs(width[dir], name) for dir in _MNSP_DIRECTIONS)
         width_mult = Dict(dir => PSI.get_multiplier_array(width[dir]) for dir in _MNSP_DIRECTIONS)

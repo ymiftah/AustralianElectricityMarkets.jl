@@ -692,7 +692,7 @@ function fcas_toy_system(;
         alta_reg_avail = [15.0, 8.0], alta_agc = [1, 1], park_initial = [40.0, 40.0],
         batt_initial = [5.0, 5.0], batt_ramp = [240.0, 240.0], reg_req = [20.0, 20.0], r6_req = [30.0, 30.0],
         alta_ramp = [240.0, 240.0], agc_emax = [90.0, 90.0], horizon = TOY_RESOLUTION,
-        park_trap = (5.0, 10.0, 90.0, 100.0, 25.0), alta_fast_start = nothing, alta_mode = nothing,
+        park_trap = (5.0, 10.0, 90.0, 100.0, 25.0), alta_fast_start = nothing, alta_mode = nothing, extra! = nothing,
     )
     units = [
         TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0, ramp_down = 100.0),
@@ -730,6 +730,8 @@ function fcas_toy_system(;
             add_toy_fcas_market!(sys, stamps, BidType.RAISE6SEC, [TOY_CHEAP, TOY_EXPENSIVE, TOY_BATTERY], "F_R6", r6_req)
             add_toy_fcas_market!(sys, stamps, BidType.LOWER6SEC, ["pump"], "F_L6", [5.0, 5.0])
             PSY.add_service!(sys, FCASService(; name = "1_LOWERREG", region = "1", bid_type = BidType.LOWERREG), [alta])
+            # Raw series of the caller, attached before the transform as the fixture's own are.
+            isnothing(extra!) || extra!(sys, stamps)
         end,
     )
 end

@@ -9,12 +9,13 @@ end
 
 # PSI's flow-limit series names for `AreaInterchange`, plus the loss-factor demand coefficient. The MNSP
 # offer, availability and operating parameters are added with their series names, one type per family.
-function PSI.get_default_time_series_names(::Type{PSY.AreaInterchange}, ::Type{NEMInterconnectorLoss})
-    return Dict{Type{<:PSI.TimeSeriesParameter}, String}(
+function PSI.get_default_time_series_names(::Type{PSY.AreaInterchange}, ::Type{F}) where {F <: _NEMInterchangeFormulation}
+    names = Dict{Type{<:PSI.TimeSeriesParameter}, String}(
         PSI.FromToFlowLimitParameter => NEM_INTERCONNECTOR_SERIES.from_to_limit,
         PSI.ToFromFlowLimitParameter => NEM_INTERCONNECTOR_SERIES.to_from_limit,
-        LossDemandCoefficientParameter => NEM_SERIES.loss_demand_coefficient,
     )
+    F <: NEMInterconnectorLoss && (names[LossDemandCoefficientParameter] = NEM_SERIES.loss_demand_coefficient)
+    return names
 end
 
 
@@ -23,11 +24,11 @@ function PSI.get_multiplier_value(::LossDemandCoefficientParameter, ::PSY.AreaIn
 end
 
 # The from-to parameter holds the negated lower bound in MW, so its multiplier is -1; the constraints divide by the system base power.
-function PSI.get_multiplier_value(::PSI.FromToFlowLimitParameter, ::PSY.AreaInterchange, ::NEMInterconnectorLoss)
+function PSI.get_multiplier_value(::PSI.FromToFlowLimitParameter, ::PSY.AreaInterchange, ::_NEMInterchangeFormulation)
     return -1.0
 end
 
-function PSI.get_multiplier_value(::PSI.ToFromFlowLimitParameter, ::PSY.AreaInterchange, ::NEMInterconnectorLoss)
+function PSI.get_multiplier_value(::PSI.ToFromFlowLimitParameter, ::PSY.AreaInterchange, ::_NEMInterchangeFormulation)
     return 1.0
 end
 
@@ -93,6 +94,63 @@ function _loss_model(device::PSY.AreaInterchange)
     models = PSY.get_supplemental_attributes(InterconnectorLossModel, device)::Vector{InterconnectorLossModel}
     length(models) == 1 || throw(_missing_loss_model_error(PSY.get_name(device), length(models)))
     return only(models)
+end
+
+
+"""
+    _thin_loss_model(model, loss_breakpoints) -> InterconnectorLossModel
+
+`model` with its breakpoints reduced to at most `loss_breakpoints`: the first and last are kept and the interior
+is taken evenly by index. Returns `model` itself when `loss_breakpoints` is `nothing` or not below its breakpoint
+count, and throws `ArgumentError` when `loss_breakpoints` is below 2.
+
+# Arguments
+- `model`: the [`InterconnectorLossModel`](@ref) of an interchange.
+- `loss_breakpoints`: `nothing` or the largest number of breakpoints to keep.
+
+# Returns
+An `InterconnectorLossModel`.
+"""
+function _thin_loss_model(model::InterconnectorLossModel, ::Nothing)
+    return model
+end
+
+function _thin_loss_model(model::InterconnectorLossModel, loss_breakpoints::Integer)
+    loss_breakpoints >= 2 || throw(ArgumentError("loss_breakpoints must be at least 2, got $loss_breakpoints"))
+    bps = model.breakpoints
+    m = length(bps)
+    loss_breakpoints >= m && return model
+    # The stride (m - 1) / (n - 1) is at least one, so the kept indices are distinct and span the range.
+    kept = [1 + fld((k - 1) * (m - 1), loss_breakpoints - 1) for k in 1:loss_breakpoints]
+    return InterconnectorLossModel(;
+        interconnector = model.interconnector,
+        from_region = model.from_region,
+        to_region = model.to_region,
+        from_region_loss_share = model.from_region_loss_share,
+        loss_constant = model.loss_constant,
+        loss_flow_coefficient = model.loss_flow_coefficient,
+        demand_coefficients = model.demand_coefficients,
+        breakpoints = bps[kept],
+    )
+end
+
+
+"""
+    _build_loss_models(devices, device_model) -> Dict{String, InterconnectorLossModel}
+
+The loss model each of `devices` is built with, keyed by name: its attached model, checked for convex segments
+on all its breakpoints and then thinned to the `"loss_breakpoints"` attribute of `device_model`.
+"""
+function _build_loss_models(devices, device_model::PSI.DeviceModel)
+    cap = PSI.get_attribute(device_model, "loss_breakpoints")
+    models = Dict{String, InterconnectorLossModel}()
+    for d in devices
+        name = PSY.get_name(d)
+        model = _loss_model(d)
+        _validate_convex_segments(name, model)
+        models[name] = _thin_loss_model(model, cap)
+    end
+    return models
 end
 
 
@@ -380,7 +438,7 @@ for that interval, whether the cap comes from `MARKET_PRICE_CAP_BY_FINANCIAL_YEA
 function _add_flow_limit_constraint!(
         container::PSI.OptimizationContainer,
         devices,
-        device_model::PSI.DeviceModel{PSY.AreaInterchange, NEMInterconnectorLoss},
+        device_model::PSI.DeviceModel{PSY.AreaInterchange, <:_NEMInterchangeFormulation},
         ::PSI.NetworkModel{U},
     ) where {U <: PSI.AreaBalancePowerModel}
     time_steps = PSI.get_time_steps(container)
@@ -460,10 +518,7 @@ function PSI.construct_device!(
     ) where {U <: PSI.AreaBalancePowerModel}
     devices = PSI.get_available_components(device_model, sys)
     isempty(devices) && return
-    loss_models = Dict(PSY.get_name(d) => _loss_model(d) for d in devices)
-    for d in devices
-        _validate_convex_segments(PSY.get_name(d), loss_models[PSY.get_name(d)])
-    end
+    loss_models = _build_loss_models(devices, device_model)
     narrow = _narrow_breakpoint_interconnectors(devices, loss_models)
     _warn_narrow_breakpoints(narrow)
 
@@ -506,9 +561,9 @@ function PSI.construct_device!(
     ) where {U <: PSI.AreaBalancePowerModel}
     devices = PSI.get_available_components(device_model, sys)
     isempty(devices) && return
-    loss_models = Dict(PSY.get_name(d) => _loss_model(d) for d in devices)
+    loss_models = _build_loss_models(devices, device_model)
     _add_loss_constraints!(container, devices, loss_models)
-    _add_mnsp_link_constraints!(container, devices)
+    _add_mnsp_link_constraints!(container, devices, device_model)
     _add_mnsp_operating_constraints!(container, devices)
     _add_mnsp_band_costs!(container, devices, device_model)
     _add_flow_limit_constraint!(container, devices, device_model, network_model)
@@ -525,4 +580,66 @@ function PSI.construct_device!(
         ::PSI.NetworkModel{U},
     ) where {U <: PM.AbstractPowerModel}
     throw(ArgumentError("NEMInterconnectorLoss supports PSI.AreaBalancePowerModel only, got $U"))
+end
+
+
+# --- lossless `NEMInterconnectorLossless` stage pair: the flow, its limits and the balance terms only ---
+
+function PSI.construct_device!(
+        container::PSI.OptimizationContainer,
+        sys::PSY.System,
+        ::PSI.ArgumentConstructStage,
+        device_model::PSI.DeviceModel{PSY.AreaInterchange, NEMInterconnectorLossless},
+        network_model::PSI.NetworkModel{U},
+    ) where {U <: PSI.AreaBalancePowerModel}
+    devices = PSI.get_available_components(device_model, sys)
+    isempty(devices) && return
+    has_ts = _has_flow_limit_series.(devices)
+    if any(has_ts) && !all(has_ts)
+        throw(
+            ArgumentError(
+                "Not all AreaInterchange devices have time series. Check data to complete (or remove) time series.",
+            ),
+        )
+    end
+    PSI.add_variables!(
+        container, PSI.FlowActivePowerVariable, network_model, devices, NEMInterconnectorLossless(),
+    )
+    PSI.add_to_expression!(
+        container, PSI.ActivePowerBalance, PSI.FlowActivePowerVariable, devices, device_model,
+        network_model,
+    )
+    if all(has_ts)
+        foreach(_flow_limit_keys, devices)
+        PSI.add_parameters!(container, PSI.FromToFlowLimitParameter, devices, device_model)
+        PSI.add_parameters!(container, PSI.ToFromFlowLimitParameter, devices, device_model)
+    end
+    PSI.add_feedforward_arguments!(container, device_model, devices)
+    return
+end
+
+
+function PSI.construct_device!(
+        container::PSI.OptimizationContainer,
+        sys::PSY.System,
+        ::PSI.ModelConstructStage,
+        device_model::PSI.DeviceModel{PSY.AreaInterchange, NEMInterconnectorLossless},
+        network_model::PSI.NetworkModel{U},
+    ) where {U <: PSI.AreaBalancePowerModel}
+    devices = PSI.get_available_components(device_model, sys)
+    isempty(devices) && return
+    _add_flow_limit_constraint!(container, devices, device_model, network_model)
+    PSI.add_feedforward_constraints!(container, device_model, devices)
+    return
+end
+
+
+function PSI.construct_device!(
+        ::PSI.OptimizationContainer,
+        ::PSY.System,
+        ::Union{PSI.ArgumentConstructStage, PSI.ModelConstructStage},
+        ::PSI.DeviceModel{PSY.AreaInterchange, NEMInterconnectorLossless},
+        ::PSI.NetworkModel{U},
+    ) where {U <: PM.AbstractPowerModel}
+    throw(ArgumentError("NEMInterconnectorLossless supports PSI.AreaBalancePowerModel only, got $U"))
 end

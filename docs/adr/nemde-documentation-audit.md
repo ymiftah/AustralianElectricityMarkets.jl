@@ -2,7 +2,7 @@
 
 ## Status
 
-Living reference (not an ADR), reviewed 2026-11-16 against the code and ADRs of this branch.
+Living reference (not an ADR), reviewed 2026-11-18 against the code and ADRs of this branch.
 
 This is a living register of where the NEM dispatch run follows or departs from AEMO's published NEMDE rules. It replaces the October 2026 documentation-gap audit, whose findings are resolved in the formulation chapters under `docs/literate/formulation/`. Each row cites the ADR that holds the detail. Constants were checked against `src/system/penalties.jl`; AEMO text is as cited by the ADRs and was not re-read, so rows marked `unverified` rest on an ADR alone. Any new departure goes in an ADR and here.
 
@@ -35,7 +35,7 @@ Sources for CVP factors: AEMO *Schedule of Constraint Violation Penalty Factors*
 | Scheduled and ancillary loads, WDR | [0032](0032-scheduled-loads-and-unresolved-constraint-terms.md), [0038](0038-load-fcas-offers.md) | WDR dispatch not modelled |
 | Energy tie-break among price-tied bands, in proportion to band MW | [0036](0036-energy-tie-break.md) | Follows; pairs fixed at build |
 | Generic-constraint RHS as NEMDE enforced it | [0003](0003-no-dynamic-rhs.md) | Runs `DISPATCHCONSTRAINT.RHS`; the RHS engine is not re-implemented |
-| Constraint terms on units absent from the System | [0032](0032-scheduled-loads-and-unresolved-constraint-terms.md), [0104](0104-vacuous-constraints-on-retired-units.md), [0105](0105-split-battery-units-and-unregistered-terms.md) | Dropped terms of registered units fail; unregistered or vacuous ones are allowed |
+| Constraint terms on units absent from the System | [0032](0032-scheduled-loads-and-unresolved-constraint-terms.md), [0104](0104-vacuous-constraints-on-retired-units.md), [0105](0105-split-battery-units-and-unregistered-terms.md) | Dropped terms of registered units fail, including in vacuous constraints; dropped terms of unregistered units are allowed |
 
 ## FCAS
 
@@ -58,6 +58,9 @@ Sources for CVP factors: AEMO *Schedule of Constraint Violation Penalty Factors*
 | Loss equation at region demand | [0027](0027-loss-equation-regional-demand.md) | `LOSSDEMAND` is taken from NEMDE case files; no AEMO document states it (`unverified` against AEMO text) |
 | Missing loss inputs, V-SA NSW term, Basslink share 1.0 | [0091](0091-interconnector-loss-input-assumptions.md) | Reconstructions, not AEMO values |
 | MNSP directional offers | [0035](0035-mnsp-link-offers.md), [0076](0076-mnsp-operating-limits.md) | Follows; the direction binary is always imposed; Basslink converter loss and no-go zone are `unverified` |
+| Interconnector loss on every flow, from the loss curve | [0107](0107-simple-dispatch-templates.md) | Departure in `NEMInterconnectorLossless` runs only: no loss at all; flow limits and CVP x MPC flow slacks kept (item 5, 1150) |
+| MNSP link offers, loss and direction binary | [0107](0107-simple-dispatch-templates.md) | Departure in lossless runs only: an MNSP is a regulated flow within its limits, with no offers, loss or direction binary |
+| Full loss curve on every `LOSSMODEL` breakpoint | [0107](0107-simple-dispatch-templates.md) | Departure in runs with `loss_breakpoints` only: interior breakpoints thinned evenly by index; `read_interconnector_loss_gaps` still reads the full curve |
 
 ## Solver and prices
 

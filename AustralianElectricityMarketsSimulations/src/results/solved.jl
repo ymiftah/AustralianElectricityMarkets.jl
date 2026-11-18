@@ -84,7 +84,7 @@ function read_fcas_prices(
             haskey(prices, id) ? (prices[id].ROP .+= term.ROP) : (prices[id] = term)
         end
     end
-    isempty(unrecorded) || @warn(
+    isempty(unrecorded) || isempty(dual_keys) || @warn(
         "read_fcas_prices: $(length(unrecorded)) GenericConstraint(s) with FCAS requirements " *
             "have no NEMConstraintLimit dual and are left out: $(join(first(sort!(unrecorded), 5), ", "))" *
             (length(unrecorded) > 5 ? ", ..." : ".")
@@ -114,11 +114,11 @@ A named tuple of `DataFrame`s:
 - `prices`: `SETTLEMENTDATE`, `REGIONID`, `ROP`, from [`read_prices`](@ref).
 - `dispatch`: `SETTLEMENTDATE`, `DUID`, `TOTALCLEARED`, the net MW of each unit.
 - `interconnectors`: `SETTLEMENTDATE`, `INTERCONNECTORID`, `MWFLOW`, `MWLOSSES`; empty when the
-  results hold no `FlowActivePowerVariable` for `PSY.AreaInterchange`.
+  results hold no `FlowActivePowerVariable` for `PSY.AreaInterchange`. `MWLOSSES` is `missing` when
+  the results hold no `InterconnectorLossVariable`.
 - `fcas_prices`: `SETTLEMENTDATE`, `REGIONID`, `BIDTYPE`, `ROP`, from [`read_fcas_prices`](@ref).
 
-Throws when a regional price is not finite, or when the results hold interchange flows but no
-`InterconnectorLossVariable`.
+Throws when a regional price is not finite.
 """
 function read_solved_interval(results, sys::PSY.System)
     keys_of(T, C) = [
@@ -127,10 +127,7 @@ function read_solved_interval(results, sys::PSY.System)
     ]
     flow_keys = keys_of(PSI.FlowActivePowerVariable, PSY.AreaInterchange)
     loss_keys = keys_of(InterconnectorLossVariable, PSY.AreaInterchange)
-    isempty(flow_keys) || !isempty(loss_keys) || throw(
-        ArgumentError("read_solved_interval: the results hold AreaInterchange flows but no InterconnectorLossVariable."),
-    )
-    interchange_keys = isempty(flow_keys) ? PSI.VariableKey[] : [only(flow_keys); only(loss_keys)]
+    interchange_keys = [flow_keys; loss_keys]
     dispatch_keys = PSI.VariableKey[k for T in keys(_DISPATCH_SIGNS) for k in keys_of(T, nothing)]
     frames = _read_variable_frames(results, [dispatch_keys; interchange_keys])
 
@@ -141,10 +138,15 @@ function read_solved_interval(results, sys::PSY.System)
         combine(:value => sum => :TOTALCLEARED)
         rename(:DateTime => :SETTLEMENTDATE, :name => :DUID)
     end
-    interconnectors = if isempty(interchange_keys)
+    interconnectors = if isempty(flow_keys)
         DataFrame(SETTLEMENTDATE = DateTime[], INTERCONNECTORID = String[], MWFLOW = Float64[], MWLOSSES = Union{Missing, Float64}[])
     else
-        flow, loss = (rename(frames[k], :value => c) for (k, c) in zip(interchange_keys, (:MWFLOW, :MWLOSSES)))
+        flow = rename(frames[only(flow_keys)], :value => :MWFLOW)
+        loss = if isempty(loss_keys)
+            DataFrame(DateTime = DateTime[], name = String[], MWLOSSES = Union{Missing, Float64}[])
+        else
+            rename(frames[only(loss_keys)], :value => :MWLOSSES)
+        end
         @chain flow begin
             leftjoin(loss; on = [:DateTime, :name])
             rename(:DateTime => :SETTLEMENTDATE, :name => :INTERCONNECTORID)

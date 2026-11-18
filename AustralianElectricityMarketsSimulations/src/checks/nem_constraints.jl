@@ -135,6 +135,16 @@ function _left_out_types(template::PSI.ProblemTemplate)
 end
 
 
+# The scope of the template's `GenericConstraint` service model (`"constraint_scope"`), `:all` without one.
+function _constraint_scope(template::PSI.ProblemTemplate)
+    for model in values(PSI.get_service_models(template))
+        PSI.get_component_type(model) == GenericConstraint || continue
+        return something(PSI.get_attribute(model, "constraint_scope"), :all)
+    end
+    return :all
+end
+
+
 # The constraints the template's `"excluded_constraints"` attribute names, with their reasons. The
 # attribute is on the aggregated model and on each per-name model PSI expands it into.
 function _excluded_constraints(template::PSI.ProblemTemplate)
@@ -174,14 +184,16 @@ end
 
 
 # The rows of the available constraints the template leaves out: those it excludes by name (`n_missing = 0`)
-# and those it cannot build, sorted by name. Empty without a `GenericConstraint` service model.
-# `lookup` is the build's shared component lookup, made here when not given.
+# and those it cannot build, sorted by name. Constraints outside the template's constraint scope have no row.
+# Empty without a `GenericConstraint` service model. `lookup` is the build's shared component lookup, made here when not given.
 function _template_fact_rows(sys::PSY.System, template::PSI.ProblemTemplate; lookup = nothing)
     rows = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int, blocking::Bool}[]
     _has_service_model(template, GenericConstraint) || return rows
     excluded = _excluded_constraints(template)
+    scope = _constraint_scope(template)
     candidates = GenericConstraint[]
     for gc in PSY.get_components(PSY.get_available, GenericConstraint, sys)
+        _in_constraint_scope(gc, scope) || continue
         name = PSY.get_name(gc)
         if haskey(excluded, name)
             push!(rows, (constraint = name, reason = excluded[name], n_missing = 0, blocking = false))
@@ -215,7 +227,9 @@ The `GenericConstraint`s of `sys` that a run of `template` leaves out, without c
 `template`. The rows are the constraints unavailable from the build ([`get_unavailable_constraints`](@ref), with
 `n_missing = 0`), the available constraints the template excludes by name, with `n_missing = 0`, and
 every other available constraint the template cannot build, with the number of failing terms.
-A template with no `GenericConstraint` service model reports the unavailable constraints only. It reads the
+A template with no `GenericConstraint` service model reports the unavailable constraints only. Available
+constraints outside the template's constraint scope (with `constraints = :fcas_requirements`, those without
+FCAS requirements) are left out of the run by design, so they are neither reported nor diagnosed. It reads the
 caller's template or the expanded template of a built model alike.
 
 # Arguments

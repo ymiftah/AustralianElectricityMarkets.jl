@@ -183,14 +183,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `read_energy_limits` and `set_nem_energy_limits!` retain separate energy bid `MAXAVAIL`,
   semi-scheduled `UIGF` and effective schedule classification, validating required inputs before
   attaching system-base time series.
-- The repository script helper `replicate_range(db, start, stop; template, chunk, ...)` runs a range of dispatch intervals as one
+- The repository script helper a range helper runs a range of dispatch intervals as one
   stock PowerSimulations `Simulation` per chunk, stepping a one-interval NEMDE model whose
   parameters update between intervals. Chunks break at every trading-day start (04:05), at 00:05 on
   1 July and every `chunk` period; each chunk leaves out the generic constraints it never invokes
   and runs `check_tie_break_pairs`, `check_fcas_services` and
   `check_dispatch_envelope` before its build. It returns the per-interval comparison with the
   published outcome, constraint violations, solver statistics and each chunk's reopened results.
-  `scripts/replicate_range.jl` prints the comparison for a range.
+  the range comparison script prints the comparison for a range.
 - `get_missing_constraint_intervals` and `get_defaulted_constraint_weights` report what
   `add_nem_constraints!` could not take from the cache: dispatch intervals with no invoked
   constraint, and constraints built with the default weight 1.0 for a NULL
@@ -251,7 +251,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Market Price Cap: a battery whose net ramp envelope exceeds its rating (the rating's upper bound
   is raised to the `NEMDispatch` ramp floor, as for generators), or conflicting flow limits,
   no longer make the interval infeasible. The FCAS rows are elastic under `use_slacks`.
-  `replicate_interval` also returns `constraint_violations`, every non-zero slack of the elastic families, by family and
+  the single-interval entry point also returns `constraint_violations`, every non-zero slack of the elastic families, by family and
   direction; `ramp_violations` keeps working.
 - Data package ingests the MNSP offer tables (`MNSP_DAYOFFER`, `MNSP_BIDOFFERPERIOD`,
   `MNSP_PEROFFER`, `DISPATCH_MNSPBIDTRK`), `DISPATCHLOAD.DISPATCHMODETIME` and
@@ -280,7 +280,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Skipped generic constraints are observable**: `get_skipped_constraints(sys)` returns a table
   (constraint, reason, number and list of unresolved DUIDs, regions or interconnectors) of the
   invoked constraint versions `add_nem_constraints!` did not build, and the skip warning carries
-  the count by reason. `replicate_interval` returns a `skipped_constraints` table that also
+  the count by reason. the single-interval entry point returns a `skipped_constraints` table that also
   lists the constraints the template cannot model, and
   `scripts/diagnose_infeasible.jl` reports the solver
   status and conflicting constraint families for an interval that does not solve.
@@ -290,7 +290,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `AreaBalancePowerModel` with slacks. The repository workflow compares solved regional `ROP`
   (with published `RRP`), `TOTALCLEARED`, interconnector flows and losses, and FCAS prices, keeping
   every published row. AEM's `read_published_interval` reads the published outcomes;
-  `scripts/replicate_range.jl` prints the comparison from the local hive cache.
+  the range comparison script prints the comparison from the local hive cache.
 - **Elastic FCAS joint rows and area-balance CVP pricing** (`AustralianElectricityMarketsSimulations`):
   with `use_slacks = true` on an `FCASMarket` `PSI.ServiceModel`, `FCASJointCapacityConstraint`
   rows get a `FCASJointCapacitySlack` (CVP factor 70, AEMO item 24) and `FCASJointRampingConstraint`
@@ -525,6 +525,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The state-dependent dispatch inputs are pure functions of a `NEMUnitState`: `in_fast_start_profile`, `fixed_load_invoked` and `effective_fixed_load`, `fcas_state_stranded_ok` and `fcas_both_sides_stranded_ok`, `fcas_ramping_active` and `fcas_ramping_limit`, `mnsp_ramp_envelope`, and `composite_ramp_rates` for the composite of a bidirectional unit's generation- and load-side ramp rates across zero.
 
 - New cached table `BIDDAYOFFER` (MMSDM, every rebid version, `ENERGY` rows only): `DUID`, `SETTLEMENTDATE`, `OFFERDATE`, `VERSIONNO`, `BIDTYPE`, `DIRECTION`, `MINIMUMLOAD`, `T1` to `T4` and `ENTRYTYPE`. It is a required table of `table_requirements(NEMDEConfiguration())`; populate it with `populate(db, :BIDDAYOFFER, from, to)`. Table specs take an optional `row_filter = column => value`, and `DataSource` a matching `row_filter` field, that keeps only the matching rows when a month is populated.
+
+- `NEMInterconnectorLossless`, a `PSY.AreaInterchange` formulation with the flow, flow limits and priced flow slacks of `NEMInterconnectorLoss` and only the `-flow` and `+flow` balance terms, so no loss variables or MNSP link offers: an MNSP is a regulated flow within its limits. It supports `PSI.AreaBalancePowerModel` only.
+
+- `template_nemde` takes keywords for its parts: `interconnectors` (`:losses`, `:lossless` or `:none`), `fcas`, `constraints` (`true`, `false` or `:fcas_requirements`), `tie_break`, `exclude_constraints` and `loss_breakpoints`. Its defaults build the same template as before.
+
+- Presets that are calls to `template_nemde` with fixed parts, all with tie-break off: `template_energy_only`, `template_interconnected` (lossless interchanges), `template_losses`, `template_fcas` and `template_constraints`. `template_fcas` keeps only the generic constraints that carry FCAS requirements.
+
+- `loss_breakpoints` on `template_nemde`, `template_losses`, `template_fcas` and `template_constraints` keeps at most `N >= 2` breakpoints of each interchange's loss model: the first and last are kept and the interior is thinned evenly by index. The cap is an attribute of the interchange device model, applied at build, so the System is not changed.
+
+- `template_skipped_constraints` leaves out available constraints outside the template's constraint scope (`constraints = :fcas_requirements`) by design: they are neither reported nor diagnosed.
 
 ### Changed
 
@@ -790,7 +800,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - NEM non-storage dispatch models raw bid MAXAVAIL and semi-scheduled UIGF as separate
   elastic limits at CVP370 and CVP385, with typed PSI surplus variables, constraints and costs.
 
-- The repository run workflow uses `replicate_range`, one interval included (`start == stop`):
+- The repository run workflow uses the range entry point, one interval included (`start == stop`):
   a model built once per chunk and stepped. It reports a generic-constraint slack as a violation
   only where the constraint is invoked. AEM's run configuration takes the input `date_range`;
   AEMSim's `prepare_nemde!` transforms its attached series into one-interval windows.
@@ -799,7 +809,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dispatch-limit series and incomplete MNSP offers, instead of running a partial model.
   AEM's run configuration first checks that every scheduled unit has an energy offer, and every region
   demand, for each interval. Each error names the input to repopulate or the setter to call.
-  `replicate_interval`'s `skipped_constraints` now has only `constraint`, `reason` and `n_missing`
+  the single-interval entry point's `skipped_constraints` now has only `constraint`, `reason` and `n_missing`
   columns, since the only constraints left out are those with no available device.
 - Price-tied energy bands are dispatched in proportion to their size by a tie-break row per pair
   whose coefficients are `TieBreakScaleParameter`s read from the `"tie_break_scale_<k>"` series of
@@ -975,6 +985,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The absent-FCAS-service warning of the generic constraints is emitted once per build, naming the sorted union of absent services and the number of constraints that reference them.
 
+- `read_solved_interval` and `read_interconnector_loss_gaps` no longer throw on interchange flows without a loss variable: `MWLOSSES` is `missing` and the loss-gap table is empty.
+
+- `read_fcas_prices` warns about FCAS-requirement constraints left out only when a `GenericConstraint` model is run, so an energy-only run no longer warns.
+
+- The MNSP offer check of the NEMDE inputs runs only for an interchange under `NEMInterconnectorLoss`, since a lossless interchange carries no MNSP offers.
+
 ### Removed
 
 - The `energy_max_avail[_decremental]` time series: the derived energy availability is
@@ -994,7 +1010,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The PowerSystems fork pin; the packages depend on registered PowerSystems 5.12.4, and NEMDE systems
   serialize without the fork.
 
-- The repository scripts `replicate_random_days.jl`, `problem_workflow.jl`, `problem_simulation.jl`, `problem_timing.jl`, `replicate_range.jl`, `diagnose_infeasible.jl` and `interconnector_loss_gaps.jl` are removed. The overnight runner is `scripts/batch_run.jl` on the AEMSim run API; `diagnose_infeasible.jl` is replaced by `DecisionModel(...; calculate_conflict = true)`.
+- The repository scripts the random-days script, `problem_workflow.jl`, `problem_simulation.jl`, `problem_timing.jl`, the range script, `diagnose_infeasible.jl` and `interconnector_loss_gaps.jl` are removed. The overnight runner is `scripts/batch_run.jl` on the AEMSim run API; `diagnose_infeasible.jl` is replaced by `DecisionModel(...; calculate_conflict = true)`.
 
 - `nemde_results` and `compute_fcas_prices` are removed from the repository scripts, along with the `ProblemResults` module of `scripts/problem_results.jl`; use `read_solved_interval`, `read_constraint_violations` and `read_fcas_prices` instead.
 
@@ -1020,12 +1036,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `IntervalInputs`, which nothing constructed.
 - Unused `FUEL_MAPPING` and `FUEL_PRICES` constants.
 - `set_storage_dispatch_ceilings!` and the toy fixture's `ceilings` option: run dispatch reads raw directional storage availability, so nothing consumes the derived `"storage_gen_ceiling"` and `"storage_load_ceiling"` series.
-- AEMSim's database-taking `nemde_system` and `replicate_range` APIs, database-reader
+- AEMSim's database-taking `nemde_system` and the range entry point APIs, database-reader
   re-exports and DuckDB runtime dependency. Construct systems through AEM and use top-level
   repository scripts for cache orchestration and NEMDE comparisons.
-- `replicate_interval` (both methods) and `nemde_system(db, settlement_date)`: every run
-  builds its model once and steps it through `replicate_range`. `scripts/replicate_interval.jl` is
-  replaced by `scripts/replicate_range.jl`.
+- the single-interval entry point (both methods) and `nemde_system(db, settlement_date)`: every run
+  builds its model once and steps it through the range entry point. the single-interval script is
+  replaced by the range comparison script.
 - **`GENCONDATA.DYNAMICRHS` is no longer read or interpreted**: `read_constraint_definitions` no longer selects it, and `add_nem_constraints!` no longer puts it on `GenericConstraint.ext`. AEMO documents the column as "Not used"; the raw NEMWEB ingestion column list is untouched.
 - `AustralianElectricityMarketsSimulations.MissingCacheError`, which nothing threw, and the unused
   `Statistics` dependency of `AustralianElectricityMarketsSimulations`.
@@ -1199,14 +1215,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `NEMInterconnectorLoss` fills loss segments contiguously through binary fill indicators, so the
   solved loss follows the loss curve at negative or zero weighted prices instead of burning energy
   on steeper segments. Multi-segment interconnectors make the problem a MILP; duals are read from
-  the LP with the indicators fixed. `replicate_interval` defaults to HiGHS with a 1e-8 relative and 1e-10 absolute MIP gap and
+  the LP with the indicators fixed. the single-interval entry point defaults to HiGHS with a 1e-8 relative and 1e-10 absolute MIP gap and
   raises on non-finite regional prices.
 - NEMWEB timestamps with a millisecond fraction (`2026/05/05 15:06:01.000`) parse instead of
   becoming `NULL`.
 - Unit ramp rows of the `AbstractNEMDispatch` formulations are elastic: `UnitRampUpSlack` and
   `UnitRampDownSlack`, priced at `UNIT_RAMP_CVP_FACTOR` (1155, AEMO CVP item 3) times the Market
   Price Cap, so a ramp envelope that conflicts with the variable bounds (an offline unit with a
-  slightly negative `INITIALMW` and a zero ramp rate) no longer makes the interval infeasible. `replicate_interval` returns `ramp_violations` listing any non-zero ramp slack.
+  slightly negative `INITIALMW` and a zero ramp rate) no longer makes the interval infeasible. the single-interval entry point returns `ramp_violations` listing any non-zero ramp slack.
 - `IntervalInputs` documentation: `interconnector_flows` holds the target `MWFLOW`, not the flow
   at interval start.
 - **`read_units` dropped units whose `DUALLOC` GENSETID is also a DUID** (for example `OSB-AG`,

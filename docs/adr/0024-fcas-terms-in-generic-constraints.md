@@ -8,7 +8,7 @@ Accepted. The dual-to-price reader is now `read_fcas_prices`.
 
 - `GenericConstraint`s carry FCAS terms (`SPDCONNECTIONPOINTCONSTRAINT` / `SPDREGIONCONSTRAINT` rows with an FCAS `BIDTYPE`), and AEMO's `DISPATCH_FCAS_REQ` prices are the marginal values of the constraints tagged by `FCASRequirement`.
 - A term's variable is the unit's `FCASCapacityVariable` for a contingency service, or its `FCASUnitRegulationTarget` for a regulation service: the unit's single net target, which sums both sides for a bidirectional unit (AEMO *FCAS Model in NEMDE* section 2.4). A `RegionTerm` sums this over the region's devices, matching "FCAS Requirement Region (Service)" in AEMO *Constraint Formulation Guidelines* sections 5.3 and 5.4 (regulation on the LHS of the 5 minute requirement).
-- A missing enablement is zero: a service absent from `sys`, unavailable or with no available devices, or a device with no variable in it, contributes nothing, as an unbid service is enabled for none of it in NEMDE. Absent services warn once per constraint.
+- A missing enablement is zero: a service absent from `sys`, unavailable or with no available devices, or a device with no variable in it, contributes nothing, as an unbid service is enabled for none of it in NEMDE. Absent services warn once per build, naming their union.
 
 ## How
 

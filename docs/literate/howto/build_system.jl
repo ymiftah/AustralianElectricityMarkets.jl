@@ -10,7 +10,7 @@
 # and the parsing of the data into a System from `PowerSystems.jl`.
 # `RegionalNetworkConfiguration` builds a zonal model in which each region is a single node, for
 # economic dispatch studies. `NEMDEConfiguration` builds the full NEMDE system, with bids, FCAS,
-# constraints and losses, used to replicate NEMDE dispatch.
+# constraints and losses, used to run NEMDE dispatch.
 # By default, the package will create a hidden folder `.nemdb_cache` in the home directory, and save the data into
 # parquet files.
 

@@ -387,24 +387,12 @@ end
     end
 
     @testset "resolution inference" begin
-        # Multi-interval grid: the fixture is 5-minutely, so inference must read Minute(5) off
-        # the data itself, not just happen to match a hardcoded default.
+        # The stored series resolution is the step of date_range.
         sys_default = nem_system(db, RegionalNetworkConfiguration())
         build_constraints!(sys_default, db, date_range)
         gc_default = get_component(GenericConstraint, sys_default, vname("N_BAYSW_THERMAL"))
         rhs_ts_default = PowerSystems.IS.get_time_series(gc_default, gc_default.rhs)
         @test get_resolution(rhs_ts_default) == Minute(5)
-
-        # A single-point grid has no spacing: inference throws rather than guessing one.
-        @test_throws ArgumentError AustralianElectricityMarkets._infer_resolution(DateTime[])
-        @test_throws ArgumentError AustralianElectricityMarkets._infer_resolution([start_date])
-
-        grid_30min = [start_date + Minute(30 * i) for i in 0:3]
-        @test AustralianElectricityMarkets._infer_resolution(grid_30min) == Minute(30)
-
-        # Irregular spacing throws, listing the distinct spacings found.
-        gappy_grid = [start_date, start_date + Minute(5), start_date + Minute(15)]
-        @test_throws r"not uniform: found 5 minutes, 10 minutes" AustralianElectricityMarkets._infer_resolution(gappy_grid)
     end
 
     @testset "Interconnector Zero constraints have a built-in definition" begin

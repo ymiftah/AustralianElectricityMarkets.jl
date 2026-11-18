@@ -126,6 +126,43 @@ select(comparison.interconnectors, :SETTLEMENTDATE, :INTERCONNECTORID, :MWFLOW_p
 
 read_constraint_violations(results, sys)
 
+# ## Simpler templates
+#
+# `template_nemde()` is the full model. Its keyword builder takes parts out one at a time, and
+# five presets are one-line calls to it. The presets follow the nempy examples, which add the
+# parts of NEMDE one at a time:
+#
+# | Preset | Interchanges | FCAS | Generic constraints | nempy example |
+# | --- | --- | --- | --- | --- |
+# | `template_energy_only()` | none | no | no | 1 and 2: bid stack, ramps |
+# | `template_interconnected()` | lossless | no | no | 3, without its constant 5 percent loss |
+# | `template_losses()` | dynamic losses | no | no | 4: dynamic losses |
+# | `template_fcas()` | dynamic losses | yes | FCAS requirements only | 5: FCAS markets |
+# | `template_constraints()` | dynamic losses | no | all | none |
+#
+# None of the presets has tie-break, which only the full `template_nemde()` models. Ramp
+# limits are always kept.
+#
+# ```julia
+# template_energy_only()
+# template_interconnected()
+# template_losses(; loss_breakpoints = 4)
+# template_fcas(; loss_breakpoints = 4)
+# template_constraints(; loss_breakpoints = 4)
+# ```
+#
+# `loss_breakpoints = N` keeps at most `N` breakpoints of each interchange's loss model, always
+# the first and the last, with the interior thinned evenly by index. The `System` is not changed,
+# and `read_interconnector_loss_gaps` still reads the full curve, so its `gap_mw` column shows the
+# error the thinning adds.
+#
+# Fast start is an option of the sequence, not of the template. The nempy examples have no
+# fast-start unit, so run a preset with `fast_start = false` to build the single model:
+#
+# ```julia
+# nem_dispatch_sequence(NEMDispatchProblem, template_losses(), sys; fast_start = false)
+# ```
+#
 # ## Going further
 #
 # - Run a whole trading day with `trading_day_steps(day)`, split by `dispatch_chunks` into
