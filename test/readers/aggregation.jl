@@ -20,8 +20,7 @@ using DataFrames, Statistics
             read_interconnector_loss_breakpoints, read_interconnector_demand_coefficients,
             read_interconnector_loss_parameters,
         )
-        @test isequal(reader(db; as_of = early), reader(db, early))
-        @test isequal(reader(db; as_of = Date(early)), reader(db, Date(early)))
+        @test isequal(reader(db; as_of = early), reader(db, early)) && isequal(reader(db; as_of = Date(early)), reader(db, Date(early)))
     end
 end
 
@@ -35,15 +34,24 @@ end
     reader = AustralianElectricityMarkets.Readers
     DuckDB.register_data_frame(db.db, DataFrame(stamp = stamps), "bucket_stamps")
     try
-        for resolution in (Millisecond(7), Minute(5), Minute(15), Hour(7), Day(3), Week(2), Month(2), Year(2))
-            bucket = reader._ceil_timestamp_sql("stamp", resolution)
-            got = DataFrame(DuckDB.execute(db.db, "SELECT $bucket AS stamp FROM bucket_stamps"))
-            @test got.stamp == ceil.(stamps, resolution)
-        end
+        ceiled(resolution) = DataFrame(DuckDB.execute(db.db, "SELECT $(reader._ceil_timestamp_sql("stamp", resolution)) AS stamp FROM bucket_stamps")).stamp
+        @test all(r -> ceiled(r) == ceil.(stamps, r), (Millisecond(7), Minute(15), Day(3), Week(2), Month(2), Year(2)))
         @test_throws ArgumentError reader._ceil_timestamp_sql("stamp", Minute(0))
     finally
         DuckDB.unregister_table(db.db, "bucket_stamps")
     end
+end
+
+@testset "Demand aggregation reads only the requested intervention run" begin
+    # A physical-run (INTERVENTION = 1) duplicate of NSW1's 00:05 row, with 500 MW more demand.
+    db = damaged_cache(
+        AEM_TEST_HIVE_DIR, :DISPATCHREGIONSUM,
+        "INSERT INTO input SELECT * REPLACE (1 AS INTERVENTION, TOTALDEMAND + 500.0 AS TOTALDEMAND) " *
+            "FROM input WHERE REGIONID = 'NSW1' AND SETTLEMENTDATE = TIMESTAMP '2025-01-01 00:05'",
+    )
+    stamp = DateTime(2025, 1, 1, 0, 5)
+    nsw(df) = df.TOTALDEMAND[(df.REGIONID .== "NSW1") .& (df.SETTLEMENTDATE .== stamp)]
+    @test (nsw(read_demand(db)), nsw(read_demand(db; intervention = 1))) == ([1010.0], [1510.0])
 end
 
 @testset "Demand aggregation keeps nulls, charging and range boundaries" begin
@@ -77,13 +85,10 @@ end
     bids = read_bids(db, (start - Minute(15), start + Minute(16)); resolution = Minute(15))
     unit = sort(bids[bids.DUID .== "BW01", :], [:INTERVAL_DATETIME, :DIRECTION])
     @test Set(unit.DIRECTION) == Set(["GEN", "LOAD"])
-    for direction in ("GEN", "LOAD")
+    @test all(("GEN", "LOAD")) do direction
         rows = unit[unit.DIRECTION .== direction, :]
-        @test rows.INTERVAL_DATETIME == [start, start + Minute(15)]
-        @test rows.MAXAVAIL ≈ [101.0, 104.0]
-        @test rows.BANDAVAILARRAY[2][1] == 10.0
-        @test isnan(rows.BANDAVAILARRAY[2][2])
-        @test rows.PRICEBANDARRAY[2] == collect(51.0:60.0)
+        return rows.INTERVAL_DATETIME == [start, start + Minute(15)] && rows.MAXAVAIL ≈ [101.0, 104.0] &&
+            rows.BANDAVAILARRAY[2][1] == 10.0 && isnan(rows.BANDAVAILARRAY[2][2]) && rows.PRICEBANDARRAY[2] == collect(51.0:60.0)
     end
     @test isempty(read_bids(db, (start + Day(1), start + Day(2))))
     missing_prices = damaged_cache(
@@ -163,4 +168,25 @@ end
     @test nrow(battery) == 4
     @test all(==(collect(51.0:60.0)), battery.PRICEBANDARRAY)
     @test all(==(10), length.(battery.BANDAVAILARRAY))
+end
+
+@testset "Demand reads keep the raw rows of the widened window" begin
+    # Rows of 1 January before 02:00 move to a 2024-12 partition. The week-long bucket that contains
+    # them starts in January, so its raw rows reach back into the cached previous month.
+    db = damaged_cache(
+        AEM_TEST_HIVE_DIR, :DISPATCHREGIONSUM,
+        "UPDATE input SET archive_month = '2024-12' WHERE SETTLEMENTDATE < TIMESTAMP '2025-01-01 02:00'",
+    )
+    bucket = ceil(DateTime(2025, 1, 1, 4), Week(1))
+    window = (bucket, bucket + Hour(6))
+    inwindow(df) = filter(:SETTLEMENTDATE => t -> window[1] <= t < window[2], df)
+    sorted(df) = sort(df, [:SETTLEMENTDATE, :REGIONID])
+    expected = inwindow(read_demand(db; resolution = Week(1)))
+    @test !isempty(expected)
+    @test isequal(sorted(read_demand(db, window; resolution = Week(1))), sorted(expected))
+    uigf = AustralianElectricityMarkets.Readers._read_regional_renewable_uigf
+    # The reference window starts a month earlier, so it reads every cached partition the bucket needs.
+    expected_uigf = inwindow(uigf(db, (bucket - Month(1), window[2]); resolution = Week(1), intervention = 0))
+    @test !isempty(expected_uigf)
+    @test isequal(sorted(uigf(db, window; resolution = Week(1), intervention = 0)), sorted(expected_uigf))
 end

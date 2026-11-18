@@ -40,6 +40,44 @@ end
 
 
 """
+    _csv_field(line::String, n::Int) -> SubString{String}
+
+The `n`-th (1-based) comma-separated field of `line`, with surrounding double quotes removed.
+Commas inside a quoted field do not split it, and only the bytes up to the field are scanned.
+
+# Arguments
+- `line::String`: One CSV line.
+- `n::Int`: Field position, counting the leading record-type field as 1.
+
+# Returns
+- `SubString{String}`: The field, as a view into `line`.
+"""
+function _csv_field(line::String, n::Int)::SubString{String}
+    str = line
+    nbytes = ncodeunits(str)
+    field_start = 1
+    field = 1
+    in_quotes = false
+    i = 1
+    while i <= nbytes
+        c = codeunit(str, i)
+        if c == UInt8('"')
+            in_quotes = !in_quotes
+        elseif c == UInt8(',') && !in_quotes
+            field == n && return _unquote(SubString(str, field_start, i - 1))
+            field += 1
+            field_start = i + 1
+        end
+        i += 1
+    end
+    field == n || throw(ArgumentError("line has $field fields, field $n requested"))
+    return _unquote(SubString(str, field_start, nbytes))
+end
+
+_unquote(field::SubString{String}) = strip(field, '"')
+
+
+"""
     _write_d_lines(out::IO, zip_path::String;
                    month_filter_column=nothing, lo=nothing, hi=nothing) -> Vector{String}
 
@@ -48,7 +86,13 @@ real "D" data-record lines to `out` and capturing the "I" record's column names/
 along the way.
 
 When `month_filter_column` is given, a "D" line is written only when that column's raw
-field, quotes stripped, satisfies `lo < field <= hi`.
+field, quotes stripped and cut to its first 19 characters, satisfies `lo < field <= hi`.
+
+# Arguments
+- `out::IO`: Destination for the kept lines.
+- `zip_path::String`: ZIP archive whose first `.csv` entry is read; the file is memory-mapped.
+- `month_filter_column`: Column scoping rows to the archive month, or `nothing` for no filtering.
+- `lo`, `hi`: Exclusive lower and inclusive upper bounds from [`_month_filter_bounds`](@ref).
 
 # Returns
 - `Vector{String}`: the file's column names/order, from its "I" record.
@@ -64,7 +108,7 @@ function _write_d_lines(
     # absorbed via null_padding/ignore_errors — produced one MORE row than the true D-row
     # count. Filtering happens in this single Julia pass over the decompressed stream
     # instead, rather than shelling out to `grep` or writing the full CSV to disk first.
-    reader = ZipReader(read(zip_path))
+    reader = ZipReader(Mmap.mmap(zip_path))
     entries = zip_names(reader)
     idx = findfirst(e -> endswith(lowercase(e), ".csv"), entries)
     isnothing(idx) && throw(MissingDataError("No CSV file found in $zip_path"))
@@ -75,8 +119,10 @@ function _write_d_lines(
     for line in eachline(io)
         if startswith(line, "D,")
             if !isnothing(filter_idx)
-                field = strip(split(line, ",")[4 + filter_idx], '"')
-                (lo < field <= hi) || continue
+                # The first 19 characters drop any fractional seconds, so the boundary instant stays in the earlier month.
+                field = _csv_field(line, 4 + filter_idx)
+                stamp = SubString(field, 1, min(19, ncodeunits(field)))
+                (lo < stamp <= hi) || continue
             end
             println(out, line)
         elseif isempty(available_cols) && startswith(line, "I,")
@@ -84,6 +130,9 @@ function _write_d_lines(
             available_cols = String.(strip.(split(line, ",")[5:end]))
             if !isnothing(month_filter_column)
                 filter_idx = findfirst(==(month_filter_column), available_cols)
+                isnothing(filter_idx) && throw(
+                    ArgumentError("month filter column $month_filter_column not in the columns of $zip_path: $available_cols")
+                )
             end
         end
     end
@@ -139,6 +188,12 @@ function _extract_d_lines(
             for zip_path in zip_paths
                 part_cols = _write_d_lines(out, zip_path; month_filter_column, lo, hi)
                 isempty(available_cols) && (available_cols = part_cols)
+                part_cols == available_cols || throw(
+                    ArgumentError(
+                        "$(basename(zip_path)) has columns $(part_cols), but the first part has $(available_cols); " *
+                            "the parts of one archive must share a column list.",
+                    ),
+                )
             end
         end
     catch
@@ -169,7 +224,7 @@ _cast_expr(col::String, T::DataType) = "TRY_CAST(\"$col\" AS $(_duckdb_type(T)))
 
 """
     _csv_to_parquet(conn, csv_path, available_cols, table_columns, path, partitions, sort_by, year, month;
-                    islocal=true, month_filter_column=nothing)
+                    islocal=true, month_filter_column=nothing, row_filter=nothing)
 
 Read `csv_path` entirely inside DuckDB, in one query — every line as VARCHAR,
 filtered to real "D" records, cast to `COLUMN_TYPES`, missing columns filled
@@ -180,15 +235,31 @@ Hive-partitioned parquet.
 explicitly, since `csv_path` may be a pre-filtered, D-lines-only file (see
 `_extract_d_lines`) with no header row left to read it from.
 
-When `month_filter_column` is given, rows are kept only when that column's parsed
-datetime falls in `(first of month, first of next month]` — the MMSDM convention that a
-datetime column holds the interval **end**, so the boundary instant belongs to the
-earlier month — and, if `sort_by` gives a non-empty key, rows are deduplicated on it.
+When `month_filter_column` is given and `sort_by` gives a non-empty key, rows are
+deduplicated on that key, as parts of one archive can repeat rows. The month window itself is
+applied earlier, line by line, in [`_write_d_lines`](@ref).
+
+# Arguments
+- `conn`: DuckDB connection.
+- `csv_path::String`: CSV of D-lines, as written by [`_extract_d_lines`](@ref).
+- `available_cols::Vector{String}`: The file's real column names, in order.
+- `table_columns::Vector{String}`: Columns to write, cast to `COLUMN_TYPES`.
+- `path::String`: Hive dataset root, local or remote.
+- `partitions::Vector{String}`: Partition columns.
+- `sort_by::Vector{String}`: Columns ordering rows within each file.
+- `year::Int`, `month::Int`: The archive month, written as the partition value.
+- `islocal::Bool`: Whether `path` is local, in which case it is created.
+- `month_filter_column`: Column scoping rows to the month, or `nothing`.
+- `row_filter`: `column => value` keeping only rows whose raw `column` equals `value`, or `nothing`.
+
+# Returns
+- The DuckDB result of the `COPY` statement.
 """
 function _csv_to_parquet(
         conn, csv_path::String, available_cols::Vector{String}, table_columns::Vector{String}, path::String,
         partitions::Vector{String}, sort_by::Vector{String}, year::Int, month::Int;
         islocal::Bool = true, month_filter_column::Union{Nothing, String} = nothing,
+        row_filter::Union{Nothing, Pair{String, String}} = nothing,
     )
     raw_names = vcat(["_record_type", "_namespace", "_report", "_version"], available_cols)
     names_sql = "[" * join(("'$n'" for n in raw_names), ", ") * "]"
@@ -208,19 +279,21 @@ function _csv_to_parquet(
     isempty(cols_extra) || @info "Columns in file not captured by table spec" cols_extra year month
 
     archive_month = Date(year, month, 1)
-    next_archive_month = archive_month + Month(1)
     sort_cols = intersect(vcat(partitions, sort_by), table_columns)
     order_by = isempty(sort_cols) ? "" : "ORDER BY " * join(("\"$c\"" for c in sort_cols), ", ")
     partition_by = join(partitions, ", ")
 
-    month_where = ""
-    if !isnothing(month_filter_column) && month_filter_column in cols_present
-        parsed = _datetime_parse_expr(month_filter_column)
-        month_where = "AND $parsed > TIMESTAMP '$archive_month' AND $parsed <= TIMESTAMP '$next_archive_month'"
-    end
-
     distinct_on = (!isnothing(month_filter_column) && !isempty(sort_cols)) ?
         "DISTINCT ON ($(join(("\"$c\"" for c in sort_cols), ", "))) " : ""
+
+    row_where = if isnothing(row_filter)
+        ""
+    else
+        first(row_filter) in available_cols || throw(
+            ArgumentError("row filter column $(first(row_filter)) not in the columns of $csv_path: $available_cols"),
+        )
+        "AND \"$(first(row_filter))\" = '$(replace(last(row_filter), "'" => "''"))'"
+    end
 
     islocal && mkpath(path)
     sql = """
@@ -229,7 +302,7 @@ function _csv_to_parquet(
             FROM read_csv('$csv_path', header=false, names=$names_sql, all_varchar=true,
                            delim=',', quote='"', escape='"', strict_mode=false,
                            null_padding=true, ignore_errors=true)
-            WHERE _record_type = 'D' $month_where
+            WHERE _record_type = 'D' $row_where
             $order_by
         ) TO '$path' (FORMAT PARQUET, PARTITION_BY ($partition_by), OVERWRITE_OR_IGNORE TRUE)
     """

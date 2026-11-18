@@ -1,6 +1,6 @@
 # Changes here will be overwritten by Copier
 Authors: Youssef Miftah <miftahyo@outlook.fr> and contributors
-JuliaMinVersion: '1.11'
+JuliaMinVersion: '1.13'
 License: MIT
 LicenseCopyrightHolders: Youssef Miftah
 PackageName: AustralianElectricityMarkets

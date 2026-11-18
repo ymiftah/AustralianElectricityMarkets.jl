@@ -189,7 +189,7 @@ applied, signed along the interconnector's from-to direction: `IMPORTLIMIT <= fl
 # Arguments
 - `db`: an `AEMDB` connection.
 - `date_range`: the dispatch intervals to read (half-open: `start <= t < stop`).
-- `intervention`: `0` for the pricing run, `1` for the physical run.
+- `intervention`: `0` for the pricing run. `1` for the physical run where the interval has one, else the pricing run.
 
 # Returns
 A `DataFrame` with `SETTLEMENTDATE`, `INTERCONNECTORID`, `METEREDMWFLOW`, `EXPORTLIMIT`,

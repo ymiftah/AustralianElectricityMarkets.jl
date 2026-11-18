@@ -1,4 +1,4 @@
-# Historical NEM dispatch replays
+# Historical NEM dispatch runs
 
 These scripts build systems from the local NEMWEB cache, solve five-minute dispatch
 replicas, and compare them with AEMO's published NEMDE outcomes. Run commands from
@@ -6,19 +6,22 @@ the repository root, using the Simulations test environment and the installed Ju
 workspace runtime:
 
 ```sh
-julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/replicate_random_days.jl --help
+julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/batch_run.jl --help
 ```
 
 ## Detailed statistics from saved runs
 
-Use Python 3.11 or newer to report saved outputs without starting Julia or
-running another simulation. No additional Python packages are required:
+`scripts/simulation_statistics.jl` reports saved outputs without running another simulation:
 
 ```sh
-python3 scripts/simulation_statistics.py \
-    /run/media/simba/Store/aem_validation/overnight_10h_20261027T120955Z \
-    /run/media/simba/Store/aem_validation/overnight_10h_parallel_20261027T131045Z
+julia --project=AustralianElectricityMarketsSimulations/test scripts/simulation_statistics.jl \
+    $HOME/aem_validation/overnight_10h_20261027T120955Z \
+    $HOME/aem_validation/overnight_10h_parallel_20261027T131045Z \
+    --hive "$HOME/.nemdb_cache"
 ```
+
+`--hive` is optional: with it, the dispatch errors are also grouped by each unit's region, dispatch type
+and schedule type, read from the cache's `DUDETAILSUMMARY` as of each trading day.
 
 The default report folder is `<first run>/simulation_statistics/`. Set
 `--output /path/to/report` to choose another folder. Re-running the command
@@ -31,18 +34,25 @@ The report includes:
 
 | File | Contents |
 | --- | --- |
-| `report.md` | Runtime breakdown, timing percentiles, NEMDE errors, regional prices, unit outliers, memory and failures |
+| `report.md` | Runtime breakdown, timing percentiles, NEMDE errors, energy price tail, error distributions by category, regional prices, unit outliers and failures |
 | `statistics.json` | Full report, provenance, status, warnings and coverage |
 | `runtime.csv` | Per-day totals, updates, MIP, pricing, auxiliary work, writes, state and residual time |
 | `timing_percentiles.csv` | Call counts, totals, min/mean, p5/p25/p50/p75/p90/p95/p99/max by phase and update cohort |
 | `errors.csv` | Per-day absolute-error percentiles, signed bias, MAE, RMSE, missing rows and duplicates |
+| `category_errors.csv` | Pooled error distributions by category: FCAS by service, region and direction; energy prices by region and four-hour block; flows and losses by interconnector; dispatch by unit region, dispatch type and schedule type (with `--hive`) |
 | `entity_errors.csv` | The same distributions by DUID, region, FCAS region/service and interconnector, with paired-interval coverage |
 | `worst_errors.csv` | Largest comparison errors and their interval/entity/published/solved values |
 | `over_constrained_intervals.csv` | Price-triggered intervals with a generic-constraint violation, excluded from the pooled errors in `report.md` and `statistics.json` |
+| `price_duration.csv` | Interval prices of the pooled days ranked by published price, highest first: `position`, `interval`, `published`, `solved` |
 | `slowest_intervals.csv` | Slowest update, MIP, pricing and write calls per day |
-| `memory_statistics.csv` | Sampled worker RSS distributions and recorded high-water RSS, in MiB |
 | `native_timers.csv` | Native timer snapshots with their hierarchy and call counts; nested totals overlap |
-| `phase_boundaries.csv` | Loading, preflight, build, execution, comparison and export boundaries with observed phase spans |
+| `phase_boundaries.csv` | Loading, build, execution, comparison and export boundaries with observed phase spans |
+
+The energy price tail section of `report.md` (and `price_tail` in `statistics.json`) covers the pooled
+days. It gives the signed ROP error (solved minus published: mean, median, p5, p95), the same summary for the
+interval price, and the error distribution and count of the regional ROP rows by published price band (above
+\$300/MWh, \$0 to \$300/MWh, below \$0/MWh). Regional demand is not in the comparison files, so the interval
+price is the unweighted mean of the regional ROPs paired in the interval, not a demand-weighted price.
 
 Energy comparisons use **ROP against ROP**, not RRP. Percentiles use linear
 interpolation; unqualified error percentiles describe absolute errors. Signed
@@ -70,10 +80,10 @@ The default `--cache-windows 24` only labels likely refill boundaries. Set it to
 the input-cache window count used by the source run; it does not change a run's
 cache. The labels identify a timing pattern, not a measured attribution to IO.
 
-Run the Python-only regression tests with:
+Its regression tests run in the Simulations suite's `problem_scripts` group:
 
 ```sh
-python3 -m unittest discover -s test/scripts -p 'test_simulation_statistics.py'
+julia --project=AustralianElectricityMarketsSimulations/test test/scripts/simulation_statistics.jl
 ```
 
 ## Overnight: random trading days for ten hours
@@ -87,7 +97,8 @@ construction, execution, comparisons and exports. It is checked between days;
 there is no solver time limit.
 
 ```sh
-julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/replicate_random_days.jl
+julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/batch_run.jl \
+    --output "$HOME/aem_validation/overnight-2026-01-to-06"
 ```
 
 The examples use `-O1` for Julia code optimisation. Each trading day runs in a
@@ -95,40 +106,89 @@ fresh Julia process, so package loading and first-use compilation recur per day.
 This bounds native HDF5 and solver resource lifetimes. The supervisor checks one
 monotonic admission deadline and never kills the final admitted day at that deadline.
 
-Default outputs go to a new timestamped subfolder of
-`/run/media/simba/Store/aem_validation/`, for example
-`/run/media/simba/Store/aem_validation/20261026T100000Z_12345/`.
-The timestamp is UTC. The script prints the actual folder on launch.
-Use `--output` to specify the exact run folder; it must not already exist.
+`--output` is required and names the new run folder, which must not already exist. The script prints
+it on launch.
 
 For an unattended run that survives closing the terminal:
 
 ```sh
 mkdir -p scripts/results
 nohup julia -O1 --project=AustralianElectricityMarketsSimulations/test \
-    scripts/replicate_random_days.jl \
+    scripts/batch_run.jl --output "$HOME/aem_validation/overnight" \
     > scripts/results/overnight-launch.log 2>&1 < /dev/null &
 echo $! > scripts/results/overnight.pid
 tail -f scripts/results/overnight-launch.log
 ```
 
-The launch log shows the output folder, current phase and memory samples. The
+The launch log shows the output folder and each phase change of the worker, with elapsed time. The
 supervisor writes the worker's detailed output to `<run folder>/run.log`.
-The machine must remain awake and the Store drive mounted during the run.
+The machine must remain awake and the output drive mounted during the run.
 
 An explicit configuration equivalent to the defaults:
 
 ```sh
 julia -O1 --project=AustralianElectricityMarketsSimulations/test \
-    scripts/replicate_random_days.jl \
+    scripts/batch_run.jl \
     --first 2026-01-01 --last 2026-06-30 --hours 10 --seed 20261026 \
     --hive "$HOME/.nemdb_cache" \
-    --output /run/media/simba/Store/aem_validation/overnight-2026-01-to-06 \
-    --sample-seconds 5 --solver-threads 1 --cache-size-mib 64
+    --output $HOME/aem_validation/overnight-2026-01-to-06 \
+    --solver-threads 1 --cache-size-mib 64
 ```
 
 `--time-series-in-memory true` holds the time series in memory (default `false`, on disk), which cuts
 per-step parameter updates but raises peak memory.
+
+Every mode builds its decision models with `nem_dispatch_sequence`. When the system has a unit whose energy
+offer carries a fast-start profile, each interval runs NEMDE's two dispatch runs: the commitment run
+(`fast_start_commitment`) and then the dispatch run (`dispatch`), which holds the fast-start units to their
+inflexibility profile. The outputs, comparisons and violations are the dispatch run's. `--fast-start false` solves
+the single model instead, without inflexibility profiles; each day's `provenance.toml` records `fast_start`.
+
+`--closed-loop true` runs each interval after the first from the previous interval's solved output instead
+of AEMO's observed state (`NEMClosedLoopDispatchProblem`). It is a counterfactual run: its gap to NEMDE grows with
+the gap between the solved and metered trajectories. Each day's `provenance.toml` records `closed_loop`, and the
+statistics report never pools closed-loop with open-loop days.
+
+`--start` and `--intervals` run one range of consecutive intervals instead of whole trading days.
+`--start` is an interval-ending time on a five-minute boundary, and the range must end within the
+trading day of `--start`. Both options must be given together, and they replace `--first`, `--last`
+and `--seed` for scheduling. This runs 10 intervals from 2026-06-04T04:05:00:
+
+```sh
+julia -O1 --project=AustralianElectricityMarketsSimulations/test \
+    scripts/batch_run.jl \
+    --start 2026-06-04T04:05:00 --intervals 10 \
+    --output $HOME/aem_validation/range-2026-06-04-10
+```
+
+### Selected intervals (benchmark mode)
+
+`--intervals-file PATH` runs the intervals of a CSV (header `interval`, one interval-ending ISO timestamp
+per row, on the five-minute grid) instead of whole days. `--sample N` draws `N` distinct intervals uniformly
+at random over `--first` 04:05 through `--last` plus one day 04:00, seeded by `--seed`. The options, and
+`--start`, are alternatives, and `--closed-loop true` is rejected because it needs consecutive intervals.
+`--hours` still applies between days; days run in a seeded random order, so a truncated run is itself a
+random subset.
+
+```sh
+julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/batch_run.jl \
+    --sample 1000 --first 2026-01-01 --last 2026-06-30 --seed 1 --hours 14 \
+    --output "$HOME/aem_validation/sample-1000"
+```
+
+The selected intervals are grouped by trading day, and each day is one worker. Each selected interval is
+its own chunk, with a system built over that interval alone and a one-step open-loop simulation of
+`nem_dispatch_sequence`, built from AEMO's observed state: NEMDE's commitment and dispatch runs when the
+system has a fast-start unit, one model otherwise. This is the same independent solve as the nempy
+benchmark, and a gap in the published inputs between two selected intervals (for example the missing
+`BIDPEROFFER_D` rows at 13:30 to 13:45 on 2024-11-19) cannot fail them. A system covering the day's
+selected intervals builds in about the same total time but reads every interval in between.
+The day folders hold the same CSVs as a whole-day run, restricted to the selected intervals (`chunks.csv`
+has one row per interval; `simulation_build_s` is the build of both models and `execute_s` their solves).
+Each interval's simulation folder is removed once read, so there are no native PSI simulation folders,
+`interval_timings.csv` or `timers_*.toml` files. `provenance.toml`
+records the sampling settings under `interval_sampling`. `scripts/simulation_statistics.jl` reads the run
+unchanged. `benchmarking/` has the interval list of nempy's 2024 H2 benchmark.
 
 The seed fixes the shuffled order for the same Julia version. Change `--seed` for
 a different order. Failed days are recorded and skipped, with no automatic retry.
@@ -146,18 +206,18 @@ and PowerSystems 5.12.4
 ([`03f9639`](https://github.com/ymiftah/PowerSystems.jl/commit/03f9639648cc01c62df26836bdc620f2382521ff)).
 After updating the checkout, compare `Pkg.status` with these revisions. A root
 `Pkg.resolve()` applies root source pins only; for a stale subproject pin, run
-`Pkg.add(url = ..., rev = ...)` with that project active. Existing frozen replay
+`Pkg.add(url = ..., rev = ...)` with that project active. Existing frozen run
 launches retain their own dependency versions.
 
 - HiGHS with `mip_rel_gap = 1e-8` and `mip_abs_gap = 1e-10`.
-- One solver thread, all `REPLICATION_PARTS`, and `intervention = 0` (pricing run).
+- One solver thread, the default `template_nemde()` template, and `intervention = 0` (pricing run).
 - A new system and model per trading day, with interval parameters updated in
   place within the day. The existing workflow also splits at 00:05 on July 1.
 - Historical metered `INITIALMW` at each interval, rather than the previous
   replica's dispatch target.
 - File-backed system time series and a 64 MiB PSI results write cache, limiting
   memory retained for time series and buffered results. Each worker exits
-  after its day; PID-tagged memory samples cover loading through export.
+  after its day.
 
 Each selected trading day contains **288 interval-ending timestamps**, from
 04:05 AEST on that date through 04:00 AEST the following date. Market timestamps
@@ -186,14 +246,14 @@ Check these files in the morning even if the command exits successfully.
 Set `run` to the folder printed at launch:
 
 ```sh
-run=/run/media/simba/Store/aem_validation/20261026T100000Z_12345
+run=$HOME/aem_validation/20261026T100000Z_12345
 tail -f "$run/run.log"
 ```
 
 In another terminal:
 
 ```sh
-watch -n 10 "cat '$run/status.toml'; tail -n 3 '$run/memory.csv'; tail -n 3 '$run/days.csv'"
+watch -n 10 "cat '$run/status.toml'; tail -n 3 '$run/phases.csv'; tail -n 3 '$run/days.csv'"
 ```
 
 Some files appear only after the first day finishes. CSVs and status files are
@@ -202,30 +262,21 @@ flushed as they are written; successfully exported days survive later failures.
 | File | Contents |
 | --- | --- |
 | `run.toml` | Options, Julia version, Git revision, start time and solver gaps |
-| `scheduled_days.csv` | Full shuffled order, with each day's first and last interval |
+| `scheduled_days.csv` | Full shuffled order, with each day's first and last interval and its interval count |
+| `selected_intervals.csv` | With `--sample` or `--intervals-file`: the selected intervals, header `interval` |
 | `status.toml` | Current trading day and phase; completion/failure counts at the end |
-| `phases.csv` | UTC time and elapsed seconds at preflight, system build, model build, execution, comparison and export boundaries |
-| `memory.csv` | Periodic worker RSS, lifetime peak RSS, virtual memory and available host memory, in MiB |
+| `phases.csv` | UTC time and elapsed seconds at system build, model build, execution, comparison and export boundaries |
 | `days.csv` | One row per successfully exported day, with interval count and timing totals |
 | `failures.csv` | One row per failed day, elapsed time and exception; created only on failure |
 | `outcome.toml` | Final completed/failed counts, elapsed time and stopping reason |
 | `run.log` | Detailed worker and PSI output |
 | `YYYY-MM-DD/` | Day's comparison CSVs, timings, violations and native PSI result stores |
 
-`memory.csv` is sampled by the parent process, independently of the Julia worker,
-so samples continue during native HiGHS calls. It includes worker package loading,
-builds, parameter updates, solves, comparisons and exports. Each day has a fresh
-worker PID; no worker is sampled between days.
-It requires Linux `/proc`. RSS covers the worker's native allocations, including
-DuckDB and HiGHS; it does not include the lightweight supervisor or filesystem
-page cache. Peak RSS is the worker's lifetime high-water mark, covering its single trading day.
-Sampling is periodic rather than a guarantee of observing every transient peak.
-
 Timing columns in `days.csv`:
 
 | Column | Measurement in seconds |
 | --- | --- |
-| `system_build_s` | System construction and `prepare_replay_forecasts!` |
+| `system_build_s` | System construction |
 | `model_build_s` | Simulation/model construction, pre-flight checks and `PSI.build!` |
 | `execute_s` | Complete execution loop, including updates, solves, dual calculation and result writes |
 | `solver_s` | Sum of solver-reported solve times |
@@ -239,7 +290,7 @@ time includes worker startup and package loading; supervisor setup and between-d
 overhead explain the remainder in overall run wall time. The fields describe overlapping measurements: do not add
 `execute_s`, `solver_s`, `timed_solve_s` and `dual_calculation_s` together.
 Daily timing totals become available when a day finishes. While it is running,
-use `status.toml`, `phases.csv`, memory samples and the native PSI logs.
+use `status.toml`, `phases.csv` and the native PSI logs.
 
 Each day folder contains:
 
@@ -261,81 +312,58 @@ Prices are in $/MWh and power quantities are in MW. Compare solved prices with
 published **ROP**, the unadjusted dispatch price; published RRP can differ under
 administered pricing. CSV comparison tables retain published rows without a
 solved counterpart as empty cells. Missing rows do not count as zero error.
-The summary covers the published keys retained by the existing replay workflow;
+The summary covers the published keys retained by the existing run workflow;
 it is a diagnostic, not a claim that the replica exactly matches NEMDE.
 
 ## Consecutive days or selected intervals
 
-For consecutive days, use the existing `ReplayWorkflow.replicate_range` function.
-This example solves two full trading days and retains native PSI outputs:
+For consecutive intervals, use the AEMSim run API directly. This example runs
+one trading day in the chunks of `dispatch_chunks`, keeps the native PSI stores under
+`folder`, and compares each chunk with the published outcome in memory:
 
 ```julia
 using AustralianElectricityMarkets, AustralianElectricityMarketsSimulations
-using Dates, HiGHS
-using PowerSimulations: optimizer_with_attributes
-
-include("scripts/replay_workflow.jl")
-using .ReplayWorkflow: replicate_range
+using Dates
+import PowerSimulations as PSI
 
 db = aem_connect(HiveConfiguration(hive_location = joinpath(homedir(), ".nemdb_cache")))
-optimizer = optimizer_with_attributes(
-    HiGHS.Optimizer, "mip_rel_gap" => 1e-8, "mip_abs_gap" => 1e-10,
-    "threads" => 1, "output_flag" => false,
-)
-result = replicate_range(
-    db, DateTime(2026, 1, 1, 4, 5), DateTime(2026, 1, 3, 4, 0);
-    optimizer, output_dir = "/run/media/simba/Store/aem_validation/consecutive-days",
-    time_series_in_memory = false, cache_size_mib = 64,
-)
-result.comparison.dispatch
-result.solver_stats
-result.chunks
+optimizer = nemde_optimizer(; threads = 1, output_flag = false)
+template = template_nemde()
+folder = "$HOME/aem_validation/consecutive-days"
+
+for (k, steps) in enumerate(dispatch_chunks(trading_day_steps(Date(2026, 1, 1))))
+    chunk_folder = joinpath(folder, "chunk_$k")
+    horizon = first(steps):DISPATCH_INTERVAL:(last(steps) + 2DISPATCH_INTERVAL)
+    sys = nem_system(
+        db, NEMDEConfiguration(); date_range = horizon, time_series_in_memory = false,
+        time_series_directory = joinpath(chunk_folder, "time_series"),
+    )
+    model = PSI.DecisionModel(
+        NEMDispatchProblem, template, sys; optimizer, initial_time = first(steps), name = "dispatch",
+    )
+    skipped = template_skipped_constraints(sys, template)
+    models = PSI.SimulationModels(; decision_models = [model])
+    sequence = PSI.SimulationSequence(; models, ini_cond_chronology = PSI.InterProblemChronology())
+    simulation = PSI.Simulation(;
+        name = "problem_workflow", steps = length(steps), models, sequence,
+        simulation_folder = chunk_folder, initial_time = first(steps),
+    )
+    PSI.build!(simulation; store_systems_in_results = false) == PSI.SimulationBuildStatus.BUILT || error("build failed")
+    PSI.execute!(simulation; cache_size_mib = 64) == PSI.RunStatus.SUCCESSFULLY_FINALIZED || error("execution failed")
+    results = PSI.get_decision_problem_results(PSI.SimulationResults(simulation), "dispatch")
+    comparison = compare_intervals(read_published_interval(db, steps), read_solved_interval(results, sys))
+    comparison_summary(comparison)
+    read_constraint_violations(results, sys)
+    PSI.read_optimizer_stats(results)
+end
 ```
 
-`replicate_range` returns comparison tables in memory and writes native PSI
-stores to `output_dir`; the overnight wrapper additionally exports CSVs and
-resource samples. Consecutive-range execution has no ten-hour budget.
+The overnight runner in `scripts/batch_run.jl` runs this same sequence per trading
+day, writes the tables as CSVs and records the phase timings. A loop like this has
+no ten-hour budget.
 
-For a short terminal comparison using the older positional CLI:
-
-```sh
-julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/replicate_range.jl \
-    2026-01-01T04:05:00 2026-01-01T04:15:00 "$HOME/.nemdb_cache"
-```
-
-That older CLI prints comparisons, uses its existing zero-relative-gap default,
-and stores PSI outputs in temporary folders. Use the overnight runner when you
-need the persistent outputs and `1e-8` relative gap described above.
-
-## Interconnector loss gaps
-
-`scripts/interconnector_loss_gaps.jl` checks a saved replay's solved interconnector losses against
-the loss curve at each solved flow. Run it on the `output_dir` of a `replicate_range` call made with
-`:losses` in its parts:
-
-```sh
-julia --project=AustralianElectricityMarketsSimulations/test scripts/interconnector_loss_gaps.jl \
-    --results /run/media/simba/Store/aem_validation/consecutive-days \
-    --start 2026-01-01T04:05:00 --stop 2026-01-01T04:15:00 \
-    [--hive "$HOME/.nemdb_cache"] [--output loss_gaps.csv] [--tolerance 0.001]
-```
-
-The script rebuilds the NEMDE system over `start` to `stop` plus ten minutes, reads each `chunk_<k>`
-folder's `replay_workflow` results and prints, per interconnector, the maximum absolute gap and the
-number of intervals with a negative weighted loss price. `--tolerance` (MW, default `0.001`) sets
-the gap above which a warning is logged. Nothing is solved again.
-
-The CSV has one row per interconnector and interval with a solved flow:
-
-| Column | Units | Contents |
-| --- | --- | --- |
-| `interconnector` | | Interconnector name |
-| `DateTime` | | Interval start, as in the replay results |
-| `flow_mw` | MW | Solved `FlowActivePowerVariable` |
-| `solved_loss_mw` | MW | Solved `InterconnectorLossVariable` |
-| `curve_loss_mw` | MW | Loss curve interpolated at the solved flow |
-| `gap_mw` | MW | `solved_loss_mw - curve_loss_mw`; zero when the segments reproduce the curve |
-| `weighted_loss_price` | $/MWh | `share * price_from + (1 - share) * price_to` from the `CopperPlateBalanceConstraint__Area` duals |
+The solved interconnector losses of a saved run can be checked against the loss curve
+at each solved flow with `read_interconnector_loss_gaps(results, sys)`.
 
 ## HDF5 dependency
 
@@ -345,19 +373,18 @@ construction overhead growing across repeated builds. Instantiate the checked-ou
 before launching; keep the project source pins when reproducing a run. The worker snapshots
 its resolved manifest and package sources.
 
-## Early validation and detailed timing
+## Validation and detailed timing
 
-Before constructing each chunk, a data-only preflight checks the padded five-minute
-range, including the interval after the trading day used by forecast preparation.
-It verifies both MNSP directional links against the exact offers joined by the
-existing reader, and checks exact invoked generic-constraint definition versions.
-Known built-in zero-flow constraints and participant fixed-load rows retain their
-existing handling. Model-level input checks still run. No data is downloaded and
+`nem_system` validates its inputs as the last step of each chunk's system build, over the
+padded five-minute range including the interval after the trading day used by forecast
+preparation. It checks the typed records of every dispatch device, the constraint build
+report (missing intervals, defaulted weights, skipped constraints and dropped terms) and
+both MNSP directional links. Model-level input checks still run. No data is downloaded and
 failed days are retained without retrying. Keep the checkout unchanged during a batch
 so code cannot change while a worker loads it.
 
-`phases.csv` separates preflight, system/preprocessing, model build, execution,
-comparison and export. Each day's provenance, `runner_source/` and `package_source/` snapshots identify
+`phases.csv` separates system/preprocessing, model build, execution, comparison and export.
+Each day's provenance, `runner_source/` and `package_source/` snapshots identify
 the scripts, package sources, actual worker revision and dirty checkout state.
 
 Per-model `interval_timings.csv` is derived after `execute!` from PSI's native
@@ -392,7 +419,6 @@ Unavailable in schema 2 and written as `NaN`: `compilation_s` on every row, and
 timing tree. MIP, pricing and auxiliary solve times are nested in the solve span; do
 not sum both. The state update is inside `solve_and_write`, so do not subtract the
 execution timers' state update from it. The statistics report refuses to pool schema 1
-and schema 2 runs. Memory samples include
-PID and both sampled RSS and the worker's high-water RSS. Add the unmeasured residual
+and schema 2 runs. Add the unmeasured residual
 to reconcile phase totals with overall wall time; compilation/GC measurements are not
 whole-run coverage.

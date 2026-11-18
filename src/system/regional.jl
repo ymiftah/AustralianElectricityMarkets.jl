@@ -1,7 +1,11 @@
-"""
-    nem_system(db; as_of = nothing)
+# TODO This should live in `@network_configurations`
 
-Assembles a `PowerSystems.System` object from the database.
+
+"""
+    _base_system(db; as_of = nothing)
+
+Assembles the energy-only regional `PowerSystems.System` built from the database, as
+[`RegionalNetworkConfiguration`](@ref) returns it.
 
 # Arguments
 - `db`: The database connection.
@@ -14,11 +18,11 @@ A `PowerSystems.System` object.
 # Example
 ```julia
 db = aem_connect()
-sys = nem_system(db)
+sys = nem_system(db, RegionalNetworkConfiguration())
 println(sys)
 ```
 """
-function nem_system(db; kwargs...)
+function _base_system(db; kwargs...)
     sys, _ = _regional_system(db; kwargs...)
     return sys
 end
@@ -63,7 +67,4 @@ AustralianElectricityMarkets.table_requirements(::RegionalNetworkConfiguration) 
 ]
 
 
-AustralianElectricityMarkets.nem_system(db, ::RegionalNetworkConfiguration; kwargs...) = nem_system(db; kwargs...)
-
-
-export RegionalNetworkConfiguration
+AustralianElectricityMarkets.nem_system(db, ::RegionalNetworkConfiguration; kwargs...) = _base_system(db; kwargs...)

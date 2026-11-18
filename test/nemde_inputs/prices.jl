@@ -1,0 +1,164 @@
+# The band prices of each energy bid, written on the mock run System (AEMSim not loaded).
+
+# A NEM run System on the mock hive, with its NEMDE inputs written by `nem_system`.
+const _PR_SYS = let hive = mktempdir()
+    create_mock_data(hive; complete_inputs = true)
+    write_mock_interconnector_results(hive)
+    t = DateTime(2025, 1, 1, 0, 5)
+    nem_system(aem_connect(HiveConfiguration(hive_location = hive)), NEMDEConfiguration(); date_range = t:Minute(5):(t + Minute(20)))
+end
+
+_prices_curve(prices) = PowerSystems.PiecewiseStepData(collect(0.0:10.0:(10.0 * length(prices))), prices)
+
+@testset "_day_band_prices pads to ten, ignores stamps outside the dispatch range and throws on variation" begin
+    AEM = AustralianElectricityMarkets
+    curves = [_prices_curve([5.0, 50.0]), _prices_curve([5.0, 50.0]), _prices_curve([7.0, 50.0, 90.0])]
+    @test AEM._day_band_prices(curves, [true, true, false], "X") == (5.0, 50.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    @test_throws r"band prices of X vary within the dispatch range; a NEMDE system covers one trading day" AEM._day_band_prices(
+        curves, [true, true, true], "X",
+    )
+    @test_throws r"X has no offer curve in the dispatch range" AEM._day_band_prices(curves, [false, false, false], "X")
+    wide = [_prices_curve(collect(1.0:11.0))]
+    @test_throws r"11 bands" AEM._day_band_prices(wide, [true], "X")
+end
+
+@testset "bids of a built system carry the referred prices of their energy offer series" begin
+    AEM = AustralianElectricityMarkets
+    sys = _PR_SYS
+    checked = Dict(AEM.OfferSide.GEN => 0, AEM.OfferSide.LOAD => 0)
+    wrong = String[]
+    for device in AEM._bidding_devices(sys)
+        cost = AEM._nem_offer_cost(device)
+        isnothing(cost) && continue
+        for side in AEM.energy_offer_sides(device)
+            bid = AEM._energy_bid(cost, side)
+            isnothing(bid) && continue
+            direction = side == AEM.OfferSide.LOAD ? AEM.BidDirection.LOAD : AEM.BidDirection.GEN
+            raw = PowerSystems.get_time_series_values(
+                PowerSystems.SingleTimeSeries, device, AEM.bid_series_name(AEM.BidType.ENERGY, :offer_curves, direction);
+                ignore_scaling_factors = true,
+            )
+            registration = AEM.get_registration(device)
+            factor = side == AEM.OfferSide.LOAD ? registration.load_loss_factor : registration.gen_loss_factor
+            y = PowerSystems.get_y_coords(first(raw))
+            expected = ntuple(i -> i <= length(y) ? AEM.referred_price(y[i], factor) : 0.0, 10)
+            bid.band_prices == expected || push!(wrong, "$(PowerSystems.get_name(device)) $side")
+            checked[side] += 1
+        end
+    end
+    @test isempty(wrong)
+    @test checked[AEM.OfferSide.GEN] > 0
+    @test checked[AEM.OfferSide.LOAD] > 0
+end
+
+# Replaces `device`'s series `name` with the curves `curves(stamps)` on its own stamps.
+function _prices_replace!(sys, device, name, curves)
+    stamps = PowerSystems.get_time_series_timestamps(PowerSystems.SingleTimeSeries, device, name)
+    remove_series_and_forecast!(sys, device, name)
+    PowerSystems.add_time_series!(sys, device, AustralianElectricityMarkets.single_series(name, first(stamps), curves(stamps), Minute(5)))
+    return
+end
+
+# `flat` before the second dispatch interval of `sys` and `moved` from it on.
+_prices_step(sys, flat, moved) = let second = AustralianElectricityMarkets._dispatch_interval_stamps(sys)[2]
+    stamps -> [t < second ? flat : moved for t in stamps]
+end
+
+@testset "a price change inside the dispatch range throws; one in the trailing stamps does not" begin
+    AEM = AustralianElectricityMarkets
+    sys = deepcopy(_PR_SYS)
+    name = AEM.energy_offer_series_name(AEM.OfferSide.GEN)
+    device = first(d for d in AEM._bidding_devices(sys) if PowerSystems.has_time_series(d, PowerSystems.SingleTimeSeries, name))
+    flat, moved = _prices_curve([20.0, 40.0]), _prices_curve([21.0, 40.0])
+    dispatch_stamps = Set(AEM._dispatch_interval_stamps(sys))
+    _prices_replace!(sys, device, name, ts -> [t in dispatch_stamps ? flat : moved for t in ts])
+    @test isnothing(AEM._set_band_prices!(sys))
+    _prices_replace!(sys, device, name, _prices_step(sys, flat, moved))
+    @test_throws r"vary within the dispatch range" AEM._set_band_prices!(sys)
+end
+
+# The FCAS bids of `sys` with a modelled side and an `offer_curves` series, as `(device, bid)`.
+function _prices_fcas_bids(sys)
+    AEM = AustralianElectricityMarkets
+    found = Tuple{Any, Any}[]
+    for device in AEM._bidding_devices(sys)
+        cost = AEM._nem_offer_cost(device)
+        isnothing(cost) && continue
+        for bid in AEM.get_fcas_bids(cost)
+            isnothing(AEM._fcas_bid_side(device, bid)) && continue
+            push!(found, (device, bid))
+        end
+    end
+    return found
+end
+
+@testset "FCAS bids of a built system carry the unreferred prices of the first dispatch interval" begin
+    AEM = AustralianElectricityMarkets
+    sys = _PR_SYS
+    checked = Dict(AEM.OfferSide.GEN => 0, AEM.OfferSide.LOAD => 0)
+    wrong = String[]
+    for (device, bid) in _prices_fcas_bids(sys)
+        raw = PowerSystems.get_time_series_values(
+            PowerSystems.SingleTimeSeries, device, AEM.IS.get_name(bid.offer_curves); ignore_scaling_factors = true,
+        )
+        y = PowerSystems.get_y_coords(first(raw))
+        bid.band_prices == ntuple(i -> i <= length(y) ? Float64(y[i]) : 0.0, 10) || push!(wrong, "$(PowerSystems.get_name(device)) $(bid.service)")
+        checked[AEM._fcas_bid_side(device, bid)] += 1
+    end
+    @test isempty(wrong)
+    @test checked[AEM.OfferSide.GEN] > 0
+    @test checked[AEM.OfferSide.LOAD] > 0
+end
+
+@testset "an FCAS price change inside the dispatch range throws naming the unit and service" begin
+    AEM = AustralianElectricityMarkets
+    sys = deepcopy(_PR_SYS)
+    device, bid = first(_prices_fcas_bids(sys))
+    _prices_replace!(sys, device, AEM.IS.get_name(bid.offer_curves), _prices_step(sys, _prices_curve([20.0, 40.0]), _prices_curve([21.0, 40.0])))
+    @test_throws Regex("band prices of $(PowerSystems.get_name(device)) $(bid.service) .* vary within the dispatch range") AEM._set_band_prices!(sys)
+end
+
+@testset "an FCAS bid with a static offer_curves field throws, naming the unit" begin
+    AEM = AustralianElectricityMarkets
+    sys = deepcopy(_PR_SYS)
+    device, bid = first(_prices_fcas_bids(sys))
+    static = AEM.NEMFCASBid(;
+        service = bid.service, direction = bid.direction, offer_curves = _prices_curve([20.0, 40.0]),
+        max_avail = bid.max_avail, trapezium = bid.trapezium,
+    )
+    AEM._set_fcas_bid!(AEM._nem_offer_cost(device), static)
+    @test_throws Regex("\\\"$(PowerSystems.get_name(device))\\\" has a static `offer_curves` field") AEM._set_band_prices!(sys)
+end
+
+# The MNSP interchanges of `sys` as `(device, bid)`.
+function _prices_mnsp_bids(sys)
+    AEM = AustralianElectricityMarkets
+    found = Tuple{Any, Any}[]
+    for device in PowerSystems.get_components(PowerSystems.AreaInterchange, sys), bid in PowerSystems.get_supplemental_attributes(AEM.NEMMNSPBid, device)
+        push!(found, (device, bid))
+    end
+    return found
+end
+
+@testset "MNSP bids of a built system carry the first dispatch interval's prices, band k at PRICEBAND<k>" begin
+    AEM = AustralianElectricityMarkets
+    sys = _PR_SYS
+    bids = _prices_mnsp_bids(sys)
+    @test !isempty(bids)
+    @test all(bids) do (device, bid)
+        raw = PowerSystems.get_time_series_values(
+            PowerSystems.SingleTimeSeries, device, AEM.IS.get_name(bid.offer_curves); ignore_scaling_factors = true,
+        )
+        y = PowerSystems.get_y_coords(first(raw))
+        return length(y) == 10 && bid.band_prices == ntuple(i -> Float64(y[i]), 10)
+    end
+    @test Set(b.direction for (_, b) in bids) == Set([AEM.MNSPDirection.FORWARD, AEM.MNSPDirection.REVERSE])
+end
+
+@testset "an MNSP price change inside the dispatch range throws naming the interchange" begin
+    AEM = AustralianElectricityMarkets
+    sys = deepcopy(_PR_SYS)
+    device, bid = first(_prices_mnsp_bids(sys))
+    _prices_replace!(sys, device, AEM.IS.get_name(bid.offer_curves), _prices_step(sys, _prices_curve(fill(20.0, 10)), _prices_curve(fill(21.0, 10))))
+    @test_throws Regex("band prices of $(PowerSystems.get_name(device)) MNSP .* vary within the dispatch range") AEM._set_band_prices!(sys)
+end

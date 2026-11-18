@@ -9,7 +9,7 @@ Device formulation for `PSY.AreaInterchange` that apportions the attached
 `PSI.AreaBalancePowerModel` only, matching NEMDE's regional balance; other network models,
 missing or ambiguous loss models and concave curves throw `ArgumentError`. The demand term of each
 interval's loss factor is read from the interchange's `"loss_demand_coefficient"` series
-(`set_loss_demand_coefficients!`) as a [`LossDemandCoefficientParameter`](@ref), so the formulation
+(written by [`nem_system`](@ref AustralianElectricityMarkets.nem_system)) as a [`LossDemandCoefficientParameter`](@ref), so the formulation
 also runs in recurrent simulations.
 
 # Notes
@@ -21,6 +21,21 @@ device's static flow limits. Flow-limit rows always carry priced slacks; the dev
 not part of any PowerSimulations cost expression.
 """
 struct NEMInterconnectorLoss <: PSI.AbstractBranchFormulation end
+
+
+"""
+    NEMInterconnectorLossless
+
+Device formulation for `PSY.AreaInterchange` with the same flow variable, flow limits and priced
+flow slacks as [`NEMInterconnectorLoss`](@ref), and the balance terms only: `-flow` at the from area and
+`+flow` at the to area. It
+has no loss variables, loss curve or MNSP link offers, so an MNSP is a regulated flow within its
+limits. Supports `PSI.AreaBalancePowerModel` only; other network models throw `ArgumentError`.
+"""
+struct NEMInterconnectorLossless <: PSI.AbstractBranchFormulation end
+
+# Formulations sharing the interchange flow variable, flow limits and their priced slacks.
+const _NEMInterchangeFormulation = Union{NEMInterconnectorLoss, NEMInterconnectorLossless}
 
 
 "An interconnector's total loss at one timestep, in MW per-unit of base power."
@@ -35,16 +50,21 @@ interconnector's segment count, and a smaller interconnector's unused cells are 
 struct InterconnectorLossSegmentVariable <: PSI.VariableType end
 
 
-"`flow[ic,t] == first_breakpoint + sum(segment flows)`, both per-unit."
-struct InterconnectorFlowSegmentConstraint <: PSI.ConstraintType end
-
-
 """
-`loss[ic,t] == losses at the first breakpoint + sum(segment slope * segment flow) + k[t] * flow[ic,t]`,
-per-unit, with segment slopes and first-breakpoint losses at zero demand and `k[t]` the
-[`LossDemandCoefficientParameter`](@ref).
+    InterconnectorLossConstraint
+
+Row over one interconnector, per-unit. The key meta names the row, and a composite meta continues after
+its first `|`:
+
+- `"flow_segment"`: `flow[ic,t] == first_breakpoint + sum(segment flows)`, indexed `(interconnector name, t)`.
+- `"loss_definition"`: `loss[ic,t] == losses at the first breakpoint + sum(segment slope * segment flow) + k[t] * flow[ic,t]`,
+  with segment slopes and first-breakpoint losses at zero demand and `k[t]` the
+  [`LossDemandCoefficientParameter`](@ref). Indexed `(interconnector name, t)`.
+- `"segment_order|ub"` and `"segment_order|lb"`: contiguous segment fill. Segment `s + 1` may carry flow only when
+  segment `s` is full (`ub`), and segment `s` is full when its fill indicator is on (`lb`). Indexed
+  `(interconnector name, segment label, t)`.
 """
-struct InterconnectorLossDefinitionConstraint <: PSI.ConstraintType end
+struct InterconnectorLossConstraint <: PSI.ConstraintType end
 
 
 """
@@ -56,17 +76,10 @@ struct InterconnectorLossSegmentFullVariable <: PSI.VariableType end
 
 
 """
-Contiguous segment fill: segment `s + 1` may carry flow only when segment `s` is full
-(`meta = "ub"`), and segment `s` is full when its fill indicator is on (`meta = "lb"`).
-"""
-struct InterconnectorLossSegmentOrderConstraint <: PSI.ConstraintType end
-
-
-"""
     LossDemandCoefficientParameter
 
-Coefficient of an interconnector's flow in its [`InterconnectorLossDefinitionConstraint`](@ref) at
+Coefficient of an interconnector's flow in its `"loss_definition"` [`InterconnectorLossConstraint`](@ref) at
 each interval: the demand term `Σ_r demand_coefficients[r] × demand[r]` of its loss factor, read
-from the `"loss_demand_coefficient"` series that `set_loss_demand_coefficients!` attaches.
+from the `"loss_demand_coefficient"` series that [`nem_system`](@ref AustralianElectricityMarkets.nem_system) writes.
 """
 struct LossDemandCoefficientParameter <: PSI.ConstraintCoefficientParameter end

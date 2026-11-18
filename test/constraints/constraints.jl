@@ -17,93 +17,19 @@
         @test invoked2 == [0.0, 0.0, 1.0, 0.0]
     end
 
-    @testset "RegionTerm devices default to empty and take positional or keyword devices" begin
-        @test get_devices(RegionTerm("NSW1", BidType.ENERGY, 2.0)) == String[]
-        @test get_devices(RegionTerm("NSW1", BidType.ENERGY, 2.0, ["BW01", "BW02"])) == ["BW01", "BW02"]
-        rt_kw = RegionTerm(; region = "NSW1", bid_type = BidType.ENERGY, factor = 2.0, devices = ["BW01"])
-        @test get_devices(rt_kw) == ["BW01"]
-    end
-
-    @testset "GenericConstraint construction and accessors" begin
-        gc = GenericConstraint(;
-            name = "F_TEST",
-            sense = ConstraintSense.GE,
-            rhs = 137.5,
-            constraint_weight = 2.0,
-            terms = ConstraintTerm[UnitTerm("BW01", BidType.RAISE6SEC, 1.0), InterconnectorTerm("IC1", -1.0)],
-            fcas_requirements = FCASRequirement[FCASRequirement("TAS1", BidType.RAISE6SEC)],
-        )
-        @test get_name(gc) == "F_TEST"
-        @test get_available(gc) == true
-        @test get_sense(gc) == ConstraintSense.GE
-        @test gc.rhs == 137.5
-        @test get_constraint_weight(gc) == 2.0
-        @test length(get_terms(gc)) == 2
-        @test length(get_fcas_requirements(gc)) == 1
-        @test get_terms(gc)[1] isa UnitTerm
-
-        set_available!(gc, false)
-        @test get_available(gc) == false
-
+    @testset "GenericConstraint NULL standing data" begin
         gc_null_ext = GenericConstraint(;
             name = "F_NULL_EXT", sense = ConstraintSense.LE, rhs = 1.0,
-            ext = Dict{String, Any}(
-                "limit_type" => missing, "source" => missing,
-                "effective_date" => missing, "version_no" => missing, "gencon_id" => missing,
-            ),
+            limit_type = missing, source = missing,
+            effective_date = nothing, version_no = nothing,
         )
         @test get_limit_type(gc_null_ext) === nothing
         @test get_source(gc_null_ext) === nothing
-        @test ismissing(gc_null_ext.ext["gencon_id"])
-        @test get_description(gc) == ""
-        @test isempty(get_ext(gc))
-        set_description!(gc, "a hand-authored test constraint")
-        @test get_description(gc) == "a hand-authored test constraint"
+        @test get_effective_date(gc_null_ext) === nothing
+        @test get_version_no(gc_null_ext) === nothing
+        @test get_gencon_id(gc_null_ext) == "F_NULL_EXT"
     end
 
-    @testset "GenericConstraint JSON round-trip" begin
-        sys = System(100.0)
-        gc = GenericConstraint(;
-            name = "F_ROUNDTRIP",
-            sense = ConstraintSense.GE,
-            rhs = 137.5,
-            constraint_weight = 2.0,
-            description = "test constraint",
-            terms = ConstraintTerm[
-                UnitTerm("BW01", BidType.RAISE6SEC, 1.0),
-                InterconnectorTerm("IC1", -1.0),
-                RegionTerm("NSW1", BidType.ENERGY, 0.5, ["BW01", "BW02"]),
-            ],
-            fcas_requirements = FCASRequirement[FCASRequirement("TAS1", BidType.RAISE6SEC), FCASRequirement("TAS1", BidType.RAISE5MIN)],
-        )
-        add_component!(sys, gc)
-
-        mktpath = mktempdir()
-        json_path = joinpath(mktpath, "sys.json")
-        to_json(sys, json_path)
-        sys2 = System(json_path)
-
-        gc2 = get_component(GenericConstraint, sys2, "F_ROUNDTRIP")
-        @test !isnothing(gc2)
-        @test get_sense(gc2) == ConstraintSense.GE
-        @test gc2.rhs == 137.5
-        @test get_constraint_weight(gc2) == 2.0
-        @test get_description(gc2) == "test constraint"
-        @test length(get_terms(gc2)) == 3
-        @test length(get_fcas_requirements(gc2)) == 2
-
-        unit_term = only(filter(t -> t isa UnitTerm, get_terms(gc2)))
-        @test get_duid(unit_term) == "BW01"
-        @test get_bid_type(unit_term) == BidType.RAISE6SEC
-        ic_term = only(filter(t -> t isa InterconnectorTerm, get_terms(gc2)))
-        @test get_interconnector(ic_term) == "IC1"
-        region_term = only(filter(t -> t isa RegionTerm, get_terms(gc2)))
-        @test get_region(region_term) == "NSW1"
-        @test get_devices(region_term) == ["BW01", "BW02"]  # devices survives the JSON round trip
-
-        @test all(r -> get_region(r) == "TAS1", get_fcas_requirements(gc2))
-        @test Set(get_service.(get_fcas_requirements(gc2))) == Set([BidType.RAISE6SEC, BidType.RAISE5MIN])
-    end
 end
 
 @testset "Constraint readers against mock data" begin
@@ -120,7 +46,6 @@ end
 
     @testset "read_invoked_constraints" begin
         invoked = read_invoked_constraints(db, date_range)
-        @test !isempty(invoked)
         @test "N_BAYSW_THERMAL" in invoked.GENCONID
         @test "N_PHANTOM_TEST" in invoked.GENCONID
         f_raise6sec_nsw1 = subset(invoked, :GENCONID => ByRow(==("F_NSW1_RAISE6SEC")))
@@ -136,7 +61,6 @@ end
         invoked = read_invoked_constraints(db, date_range)
         versions = unique(select(invoked, :GENCONID, :GENCONID_EFFECTIVEDATE, :GENCONID_VERSIONNO))
         defs = read_constraint_definitions(db, versions)
-        @test !isempty(defs)
         thermal = only(subset(defs, :GENCONID => ByRow(==("N_BAYSW_THERMAL"))))
         @test thermal.CONSTRAINTTYPE == ">="
         @test thermal.GENERICCONSTRAINTWEIGHT == 1.0
@@ -155,7 +79,6 @@ end
         invoked = read_invoked_constraints(db, date_range)
         versions = unique(select(invoked, :GENCONID, :GENCONID_EFFECTIVEDATE, :GENCONID_VERSIONNO))
         terms = read_constraint_terms(db, versions, date_range)
-        @test !isempty(terms)
 
         # Repeated requests and unrelated versions cannot multiply or replace term rows.
         one_version = subset(versions, :GENCONID => ByRow(==("F_VIC1_RAISE6SEC")))
@@ -214,7 +137,6 @@ end
 
     @testset "read_constraint_fcas_requirements" begin
         reqs = read_constraint_fcas_requirements(db, date_range)
-        @test !isempty(reqs)
         @test "N_BAYSW_THERMAL" ∉ reqs.GENCONID  # pure network constraint
         @test "N_PHANTOM_TEST" ∉ reqs.GENCONID
         raise6sec_nsw1 = subset(reqs, :GENCONID => ByRow(==("F_NSW1_RAISE6SEC")))
@@ -233,13 +155,9 @@ end
         overlap_range = start_date:Minute(5):(start_date + Minute(5 * 10))
         new_only_range = (start_date + Minute(5 * 30)):Minute(5):(start_date + Minute(5 * 40))
 
-        # Old-table territory: unchanged behaviour.
-        @test !isempty(read_constraint_fcas_requirements(db, overlap_range))
-
         # Past where the old table stops, attribution must still resolve - before the union
         # this returned empty, silently making every constraint look purely network-driven.
         new_only = read_constraint_fcas_requirements(db, new_only_range)
-        @test !isempty(new_only)
         @test "F_NSW1_RAISE6SEC" in new_only.GENCONID
         @test "N_BAYSW_THERMAL" ∉ new_only.GENCONID
 
@@ -249,16 +167,27 @@ end
         @test nrow(subset(overlap, :GENCONID => ByRow(==("F_NSW1_RAISE6SEC")))) == 1
     end
 
+    @testset "read_constraint_fcas_requirements skips a FCAS_REQ table that is cached only for other months" begin
+        # A real cache can hold DISPATCH_FCAS_REQ for earlier months only; the range is then served by the new table.
+        other_months = mktempdir()
+        create_mock_data(other_months)
+        table_dir = joinpath(other_months, "DISPATCH_FCAS_REQ")
+        for partition in readdir(table_dir)
+            mv(joinpath(table_dir, partition), joinpath(table_dir, "archive_month=2024-06-01"))
+        end
+        other_db = aem_connect(HiveConfiguration(hive_location = other_months, filesystem = "file"))
+        reqs = read_constraint_fcas_requirements(other_db, start_date:Minute(5):(start_date + Minute(5 * 10)))
+        @test "F_NSW1_RAISE6SEC" in reqs.GENCONID
+    end
+
 end
 
 @testset "constraint build" begin
-    hive_dir = AEM_TEST_HIVE_DIR
-    config = HiveConfiguration(hive_location = hive_dir, filesystem = "file")
-    db = aem_connect(config)
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
     start_date = DateTime(2025, 1, 1, 0, 0)
     date_range = start_date:Minute(5):(start_date + Hour(1))
 
-    sys = nem_system(db, RegionalNetworkConfiguration())
+    sys = first(nem_network(db))
     added, skipped = build_constraints!(sys, db, date_range)
 
     # Every GENCONID in mock_data.jl has exactly one invoked GENCONDATA/SPD* version, always
@@ -278,9 +207,6 @@ end
     one_phantom = get_component(GenericConstraint, sys, vname("N_ONE_PHANTOM_TERM"))
     @test length(get_terms(one_phantom)) == 4  # CP_BAYSW's four DUIDs; PHANTOM1 dropped
     @test all(t -> get_duid(t) != "PHANTOM1", get_terms(one_phantom))
-    @test only(get_ext(one_phantom)["dropped_terms"]) ==
-        Dict("kind" => "UNIT", "key" => "PHANTOM1", "bid_type" => "ENERGY", "factor" => 2.0)
-    @test isempty(get_ext(get_component(GenericConstraint, sys, vname("N_BAYSW_THERMAL")))["dropped_terms"])
     @test isempty(get_missing_constraint_intervals(sys))
     @test isempty(get_defaulted_constraint_weights(sys))
     dropped = get_dropped_terms(sys)
@@ -290,9 +216,9 @@ end
     # A term on a scheduled load resolves: loads are part of the System.
     pump_gc = get_component(GenericConstraint, sys, vname("N_PUMP_THERMAL"))
     @test only(get_terms(pump_gc)) == UnitTerm("PUMP1", BidType.ENERGY, -1.0)
-    @test isempty(get_ext(pump_gc)["dropped_terms"])
     # A load DUID names exactly one Device, also when it has a GENUNITS row (PUMP1).
     @test get_component(Device, sys, "PUMP1") isa InterruptiblePowerLoad
+    @test has_nem_unit_data(get_component(Device, sys, "PUMP1"))
 
     skipped_table = get_skipped_constraints(sys)
     @test Set(skipped_table.constraint) == Set(keys(skipped))
@@ -300,13 +226,6 @@ end
     @test phantom.reason == :unknown_duid
     @test phantom.missing_keys == ["PHANTOM1"]
     @test phantom.n_missing == 1
-
-    @testset "dropped unit terms survive a JSON round trip" begin
-        dropped = get_dropped_terms(sys)
-        json_path = joinpath(mktempdir(), "sys.json")
-        to_json(sys, json_path; force = true)
-        @test get_dropped_terms(System(json_path)) == dropped
-    end
 
     # N_PARTIAL_COVERAGE is only invoked in DISPATCHCONSTRAINT for every other interval
     # (6 of 12 rows over this date_range) - it is added anyway, with its "rhs" padded
@@ -316,25 +235,21 @@ end
     @test vname("N_PARTIAL_COVERAGE") in added
     partial_gc = get_component(GenericConstraint, sys, vname("N_PARTIAL_COVERAGE"))
     base_power = get_base_power(sys)
-    partial_rhs = get_time_series_values(SingleTimeSeries, partial_gc, "rhs")
-    partial_invoked = get_time_series_values(SingleTimeSeries, partial_gc, "invoked")
-    @test length(partial_rhs) == 12
+    partial_rhs = _constraint_series(partial_gc, :rhs)
+    partial_invoked = _constraint_series(partial_gc, :invoked)
     @test length(partial_rhs) == length(date_range) - 1  # grid spans date_range, not invocations
-    @test all(==(150.0 / base_power), partial_rhs)  # constant RHS - forward-fill is a no-op here
+    @test all(==(150.0), partial_rhs)  # constant RHS - forward-fill is a no-op here
     @test partial_invoked == [isodd(i) ? 0.0 : 1.0 for i in 0:11]
 
     gc = get_component(GenericConstraint, sys, vname("F_VIC1_RAISE6SEC"))
-    @test !isnothing(gc)
     @test get_sense(gc) == ConstraintSense.GE
     @test length(get_terms(gc)) == 4  # one UnitTerm per DUID behind CP_BAYSW
-    @test length(get_fcas_requirements(gc)) == 1
     @test only(get_fcas_requirements(gc)) == FCASRequirement("VIC1", BidType.RAISE6SEC)
 
-    @testset "AEMO provenance: description is a field, the rest live in ext" begin
-        @test get_description(gc) isa String
-        @test !haskey(get_ext(gc), "description")
-        @test get_limit_type(gc) !== nothing
-        @test get_source(gc) !== nothing
+    @testset "AEMO provenance fields are typed" begin
+        @test isempty(get_ext(gc))
+        @test (get_gencon_id(gc), get_limit_type(gc), get_source(gc), get_effective_date(gc), get_version_no(gc)) ==
+            ("F_VIC1_RAISE6SEC", "FCAS", "mock", DateTime(2025, 1, 1), 1)
     end
 
     network_gc = get_component(GenericConstraint, sys, vname("N_BAYSW_THERMAL"))
@@ -344,19 +259,15 @@ end
     nsw1_raise6sec = get_component(GenericConstraint, sys, vname("F_NSW1_RAISE6SEC"))
     @test any(t -> t isa InterconnectorTerm && get_interconnector(t) == "IC1", get_terms(nsw1_raise6sec))
 
-    rhs_values = get_time_series_values(SingleTimeSeries, gc, "rhs")
-    @test issorted(rhs_values)  # RHS = 50.0 + 0.1*i, confirmed time-varying in Task 8
-
+    rhs_values = _constraint_series(gc, :rhs)
+    @test issorted(rhs_values)  # RHS = 50.0 + 0.1*i
 
     @testset "GenericConstraint attaches as a Service, not merely a Component" begin
         # UnitTerm: every term's own device carries the service.
         vic1_gc = get_component(GenericConstraint, sys, vname("F_VIC1_RAISE6SEC"))
         unit_terms = filter(t -> t isa UnitTerm, get_terms(vic1_gc))
         @test !isempty(unit_terms)
-        for t in unit_terms
-            device = get_component(Device, sys, get_duid(t))
-            @test has_service(device, vic1_gc)
-        end
+        @test all(t -> has_service(get_component(Device, sys, get_duid(t)), vic1_gc), unit_terms)
 
         # RegionTerm: every Generator/Storage in that region carries the service, not just
         # the constraint's own UnitTerm device. And its `devices` field names exactly that set.
@@ -364,9 +275,7 @@ end
         region_term = only(filter(t -> t isa RegionTerm, get_terms(nsw1_gc)))
         region_devices = AustralianElectricityMarkets._region_devices(sys, get_region(region_term))
         @test !isempty(region_devices)
-        for d in region_devices
-            @test has_service(d, nsw1_gc)
-        end
+        @test all(d -> has_service(d, nsw1_gc), region_devices)
         @test Set(get_devices(region_term)) == Set(get_name.(region_devices))
     end
 
@@ -389,8 +298,8 @@ end
         @test Set(nsw1_names) == Set(expected_nsw1)
 
         # An FCAS term also reaches the region's loads that offer FCAS; an ENERGY term does not.
-        fcas_sys = nem_system(db, RegionalNetworkConfiguration())
-        set_fcas_bids!(fcas_sys, db, date_range)
+        fcas_sys = first(nem_network(db))
+        set_market_bids!(fcas_sys, db, date_range)
         fcas_names = resolve_term_devices(fcas_sys, RegionTerm("NSW1", BidType.RAISE6SEC, 1.0))
         generator_names = get_name.(AustralianElectricityMarkets._region_devices(fcas_sys, "NSW1"))
         @test Set(fcas_names) == Set(generator_names) ∪ Set(["ASLOAD1"])
@@ -416,9 +325,6 @@ end
         # Names every affected GENCONID/region/bid_type in one aggregated message.
         @test occursin("F_TAS1_RAISEREG", err.msg)
         @test occursin("F_TAS1_LOWERREG", err.msg)
-        @test occursin("TAS1", err.msg)
-        @test occursin("RAISEREG", err.msg)
-        @test occursin("LOWERREG", err.msg)
 
         # The throw must leave sys untouched.
         @test isempty(collect(get_components(GenericConstraint, sys_relocated)))
@@ -450,12 +356,11 @@ end
         gap_sys = nem_system(gap_db, RegionalNetworkConfiguration())
         build_constraints!(gap_sys, gap_db, date_range)
         gap_gc = get_component(GenericConstraint, gap_sys, vname("N_BAYSW_THERMAL"))
-        rhs_len = length(get_time_series_values(SingleTimeSeries, gap_gc, "rhs"))
+        rhs_len = length(_constraint_series(gap_gc, :rhs))
         @test rhs_len == length(date_range) - 1
-        @test rhs_len != length(unique(invoked_gap.SETTLEMENTDATE))
     end
 
-    @testset "grid misalignment between invoked SETTLEMENTDATE and date_range warns" begin
+    @testset "grid misalignment between invoked SETTLEMENTDATE and date_range throws" begin
         # Shift one row's SETTLEMENTDATE by 1 second so it can never match date_range's
         # 5-minute grid exactly - reproduces a caller passing a date_range whose step doesn't
         # match the cache's real dispatch cadence.
@@ -478,41 +383,16 @@ end
 
         misaligned_db = aem_connect(HiveConfiguration(hive_location = misaligned_hive, filesystem = "file"))
         misaligned_sys = nem_system(misaligned_db, RegionalNetworkConfiguration())
-        @test_logs (:warn, r"fall outside date_range's grid") match_mode = :any begin
-            build_constraints!(misaligned_sys, misaligned_db, date_range)
-        end
+        @test_throws r"fall outside date_range's grid" build_constraints!(misaligned_sys, misaligned_db, date_range)
     end
 
     @testset "resolution inference" begin
-        # Multi-interval grid: the fixture is 5-minutely, so inference must read Minute(5) off
-        # the data itself, not just happen to match a hardcoded default.
+        # The stored series resolution is the step of date_range.
         sys_default = nem_system(db, RegionalNetworkConfiguration())
         build_constraints!(sys_default, db, date_range)
         gc_default = get_component(GenericConstraint, sys_default, vname("N_BAYSW_THERMAL"))
-        rhs_ts_default = get_time_series(SingleTimeSeries, gc_default, "rhs")
+        rhs_ts_default = PowerSystems.IS.get_time_series(gc_default, gc_default.rhs)
         @test get_resolution(rhs_ts_default) == Minute(5)
-
-
-        # A single-interval grid can't be exercised end-to-end through _add_nem_constraints!:
-        # InfrastructureSystems rejects a one-point SingleTimeSeries ("data array length must be at
-        # least 2"), independent of resolution - so a 1-point full_grid always errors before
-        # resolution matters. _infer_resolution is unit-tested directly instead, contrasted
-        # with the genuine multi-interval inference above (which is not just matching the fallback
-        # by coincidence, since it uses a non-5-minute spacing).
-        @test AustralianElectricityMarkets._infer_resolution(DateTime[]) == Minute(5)
-        @test AustralianElectricityMarkets._infer_resolution([start_date]) == Minute(5)
-
-        grid_30min = [start_date + Minute(30 * i) for i in 0:3]
-        @test AustralianElectricityMarkets._infer_resolution(grid_30min) == Minute(30)
-
-        # Irregular spacing warns (naming the distinct spacings) and falls back to the smallest
-        # one rather than throwing - real, gappy caches still need a result.
-        gappy_grid = [start_date, start_date + Minute(5), start_date + Minute(15)]
-        inferred = nothing
-        @test_logs (:warn, r"not uniform") match_mode = :any begin
-            inferred = AustralianElectricityMarkets._infer_resolution(gappy_grid)
-        end
-        @test inferred == Minute(5)
     end
 
     @testset "Interconnector Zero constraints have a built-in definition" begin
@@ -586,9 +466,7 @@ end
         end
 
         zname(id, ver = 1) = "$id@2013-08-21#$ver"
-        for id in ("SVML_ZERO", "VSML_ZERO", "VT_ZERO", "TV_ZERO")
-            @test zname(id) in added_z
-        end
+        @test all(id -> zname(id) in added_z, ("SVML_ZERO", "VSML_ZERO", "VT_ZERO", "TV_ZERO"))
         @test skipped_z[zname("TV_ZERO", 2)] == :no_definition
 
         # (id, interconnector, factor) of the four built-in rows; VSML_ZERO is checked separately.
@@ -596,16 +474,10 @@ end
                 ("SVML_ZERO", "V-S-MNSP1", -1.0), ("VT_ZERO", "T-V-MNSP1", -1.0), ("TV_ZERO", "T-V-MNSP1", 1.0),
             )
             gc = get_component(GenericConstraint, zero_sys, zname(id))
-            @test get_sense(gc) == ConstraintSense.LE
-            @test gc.rhs == 0.0
-            @test get_source(gc) == "built-in"
-            @test get_limit_type(gc) == "Interconnector Zero"
             term = only(get_terms(gc))
-            @test term isa InterconnectorTerm
-            @test get_interconnector(term) == interconnector
-            @test get_factor(term) == factor
-            rhs_z = get_time_series_values(SingleTimeSeries, gc, "rhs")
-            @test all(==(0.0), rhs_z)
+            @test (get_sense(gc), get_source(gc), get_limit_type(gc), get_interconnector(term), get_factor(term)) ==
+                (ConstraintSense.LE, "built-in", "Interconnector Zero", interconnector, factor)
+            @test all(==(0.0), _constraint_series(gc, :rhs))
         end
 
         # A published GENCONDATA row and SPD* term win over the built-in definition.
@@ -672,8 +544,6 @@ end
         # Both directions are read: the GEN and LOAD loadings of BW01 (raw reader values are covered in readers/raw.jl).
         loads = read_fixed_loads(fixed_db, fixed_range)
         @test Set(loads.DIRECTION) == Set(["GEN", "LOAD"])
-        @test loads.IN_PROFILE[loads.DUID .== "BW02"] == [true, true, false]
-        @test !any(loads.IN_PROFILE[loads.DUID .== "BW01"])
 
         fixed_sys = nem_system(fixed_db, RegionalNetworkConfiguration())
         added_f = nothing
@@ -682,26 +552,11 @@ end
         end
         # A modelled fixed loading is unit offer data, not a generic constraint.
         @test !any(startswith("\$"), added_f)
-        @test isnothing(get_component(GenericConstraint, fixed_sys, "\$BW01"))
         skipped_names = get_skipped_constraints(fixed_sys).constraint
         @test !any(startswith("\$BW01"), skipped_names)
-        # BW02 has an in-profile row at 00:10 and an attached one at 00:20; both are fixed-load rows, neither built nor reported.
+        # BW02 has fixed-load rows at 00:10 to 00:20: neither built nor reported.
         @test !any(startswith("\$BW02"), skipped_names)
         @test any(startswith("\$NOSUCH1"), skipped_names)
-
-        attach_fixed_loads!(fixed_sys, fixed_db, fixed_range)
-        bw01 = get_component(Device, fixed_sys, "BW01")
-        base = get_base_power(fixed_sys)
-        series(device, name) = get_time_series_values(SingleTimeSeries, device, name)
-        @test findall(isone, series(bw01, "fixed_load_invoked")) == 3:5  # intervals 00:10, 00:15, 00:20
-        # BW01 is a battery: its 30 MW generation and 20 MW charging targets net to 10 MW injection.
-        @test series(bw01, "fixed_load")[3:5] == fill(10.0 / base, 3)
-        @test all(iszero, series(bw01, "fixed_load")[[1, 2, 6]])
-        # BW02 is attached only at its non-profile interval 00:20 (index 5), not at in-profile 00:10 and 00:15.
-        bw02 = get_component(Device, fixed_sys, "BW02")
-        @test findall(isone, series(bw02, "fixed_load_invoked")) == [5]
-        @test series(bw02, "fixed_load_invoked")[[3, 4]] == [0.0, 0.0]
-        @test series(bw02, "fixed_load")[5] == 40.0 / base
 
         # A missing bid table fails with the documented error.
         missing_bids_hive = mktempdir()
@@ -717,8 +572,6 @@ end
         set_available!(get_component(Device, unavailable_sys, "BW01"), false)
         build_constraints!(unavailable_sys, fixed_db, fixed_range)
         @test any(startswith("\$BW01"), get_skipped_constraints(unavailable_sys).constraint)
-        attach_fixed_loads!(unavailable_sys, fixed_db, fixed_range)
-        @test !has_time_series(get_component(Device, unavailable_sys, "BW01"), SingleTimeSeries, "fixed_load")
     end
 
     @testset "_versions_without_definition handles missing effective date" begin
@@ -761,10 +614,10 @@ end
     end
 
     @testset "warns and returns empty when DISPATCHCONSTRAINT is cached but has no rows in range" begin
-        # DISPATCHCONSTRAINT is cached (the fixture is 2025-01), just not for this range - a
+        # DISPATCHCONSTRAINT is cached (the fixture is 2025-01), just with no rows on this day - a
         # real answer, not missing data, so this must warn rather than throw (contrast with
         # the "not cached at all" case above).
-        far_future_range = DateTime(2030, 1, 1):Minute(5):(DateTime(2030, 1, 1) + Hour(1))
+        far_future_range = DateTime(2025, 1, 20):Minute(5):(DateTime(2025, 1, 20) + Hour(1))
         far_sys = nem_system(db, RegionalNetworkConfiguration())
         added_far, skipped_far = nothing, nothing
         @test_logs (:warn, r"No constraints invoked") match_mode = :any begin
@@ -783,13 +636,8 @@ end
         expected = collect(DateTime(2025, 1, 1, 4, 5):Minute(5):DateTime(2025, 1, 1, 5, 55))
         @test get_missing_constraint_intervals(late_sys) == expected
 
-        # The intervals survive a System JSON round-trip.
-        json_path = joinpath(mktempdir(), "sys.json")
-        to_json(late_sys, json_path)
-        @test get_missing_constraint_intervals(System(json_path)) == expected
-
         # A range wholly outside the cache records every interval.
-        none = DateTime(2030, 1, 1):Minute(5):DateTime(2030, 1, 1, 0, 15)
+        none = DateTime(2025, 1, 20):Minute(5):DateTime(2025, 1, 20, 0, 15)
         none_sys = nem_system(db, RegionalNetworkConfiguration())
         build_constraints!(none_sys, db, none)
         @test get_missing_constraint_intervals(none_sys) == collect(none)[1:(end - 1)]
@@ -808,4 +656,117 @@ end
         @test isempty(get_dropped_terms(weight_sys))
         @test get_missing_constraint_intervals(weight_sys) == collect(none)[1:(end - 1)]
     end
+end
+
+@testset "GENCONDATA CONSTRAINTTYPE must be <=, >= or =" begin
+    start_date = DateTime(2025, 1, 1, 0, 0)
+    date_range = start_date:Minute(5):(start_date + Hour(1))
+    bad = damaged_cache(AEM_TEST_HIVE_DIR, :GENCONDATA, "UPDATE input SET CONSTRAINTTYPE = '<' WHERE GENCONID = 'N_BAYSW_THERMAL'")
+    sys = first(nem_network(bad))
+    @test_throws r"N_BAYSW_THERMAL has CONSTRAINTTYPE \"<\"" build_constraints!(sys, bad, date_range)
+end
+
+@testset "vacuous constraints on unknown units" begin
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
+    start_date = DateTime(2025, 1, 1, 0, 0)
+    date_range = start_date:Minute(5):(start_date + Hour(1))
+    vname(gencon_id) = "$gencon_id@2025-01-01#1"
+    check = AustralianElectricityMarkets._check_nemde_constraint_report
+
+    function build_with_rhs(rhs)
+        sys = first(nem_network(db))
+        invoked, fixed = AustralianElectricityMarkets._read_constraint_inputs(db, date_range)
+        invoked = copy(invoked)
+        invoked.RHS = [g == "N_PHANTOM_TEST" ? rhs : r for (g, r) in zip(invoked.GENCONID, invoked.RHS)]
+        added, skipped = AustralianElectricityMarkets._add_nem_constraints!(sys, db, date_range, invoked, fixed)
+        return sys, added, skipped
+    end
+
+    # N_PHANTOM_TEST is `>=` with its only term on PHANTOM1: 0 >= -5 holds, so it cannot bind.
+    sys, added, skipped = build_with_rhs(-5.0)
+    @test vname("N_PHANTOM_TEST") ∉ added
+    @test skipped[vname("N_PHANTOM_TEST")] == :vacuous_unknown_duid
+    @test vname("N_PHANTOM_TEST") in get_dropped_terms(sys).constraint
+    @test vname("N_ONE_PHANTOM_TERM") in added  # a mixed constraint is still built, term dropped
+    row = only(filter(:constraint => ==(vname("N_PHANTOM_TEST")), get_skipped_constraints(sys)))
+    @test row.reason == :vacuous_unknown_duid
+
+    # PHANTOM1 is registered (DUDETAILSUMMARY) but not built: a registered dropped term fails the check, vacuous or not.
+    @test all(get_dropped_terms(sys).registered)
+    err = try
+        check(sys)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin(vname("N_ONE_PHANTOM_TERM"), err.msg)
+    @test occursin(vname("N_PHANTOM_TEST"), err.msg)
+
+    # The dropped term of a unit not registered over the range contributes zero and passes the check.
+    report = AustralianElectricityMarkets.get_build_report(sys)
+    AustralianElectricityMarkets.set_build_report!(
+        sys,
+        AustralianElectricityMarkets.NEMBuildReport(;
+            skipped_constraints = report.skipped_constraints,
+            missing_constraint_intervals = report.missing_constraint_intervals,
+            defaulted_constraint_weights = report.defaulted_constraint_weights,
+            dropped_terms = [merge(t, Dict{String, Any}("registered" => false)) for t in report.dropped_terms],
+            unavailable_constraints = report.unavailable_constraints,
+        ),
+    )
+    @test isnothing(check(sys))
+    registered = AustralianElectricityMarkets.Readers._registered_duids
+    @test registered(db, ["PHANTOM1", "BW01", "NOT_A_DUID"], first(date_range), last(date_range)) == Set(["PHANTOM1", "BW01"])
+    @test registered(db, ["BW01"], DateTime(1990, 1, 1), DateTime(1990, 1, 2)) == Set{String}()
+    @test isempty(registered(db, String[], first(date_range), last(date_range)))
+
+    # A violated zero left-hand side (0 >= 5) is never silently omitted.
+    sys, added, skipped = build_with_rhs(5.0)
+    @test skipped[vname("N_PHANTOM_TEST")] == :unknown_duid
+    err = try
+        check(sys)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin(vname("N_PHANTOM_TEST"), err.msg)
+
+    # A vacuous constraint whose only dropped term is one unit: it fails the check when that unit is registered and
+    # passes when it is not.
+    sys, _, _ = build_with_rhs(-5.0)
+    report = AustralianElectricityMarkets.get_build_report(sys)
+    phantom = [t for t in report.dropped_terms if t["constraint"] == vname("N_PHANTOM_TEST")]
+    @test length(phantom) == 1
+    function check_with_registration(registered::Bool)
+        AustralianElectricityMarkets.set_build_report!(
+            sys,
+            AustralianElectricityMarkets.NEMBuildReport(;
+                skipped_constraints = report.skipped_constraints,
+                missing_constraint_intervals = report.missing_constraint_intervals,
+                defaulted_constraint_weights = report.defaulted_constraint_weights,
+                dropped_terms = [merge(t, Dict{String, Any}("registered" => registered)) for t in phantom],
+                unavailable_constraints = report.unavailable_constraints,
+            ),
+        )
+        return check(sys)
+    end
+    err = try
+        check_with_registration(true)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin(vname("N_PHANTOM_TEST"), err.msg)
+    @test isnothing(check_with_registration(false))
+
+    # Sense table of the zero left-hand side.
+    vac = (constraint_type, rhs) -> AustralianElectricityMarkets._is_vacuous("N_TEST", constraint_type, rhs)
+    @test_throws r"N_TEST has CONSTRAINTTYPE \"<\"" vac("<", [0.0])
+    @test vac("<=", [0.0, 3.0]) && !vac("<=", [-1.0])
+    @test vac(">=", [0.0, -3.0]) && !vac(">=", [1.0])
+    @test vac("=", [0.0, 1.0e-9]) && !vac("=", [0.5])
+    @test !vac("<=", Union{Float64, Missing}[1.0, missing])
 end

@@ -1,7 +1,11 @@
 """
-    AEMDB(db::DuckDB, config::HiveConfiguration)
+    AEMDB(; db, config = HiveConfiguration())
 
-    Thin wrapper with the connection and a configuration for the data location
+Thin wrapper pairing a DuckDB connection with the configuration of the data location.
+
+# Fields
+- `db::DuckDB.DB`: The DuckDB connection.
+- `config::HiveConfiguration`: Where the Hive-partitioned cache lives.
 """
 @kwdef struct AEMDB
     db::DuckDB.DB

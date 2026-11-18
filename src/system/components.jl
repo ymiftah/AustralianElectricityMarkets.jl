@@ -249,10 +249,13 @@ function get_generators_dataframe(bus_df, units)
     bus = select(bus_df, :bus_id, :name)
     units = _map_unit_technology(units)
     # Scheduled loads (some have a GENUNITS row) are built by `get_scheduled_loads_dataframe`.
-    "DISPATCHTYPE" in names(units) && subset!(units, :DISPATCHTYPE => ByRow(!isequal("LOAD")))
+    subset!(units, :DISPATCHTYPE => ByRow(!isequal("LOAD")))
+    # A battery registered as separate generator and load units: its generator half has no storage data.
+    units.legacy_battery = isequal.(units.TECHNOLOGY, Ref(PrimeMovers.BA)) .& isequal.(units.DISPATCHTYPE, "GENERATOR")
 
     return @chain units begin
         select!(
+            :legacy_battery,
             :REGIONID => ByRow(x -> x * GEN_SUFFIX) => :bus_name,
             :REGIONID => :region,
             :DUID => :name,
@@ -360,8 +363,7 @@ end
 Generates a DataFrame of loads (`DISPATCHTYPE = LOAD` units, scheduled pumps and the
 non-scheduled ancillary-service and demand-response loads alike), each on its region's generator
 bus. A non-scheduled load starts unavailable: it carries no energy bid, and
-[`set_fcas_bids!`](@ref) makes it available only when it offers FCAS. Empty when `units` has no
-`DISPATCHTYPE` column.
+[`set_market_bids!`](@ref) makes it available only when it offers FCAS.
 
 # Arguments
 - `bus_df`: A `DataFrame` of bus data, as returned by `get_bus_dataframe`.
@@ -373,9 +375,6 @@ A `DataFrame` with `name`, `bus_id`, `region`, `base_power`, `max_active_power` 
 """
 function get_scheduled_loads_dataframe(bus_df, units)
     bus = select(bus_df, :bus_id, :name)
-    columns = (:DISPATCHTYPE, :SCHEDULE_TYPE, :REGISTEREDCAPACITY, :MAXCAPACITY)
-    all(c -> c in propertynames(units), columns) ||
-        return DataFrame(name = String[], bus_id = Int[], region = String[], base_power = Float64[], max_active_power = Float64[], available = Bool[], scheduled = Bool[], commissioned = Bool[])
     loads = @chain units begin
         subset(
             :DISPATCHTYPE => ByRow(isequal("LOAD")), :SCHEDULE_TYPE => ByRow(in(("SCHEDULED", "NON-SCHEDULED"))),
@@ -427,9 +426,6 @@ function get_interfaces_dataframe(interconnectors)
         :REGIONTO => :to_area,
         :MAXMWIN => :max_flow_from,
         :MAXMWOUT => :max_flow_to,
-        :FROMREGIONLOSSSHARE => :from_region_loss_factor,
-        :LOSSCONSTANT => :loss_constant,
-        :LOSSFLOWCOEFFICIENT => :loss_flow_coefficient,
         :ICTYPE => :ic_type,
         # Make SNOWY interfaces unavailable by default, review status of this interconnector
         [:REGIONFROM, :REGIONTO] => ByRow((from_, to_) -> (from_ != "SNOWY1") && (to_ != "SNOWY1")) => :available
@@ -557,19 +553,23 @@ end
 
 
 """
-    _add_generation!(sys, gen_df)
+    _add_generation!(sys, gen_df; legacy_batteries = false)
 
-Adds the renewable, hydro and thermal generators of `gen_df` to `sys` with zero operation costs.
-`_set_isp_generation_costs!` replaces those costs with the ISP operating costs.
+Adds the renewable, hydro and thermal generators of `gen_df` to `sys` with zero operation costs,
+each with its station attached as a [`NEMStation`](@ref). `_set_isp_generation_costs!` replaces
+those costs with the ISP operating costs.
 
 # Arguments
 - `sys`: The `PowerSystems.System` object.
 - `gen_df`: A `DataFrame` of generator data.
+- `legacy_batteries`: also add the generator unit of each battery registered as separate generator
+  and load units, as a `ThermalStandard` with the battery prime mover.
 
 # Returns
 `sys`.
 """
-function _add_generation!(sys, gen_df)
+function _add_generation!(sys, gen_df; legacy_batteries::Bool = false)
+    stations = Dict{String, NEMStation}()
     renewable = subset(
         gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:RenewableDispatch]))
     )
@@ -586,14 +586,10 @@ function _add_generation!(sys, gen_df)
             power_factor = 1.0,
             operation_cost = RenewableGenerationCost(nothing),
             base_power = row[:base_power], # MVA
-            ext = Dict(
-                "postcode" => row[:postcode],
-                "station_name" => row[:station_name],
-                "station_id" => row[:station_id],
-            ),
         ) for row in eachrow(renewable)
     )
     add_components!(sys, renewable_components)
+    _attach_stations!(sys, renewable, stations)
 
     hydro = subset(
         gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:HydroDispatch]))
@@ -619,17 +615,15 @@ function _add_generation!(sys, gen_df)
             time_limits = nothing,
             operation_cost = HydroGenerationCost(nothing),
             base_power = row[:base_power],
-            ext = Dict(
-                "postcode" => row[:postcode],
-                "station_name" => row[:station_name],
-                "station_id" => row[:station_id],
-            ),
         ) for row in eachrow(hydro)
     )
     add_components!(sys, hydro_components)
+    _attach_stations!(sys, hydro, stations)
 
     thermal = subset(
-        gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:ThermalStandard]))
+        gen_df,
+        [:technology, :legacy_battery] =>
+            ByRow((t, b) -> t in MATCH_TYPE_TO_PRIMEMOVER[:ThermalStandard] || (legacy_batteries && b)),
     )
     thermal_components = (
         ThermalStandard(;
@@ -655,16 +649,40 @@ function _add_generation!(sys, gen_df)
             must_run = false,
             prime_mover_type = row[:technology],
             fuel = row[:fuel_type],
-            ext = Dict(
-                "postcode" => row[:postcode],
-                "station_name" => row[:station_name],
-                "station_id" => row[:station_id],
-            ),
         ) for row in eachrow(thermal)
     )
     add_components!(sys, thermal_components)
+    _attach_stations!(sys, thermal, stations)
 
     return sys
+end
+
+
+"""
+    _attach_stations!(sys, devices, stations)
+
+Attaches to each device of `devices` its station as one [`NEMStation`](@ref), sharing a single
+instance among the devices of one station. `devices` is a generators data frame, whose rows carry
+their unit's `station_id`, `station_name` and `postcode`; `stations` accumulates the instances
+attached so far, so callers add one station's devices in any number of groups.
+
+# Arguments
+- `sys`: The `PowerSystems.System` holding the devices.
+- `devices`: A generators `DataFrame` with `name`, `station_id`, `station_name` and `postcode` columns.
+- `stations`: A `Dict` from station id to the [`NEMStation`](@ref) already created, updated in place.
+
+# Returns
+Nothing.
+"""
+function _attach_stations!(sys, devices, stations)
+    for row in eachrow(devices)
+        station_id = String(row[:station_id])
+        station = get!(stations, station_id) do
+            NEMStation(; station_id, station_name = row[:station_name], postcode = row[:postcode])
+        end
+        add_supplemental_attribute!(sys, get_component(Device, sys, row[:name]), station)
+    end
+    return
 end
 
 
@@ -789,23 +807,24 @@ end
 
 
 """
-    _add_scheduled_loads!(sys, scheduled_loads_df)
+    _add_scheduled_loads!(sys, scheduled_loads_df; nemde = false)
 
-Adds each load as an `InterruptiblePowerLoad` with a zero `LoadCost`;
-[`set_market_bids!`](@ref) replaces a scheduled load's with a decremental `MarketBidCost`, or marks
-it unavailable when it has no bid. A non-scheduled load (`scheduled = false`) is tagged
-`ext["non_scheduled"] = true` (and `ext["commissioned"]`) and starts unavailable; it keeps the zero
-cost, and the dispatch limits ([`nem_system`](@ref)) fix its energy at zero. Despite the name, this builds
-every `DISPATCHTYPE = LOAD` unit of the data frame.
+Adds each load as an `InterruptiblePowerLoad` with a zero `LoadCost`; [`set_market_bids!`](@ref) gives
+a scheduled load its decremental offer, or marks it unavailable when it has no bid. A non-scheduled load
+(`scheduled = false`) starts unavailable; it keeps the zero cost, and the dispatch limits
+([`nem_system`](@ref)) fix its energy at zero. A regional build records `non_scheduled` and
+`commissioned` on the load's `ext`; a NEMDE build records them on its [`NEMRegistration`](@ref).
+Despite the name, this builds every `DISPATCHTYPE = LOAD` unit of the data frame.
 
 # Arguments
 - `sys`: The `PowerSystems.System` object.
 - `scheduled_loads_df`: A `DataFrame` as returned by `get_scheduled_loads_dataframe`.
+- `nemde`: Record the non-scheduled flags on the registration instead of `ext`.
 
 # Returns
 The result of `add_components!`.
 """
-function _add_scheduled_loads!(sys, scheduled_loads_df)
+function _add_scheduled_loads!(sys, scheduled_loads_df; nemde::Bool = false)
     loads = (
         InterruptiblePowerLoad(;
             name = row[:name],
@@ -817,8 +836,10 @@ function _add_scheduled_loads!(sys, scheduled_loads_df)
             max_reactive_power = 0.0,
             base_power = row[:base_power],
             operation_cost = LoadCost(; variable = CostCurve(LinearCurve(0.0)), fixed = 0.0),
-            ext = row[:scheduled] ? Dict{String, Any}() :
-                Dict{String, Any}("non_scheduled" => true, "commissioned" => row[:commissioned]),
+            # A run build records both flags on the load's registration instead.
+            ext = (!nemde && !row[:scheduled]) ?
+                Dict{String, Any}("non_scheduled" => true, "commissioned" => row[:commissioned]) :
+                Dict{String, Any}(),
         ) for row in eachrow(scheduled_loads_df)
     )
     return add_components!(sys, loads)
@@ -826,17 +847,6 @@ end
 
 
 function _add_area_interfaces!(sys, interconnectors)
-    interface_services = (
-        TransmissionInterface(
-            name = row[:name],
-            available = row[:available],
-            active_power_flow_limits = (; min = 0.0, max = max(row[:max_flow_from], row[:max_flow_to]) / BASE_POWER),
-            violation_penalty = 1.0e5,
-            direction_mapping = Dict(row[:name] => 1),
-        ) for row in eachrow(interconnectors)
-    )
-    add_components!(sys, interface_services)
-
     area_interchanges = (
         AreaInterchange(;
             name = row[:name],
@@ -845,14 +855,18 @@ function _add_area_interfaces!(sys, interconnectors)
             from_area = get_component(Area, sys, row[:from_area]),
             to_area = get_component(Area, sys, row[:to_area]),
             flow_limits = (row[:max_flow_from] / BASE_POWER, row[:max_flow_to] / BASE_POWER),
-            # services=[get_component(TransmissionInterface, sys, row[:name])],
-            ext = Dict(
-                "from_region_loss_factor" => row[:from_region_loss_factor],
-                "loss_constant" => row[:loss_constant],
-                "loss_flow_coefficient" => row[:loss_flow_coefficient],
-                "ic_type" => row[:ic_type],
-            )
         ) for row in eachrow(interconnectors)
     )
-    return add_components!(sys, area_interchanges)
+    add_components!(sys, area_interchanges)
+    for row in eachrow(interconnectors)
+        kind = get(_INTERCONNECTOR_KINDS, row[:ic_type], nothing)
+        isnothing(kind) && throw(ArgumentError("interconnector $(row[:name]) has no valid ICTYPE ($(repr(row[:ic_type])))"))
+        add_supplemental_attribute!(
+            sys, get_component(AreaInterchange, sys, row[:name]),
+            NEMInterconnectorRegistration(; kind),
+        )
+    end
+    return
 end
+
+const _INTERCONNECTOR_KINDS = Dict("REGULATED" => InterconnectorKind.REGULATED, "MNSP" => InterconnectorKind.MNSP)

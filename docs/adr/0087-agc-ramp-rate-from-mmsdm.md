@@ -1,81 +1,22 @@
-# 0087. The AGC ramp rate is derived from published regulation availability
+# 0087 The AGC ramp rate is derived from published regulation availability
 
 ## Status
 
-Accepted.
+Accepted. Amends the ramp input of [0017](0017-fcas-market-formulation.md) and [0018](0018-fcas-trapezium-scaling.md).
 
-## Context
+## What
 
-AEMO *FCAS Model in NEMDE* §4.2 and §6.1 scale a regulation trapezium and bound joint ramping with the
-unit's telemetered AGC ramp rate. NEMDE case files carry it as `SCADARampUpRate`/`SCADARampDnRate`. No
-such column was found in the MMSDM data model reference, so it is not in NEMWEB. NEMDE XML is used for
-validation only.
+- AEMO *FCAS Model in NEMDE* §4.2 (trapezium scaling) and §6.1 (joint ramping) use the unit's telemetered AGC ramp rate. NEMDE case files carry it as `SCADARampUpRate`/`SCADARampDnRate`; MMSDM has no such column, and NEMDE XML is for validation only.
+- `DISPATCHLOAD.RAMPUPRATE`/`RAMPDOWNRATE` is the lesser of the bid and telemetered rates, so using it would cap regulation at the bid rate, which NEMDE does not do.
+- The AGC ramp for each regulation side is the larger of the dispatch ramp rate and the side's effective regulation availability over the interval: `max(ramp, availability / interval_hours)` (`agc_ramp_rate`). The effective availability is `min(bid MAXAVAIL, DISPATCHLOAD.*REGAVAILABILITY)` (`effective_regulation_max_avail`). A `NaN` ramp stays `NaN`; a `NaN` availability leaves the ramp.
+- The result is its own series per regulation service, `fcas_series_name("fcas_agc_ramp_rate", service)`, written by `_set_agc_ramp_rates!` in `nem_system` and skipped when the unit has no availability for that side. It is distinct from the energy ramp series, which keep the lesser of bid and telemetry. For a `ControllableLoad` the raise side reads the lower availability and the ramp-up rate, and the lower side the raise availability and the ramp-down rate. Trapezium scaling and joint ramping both read this one series.
 
-`DISPATCHLOAD.RAMPUPRATE`/`RAMPDOWNRATE` is the lesser of the bid and telemetered rates. Filling the AGC
-ramp series from it therefore caps regulation at the bid rate, which NEMDE does not do.
+## Departure from AEMO and nempy
 
-Validation on 11 cached June 2026 case files:
+- The derived rate is a lower bound on the telemetered rate, so joint ramping can be tighter than NEMDE's. It is never below `RAMPUPRATE`; where `RAMPUPRATE` is 0 (for example STAN units bidding `ROCDOWN = 0`) the derived rate now applies scaling and a joint row where the old rate applied neither.
+- nempy takes the rate from the XML `SCADARampUpRate`/`SCADARampDnRate`; this run reads XML for validation only.
+- Known gap: availability 0 with a bid and a positive ramp keeps the ramp as the rate; the cause is unknown.
 
-- `RAMPUPRATE = min(bid, SCADA)` in 2458 of 2458 unit-intervals.
-- The published regulation availability equals `min(bid MAXAVAIL, SCADA/12)` (both sides' MAXAVAIL summed
-  for batteries) in 758 of 758 raise and 765 of 765 lower unit-intervals.
+## Why
 
-So `min(side MAXAVAIL, rate/12)` reproduces NEMDE's regulation cap, and the availability carries the
-telemetered rate.
-
-## Decision
-
-The AGC ramp series for each regulation side is the larger of the `DISPATCHLOAD` ramp rate and the
-side's regulation availability spread over the interval:
-
-    rate = max(RAMPUPRATE, RAISEREGAVAILABILITY / interval_hours)    # raise
-    rate = max(RAMPDOWNRATE, LOWERREGAVAILABILITY / interval_hours)  # lower
-
-A missing ramp rate stays missing. A missing availability falls back to the ramp rate. Trapezium scaling
-and joint ramping both read this one series.
-
-## Departure from AEMO
-
-The derived rate is a lower bound on the telemetered rate. Joint ramping can therefore be tighter than
-NEMDE's. Against the validation files, the derived raise rate is below the true rate in 27 of 417
-generator and 270 of 341 battery unit-intervals. It is never above the true rate, and never lower than `RAMPUPRATE`, so joint ramping is at least as
-loose as before wherever `RAMPUPRATE` is positive. Where `RAMPUPRATE` is 0, for example STAN-1 and
-STAN-2 bidding `ROCDOWN = 0` (110 rows in June and July 2026), the old rate meant no scaling and no
-joint row, while the derived rate now applies both. On the two such rows with case files the new cap
-is exact, and NEMDE's solution violates the new row in 0 of 110 rows. The regulation cap itself is
-exact.
-
-The departure from nempy is that nempy takes the ramp rate from the XML `SCADARampUpRate` and
-`SCADARampDnRate`. This replay reads XML for validation only, so the rate comes from the availability
-instead. This decision supersedes the `RAMPUPRATE` choice in ADR 0018 and the matching text in ADR 0017.
-
-## Evidence
-
-- The per-side cap is exact on 111 case files (about 21,000 side rows), with the largest difference
-  under 0.0005 MW.
-- The derived rate is below the true rate for lower in 30 of 417 generator and 277 of 348 battery
-  unit-intervals.
-- June and July 2026 dispatch: cleared regulation is above the derived cap in 0 of about 454,000 rows
-  (158 with the old rate). NEMDE's solution violating the joint row went from 861 to 725 for raise and
-  from 566 to 167 for lower, none of them on batteries.
-
-## Known gap
-
-Availability 0 with a bid and a positive ramp (32 raise and 33 lower rows on STAN and TARONG units,
-June and July 2026) keeps the ramp as the rate, unchanged from before. The cause is unknown.
-
-## Replays
-
-At 2026-01-22 06:25 and 2026-02-17 22:40 the Tasmanian regulation shortfalls are gone. The day FCAS
-price maximum error on 2026-01-22 fell from 202,981 to 2.4 $/MWh.
-
-## Alternatives
-
-Keeping `RAMPUPRATE` caps regulation at the bid rate, which NEMDE does not do. Reading the SCADA rate
-would need a source that MMSDM does not publish.
-
-## Consequences
-
-- The `"fcas_agc_ramp_rate_*"` series no longer equals `DISPATCHLOAD.RAMPUPRATE`/`RAMPDOWNRATE`.
-- Energy ramp limits in `dispatch_limits.jl` still read `RAMPUPRATE`/`RAMPDOWNRATE` unchanged.
-- Joint ramping may bind where NEMDE does not, by the gap described above.
+- Published regulation availability equals `min(bid MAXAVAIL, SCADA rate / 12)`: on case files it matched in 758 of 758 raise and 765 of 765 lower unit-intervals, and `RAMPUPRATE = min(bid, SCADA)` in 2458 of 2458. So the availability carries the telemetered rate and the per-side regulation cap is exact.

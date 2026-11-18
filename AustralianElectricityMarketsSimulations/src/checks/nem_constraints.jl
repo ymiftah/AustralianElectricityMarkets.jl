@@ -1,17 +1,7 @@
-# Pre-flight buildability check for `GenericConstraint`s against a `PSI.ProblemTemplate`.
-
-const _UNBUILDABLE_REASONS = (:unmodeled_fcas_service, :missing_component, :unmodeled_device_type)
-
+# Buildability of `GenericConstraint`s against a `PSI.ProblemTemplate`, and the skipped-constraints report.
 
 # Term failures, each a reason and, for `:unmodeled_device_type`, the device type.
 const _TermFailures = Vector{Tuple{Symbol, Union{Nothing, DataType}}}
-
-
-const _REASON_LABELS = Dict(
-    :unmodeled_fcas_service => "FCAS term whose service has contributing devices but no FCASMarket model in the template",
-    :missing_component => "missing component (named device not found in the System)",
-    :unmodeled_device_type => "unmodeled device type (template does not model these device types)",
-)
 
 
 function _modeled_device_types(template::PSI.ProblemTemplate)
@@ -20,43 +10,36 @@ function _modeled_device_types(template::PSI.ProblemTemplate)
 end
 
 
-# Names of the FCASServices the template models under FCASMarket.
-function _modeled_fcas_services(template::PSI.ProblemTemplate)
-    return Set(
-        name for ((name, _), model) in PSI.get_service_models(template)
-            if PSI.get_component_type(model) == FCASService && PSI.get_formulation(model) == FCASMarket
-    )
+# Names of the available FCASServices the template models under FCASMarket: a named model's service,
+# and every available service of a type-level model, which PSI expands over the available services.
+function _modeled_fcas_services(template::PSI.ProblemTemplate, sys::PSY.System)
+    names = Set{String}()
+    for ((name, _), model) in PSI.get_service_models(template)
+        PSI.get_component_type(model) == FCASService && PSI.get_formulation(model) == FCASMarket || continue
+        if isempty(name)
+            union!(names, PSY.get_name(svc) for svc in PSY.get_components(PSY.get_available, FCASService, sys))
+        else
+            push!(names, name)
+        end
+    end
+    return names
 end
 
 
 # An FCAS term needs its device's service modelled; an absent, unavailable or deviceless service
 # contributes zero at build, so it is not a failure.
 function _fcas_failures(
-        sys::PSY.System, device::PSY.Device, bid_type::BidType, fcas_modeled::Set{String},
-        modeled_types::Vector{DataType},
+        sys::Union{PSY.System, _ConstraintComponentLookup}, device::PSY.Device, bid_type::BidType, fcas_modeled::Set{String}, modeled_types::Vector{DataType},
     )
     name = fcas_service_name(device, bid_type)
-    svc = bid_type == BidType.ENERGY ? nothing : PSY.get_component(FCASService, sys, name)
-    (isnothing(svc) || !PSY.get_available(svc) || name in fcas_modeled) &&
-        return _TermFailures()
-    devices = filter(PSY.get_available, PSY.get_contributing_devices(sys, svc))
+    svc = bid_type == BidType.ENERGY ? nothing : _constraint_component(FCASService, sys, name)
+    (isnothing(svc) || !PSY.get_available(svc) || name in fcas_modeled) && return _TermFailures()
+    devices = filter(PSY.get_available, PSY.get_contributing_devices(_constraint_system(sys), svc))
     isempty(devices) && return _TermFailures()
     if !any(d -> _type_modeled(d, modeled_types), devices)
         return _TermFailures([(:unmodeled_device_type, typeof(d)) for d in devices])
     end
     return _TermFailures([(:unmodeled_fcas_service, nothing)])
-end
-
-
-# Devices attached to each service, by service UUID, in one pass over the devices.
-function _service_device_index(sys::PSY.System)
-    index = Dict{Base.UUID, Vector{PSY.Device}}()
-    for device in PSY.get_components(PSY.supports_services, PSY.Device, sys)
-        for service in PSY.get_services(device)
-            push!(get!(index, IS.get_uuid(service), PSY.Device[]), device)
-        end
-    end
-    return index
 end
 
 
@@ -71,9 +54,9 @@ end
 
 
 function _term_failures(
-        sys::PSY.System, term::UnitTerm, modeled_types::Vector{DataType}, ::Bool, fcas_modeled::Set{String},
+        sys::Union{PSY.System, _ConstraintComponentLookup}, term::UnitTerm, modeled_types::Vector{DataType}, ::Bool, fcas_modeled::Set{String},
     )
-    device = PSY.get_component(PSY.Device, sys, get_duid(term))
+    device = _constraint_component(PSY.Device, sys, get_duid(term))
     isnothing(device) &&
         return _TermFailures([(:missing_component, nothing)])
     _type_modeled(device, modeled_types) ||
@@ -83,11 +66,11 @@ end
 
 
 function _term_failures(
-        sys::PSY.System, term::RegionTerm, modeled_types::Vector{DataType}, ::Bool, fcas_modeled::Set{String},
+        sys::Union{PSY.System, _ConstraintComponentLookup}, term::RegionTerm, modeled_types::Vector{DataType}, ::Bool, fcas_modeled::Set{String},
     )
     failures = _TermFailures()
     for dname in get_devices(term)
-        device = PSY.get_component(PSY.Device, sys, dname)
+        device = _constraint_component(PSY.Device, sys, dname)
         if isnothing(device)
             push!(failures, (:missing_component, nothing))
         elseif !_type_modeled(device, modeled_types)
@@ -101,10 +84,9 @@ end
 
 
 function _term_failures(
-        sys::PSY.System, term::InterconnectorTerm, ::Vector{DataType}, interconnector_modeled::Bool,
-        ::Set{String},
+        sys::Union{PSY.System, _ConstraintComponentLookup}, term::InterconnectorTerm, ::Vector{DataType}, interconnector_modeled::Bool, ::Set{String},
     )
-    device = PSY.get_component(PSY.AreaInterchange, sys, get_interconnector(term))
+    device = _constraint_component(PSY.AreaInterchange, sys, get_interconnector(term))
     isnothing(device) &&
         return _TermFailures([(:missing_component, nothing)])
     interconnector_modeled && return _TermFailures()
@@ -121,7 +103,7 @@ in `tolerated_reasons`, or, for `:unmodeled_device_type`, when its device type i
 of `tolerated_types`. Returns `nothing` when every term is buildable.
 """
 function _constraint_diagnosis(
-        sys::PSY.System, gc::GenericConstraint, modeled_types::Vector{DataType},
+        sys::Union{PSY.System, _ConstraintComponentLookup}, gc::GenericConstraint, modeled_types::Vector{DataType},
         interconnector_modeled::Bool, fcas_modeled::Set{String};
         tolerated_reasons = Set{Symbol}(), tolerated_types = DataType[],
     )
@@ -139,95 +121,130 @@ function _constraint_diagnosis(
 end
 
 
-"A `name => types` line for the aggregated message/warning, capped to the first 20 per reason."
-function _reason_block(reason::Symbol, entries::Vector{Tuple{String, Vector{DataType}}})
-    lines = ["  $(_REASON_LABELS[reason]) ($(length(entries))):"]
-    for (name, types) in first(entries, 20)
-        suffix = isempty(types) ? "" : " ($(join(string.(types), ", ")))"
-        push!(lines, "    - $name$suffix")
+# Unbuildable reasons that a template without an FCAS service model causes.
+function _left_out_reasons(template::PSI.ProblemTemplate)
+    _has_service_model(template, FCASService) && return Set{Symbol}()
+    return Set([:unmodeled_fcas_service])
+end
+
+
+# Device types whose terms a template without their device model leaves unmodeled.
+function _left_out_types(template::PSI.ProblemTemplate)
+    _has_device_model(template, PSY.AreaInterchange) && return DataType[]
+    return DataType[PSY.AreaInterchange]
+end
+
+
+# The scope of the template's `GenericConstraint` service model (`"constraint_scope"`), `:all` without one.
+function _constraint_scope(template::PSI.ProblemTemplate)
+    for model in values(PSI.get_service_models(template))
+        PSI.get_component_type(model) == GenericConstraint || continue
+        return something(PSI.get_attribute(model, "constraint_scope"), :all)
     end
-    length(entries) > 20 && push!(lines, "    … and $(length(entries) - 20) more")
-    return join(lines, "\n")
+    return :all
 end
 
 
-function _aggregated_message(grouped::Dict{Symbol, Vector{Tuple{String, Vector{DataType}}}})
-    n_total = sum(length(v) for v in values(grouped))
-    blocks = [_reason_block(r, grouped[r]) for r in _UNBUILDABLE_REASONS if haskey(grouped, r)]
-    return "template cannot build $n_total GenericConstraint(s):\n" * join(blocks, "\n") *
-        "\nPass allow_partial_coverage = true to proceed with the buildable subset."
+# The constraints the template's `"excluded_constraints"` attribute names, with their reasons. The
+# attribute is on the aggregated model and on each per-name model PSI expands it into.
+function _excluded_constraints(template::PSI.ProblemTemplate)
+    excluded = Dict{String, Symbol}()
+    for model in values(PSI.get_service_models(template))
+        PSI.get_component_type(model) == GenericConstraint || continue
+        merge!(excluded, something(PSI.get_attribute(model, "excluded_constraints"), Dict{String, Symbol}()))
+    end
+    return excluded
 end
 
 
-"""
-    _filter_buildable_generic_constraints(sys, template, constraints; allow_partial_coverage = false, skipped = nothing) -> Vector{GenericConstraint}
+const _ConstraintRow = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}
 
-The `constraints` (the [`GenericConstraint`](@ref)s of `sys`, or a subset) that `template` can
-build under [`LinearFactorLimit`](@ref). A constraint is unbuildable when the service of one of its FCAS terms
-([`fcas_service_name`](@ref)) has available devices but no [`FCASMarket`](@ref) model in
-`template`, a term's named component is missing from `sys`, or a device's type is not modelled by
-any `DeviceModel` or branch model in `template` (an `InterconnectorTerm` needs `PSY.AreaInterchange`
-modelled as a branch). Unavailable constraints are skipped, and a constraint whose contributing
-devices are all unavailable is left out without being a failure.
 
-# Arguments
-- `sys`: system to read constraints and components from.
-- `template`: `PSI.ProblemTemplate` to check device and branch coverage against.
-- `constraints`: the `GenericConstraint`s to check.
-- `allow_partial_coverage`: when `false` (default), throws a single aggregated `ArgumentError`
-  naming every unbuildable constraint and its reason if any exist. When `true`, returns the
-  buildable subset and emits one summary `@warn` with counts by reason.
-- `skipped`: a vector to which one `(constraint, reason, n_missing)` named tuple is appended per
-  constraint left out: `reason = :no_available_device` when all its contributing devices are
-  unavailable, else the unbuildable reason with `n_missing` the number of failing terms or devices.
-  `nothing` records nothing.
-
-# Returns
-A `Vector{GenericConstraint}`, sorted by name.
-"""
-function _filter_buildable_generic_constraints(
-        sys::PSY.System, template::PSI.ProblemTemplate, constraints; allow_partial_coverage::Bool = false,
-        skipped::Union{Nothing, AbstractVector} = nothing, tolerated_reasons = Set{Symbol}(),
-        tolerated_types = DataType[], blocked::Union{Nothing, AbstractVector} = nothing,
+# One row per constraint of `constraints` that `template` cannot build, sorted by name, with whether
+# the failure is blocking: not left out by the template's own scope.
+function _diagnose_constraints(
+        sys::PSY.System, template::PSI.ProblemTemplate, constraints; lookup = _ConstraintComponentLookup(sys),
     )
     modeled_types = _modeled_device_types(template)
     interconnector_modeled = _interconnector_modeled(template)
-    fcas_modeled = _modeled_fcas_services(template)
+    fcas_modeled = _modeled_fcas_services(template, sys)
+    tolerated_reasons = _left_out_reasons(template)
+    tolerated_types = _left_out_types(template)
+    rows = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int, blocking::Bool}[]
+    for gc in sort(collect(constraints); by = PSY.get_name)
+        diagnosis = _constraint_diagnosis(
+            lookup, gc, modeled_types, interconnector_modeled, fcas_modeled; tolerated_reasons, tolerated_types,
+        )
+        isnothing(diagnosis) && continue
+        reason, _, n_failed, blocking = diagnosis
+        push!(rows, (constraint = PSY.get_name(gc), reason = reason, n_missing = n_failed, blocking = blocking))
+    end
+    return rows
+end
 
-    gcs = sort(collect(constraints); by = PSY.get_name)
-    contributing = _service_device_index(sys)
-    buildable = GenericConstraint[]
-    grouped = Dict{Symbol, Vector{Tuple{String, Vector{DataType}}}}()
-    skipped_rows = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
-    for gc in gcs
-        PSY.get_available(gc) || continue
-        # PSI cannot build a service whose contributing devices are all unavailable; such a
-        # constraint has no variable to bind, so it is left out rather than reported as a failure.
-        devices = get(contributing, IS.get_uuid(gc), PSY.Device[])
-        if !isempty(devices) && !any(PSY.get_available, devices)
-            isnothing(skipped) || push!(skipped, (constraint = PSY.get_name(gc), reason = :no_available_device, n_missing = 0))
-            continue
-        end
-        diagnosis = _constraint_diagnosis(sys, gc, modeled_types, interconnector_modeled, fcas_modeled; tolerated_reasons, tolerated_types)
-        if isnothing(diagnosis)
-            push!(buildable, gc)
+
+# The rows of the available constraints the template leaves out: those it excludes by name (`n_missing = 0`)
+# and those it cannot build, sorted by name. Constraints outside the template's constraint scope have no row.
+# Empty without a `GenericConstraint` service model. `lookup` is the build's shared component lookup, made here when not given.
+function _template_fact_rows(sys::PSY.System, template::PSI.ProblemTemplate; lookup = nothing)
+    rows = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int, blocking::Bool}[]
+    _has_service_model(template, GenericConstraint) || return rows
+    excluded = _excluded_constraints(template)
+    scope = _constraint_scope(template)
+    candidates = GenericConstraint[]
+    for gc in PSY.get_components(PSY.get_available, GenericConstraint, sys)
+        _in_constraint_scope(gc, scope) || continue
+        name = PSY.get_name(gc)
+        if haskey(excluded, name)
+            push!(rows, (constraint = name, reason = excluded[name], n_missing = 0, blocking = false))
         else
-            reason, types, n_failed, is_blocking = diagnosis
-            is_blocking && !isnothing(blocked) && push!(blocked, (constraint = PSY.get_name(gc), reason = reason))
-            push!(skipped_rows, (constraint = PSY.get_name(gc), reason = reason, n_missing = n_failed))
-            push!(get!(grouped, reason, Tuple{String, Vector{DataType}}[]), (PSY.get_name(gc), types))
+            push!(candidates, gc)
         end
     end
+    lookup = something(lookup, _ConstraintComponentLookup(sys))
+    append!(rows, _diagnose_constraints(sys, template, candidates; lookup))
+    sort!(rows; by = r -> r.constraint)
+    return rows
+end
 
-    isnothing(skipped) || append!(skipped, skipped_rows)
-    isempty(grouped) && return buildable
 
-    if allow_partial_coverage
-        counts = join(("$(length(v)) $(_REASON_LABELS[r])" for (r, v) in grouped), "; ")
-        n_total = sum(length(v) for v in values(grouped))
-        @warn "Skipping $n_total unbuildable GenericConstraint(s): $counts"
-        return buildable
-    end
+"""
+    _blocked_constraints(sys, template; facts = _template_fact_rows(sys, template)) -> Vector{@NamedTuple{constraint::String, reason::Symbol}}
 
-    throw(ArgumentError(_aggregated_message(grouped)))
+The available constraints of `sys` that `template` cannot build for a reason it does not tolerate: a missing
+component, an unmodeled device type other than the interchanger of a template without interchangers,
+or an FCAS service left unmodeled while the template models FCAS.
+"""
+function _blocked_constraints(sys::PSY.System, template::PSI.ProblemTemplate; facts = _template_fact_rows(sys, template))
+    return @NamedTuple{constraint::String, reason::Symbol}[(constraint = r.constraint, reason = r.reason) for r in facts if r.blocking]
+end
+
+
+"""
+    template_skipped_constraints(sys, template) -> DataFrame
+
+The `GenericConstraint`s of `sys` that a run of `template` leaves out, without changing `sys` or
+`template`. The rows are the constraints unavailable from the build ([`get_unavailable_constraints`](@ref), with
+`n_missing = 0`), the available constraints the template excludes by name, with `n_missing = 0`, and
+every other available constraint the template cannot build, with the number of failing terms.
+A template with no `GenericConstraint` service model reports the unavailable constraints only. Available
+constraints outside the template's constraint scope (with `constraints = :fcas_requirements`, those without
+FCAS requirements) are left out of the run by design, so they are neither reported nor diagnosed. Out-of-scope
+constraints that are unavailable still appear among the unavailable rows. It reads the
+caller's template or the expanded template of a built model alike.
+
+# Arguments
+- `sys`: the NEMDE system built by [`nem_system`](@ref AustralianElectricityMarkets.nem_system).
+- `template`: the `PSI.ProblemTemplate` the run builds, e.g. [`template_nemde`](@ref)().
+
+# Returns
+A `DataFrame` with columns `constraint`, `reason` and `n_missing`, sorted by constraint name.
+"""
+function template_skipped_constraints(sys::PSY.System, template::PSI.ProblemTemplate)
+    rows = _ConstraintRow[
+        (constraint = r.constraint, reason = r.reason, n_missing = 0) for r in eachrow(get_unavailable_constraints(sys))
+    ]
+    append!(rows, _ConstraintRow[(constraint = r.constraint, reason = r.reason, n_missing = r.n_missing) for r in _template_fact_rows(sys, template)])
+    sort!(rows; by = r -> r.constraint)
+    return DataFrame(rows)
 end

@@ -1,4 +1,4 @@
-# Validates a Market Price Cap override given as a PSI model attribute or setting.
+# Validates a Market Price Cap override given as a settings entry.
 function _checked_market_price_cap(rate)
     value = rate isa Real ? Float64(rate) : NaN
     isfinite(value) && value > 0.0 ||
@@ -34,25 +34,11 @@ function _add_mpc_penalty!(
     cap = isnothing(fixed_rate) ? _container_market_price_cap(container, PSI.get_initial_time(container)) : fixed_rate
     slack = PSI.get_variable(container, V(), T, meta)
     cost = PSI.get_base_power(container) * interval_cost_coefficient(cvp_factor, PSI.get_resolution(container)) * cap
+    invariant = _invariant_objective(container)
     for name in names, t in PSI.get_time_steps(container)
-        PSI.add_to_objective_invariant_expression!(container, cost * slack[name, t])
+        JuMP.add_to_expression!(invariant, cost, slack[name, t])
     end
     return
-end
-
-
-"""
-    _service_market_price_cap(service_model, container, t::DateTime) -> Float64
-
-The `"market_price_cap"` attribute of `service_model` when set, else
-[`_container_market_price_cap`](@ref)`(container, t)`.
-
-# Returns
-A `\$/MWh` value.
-"""
-function _service_market_price_cap(service_model::PSI.ServiceModel, container::PSI.OptimizationContainer, t::DateTime)
-    rate = get(PSI.get_attributes(service_model), "market_price_cap", nothing)
-    return isnothing(rate) ? _container_market_price_cap(container, t) : _checked_market_price_cap(rate)
 end
 
 
@@ -61,7 +47,7 @@ end
 
 The `"market_price_cap"` entry of the model's `PSI.get_ext(PSI.get_settings(model))`, or
 [`_financial_year_mpc`](@ref)`(t)` if unset. The cap of every penalty priced by
-[`_add_mpc_penalty!`](@ref), and the fallback of [`_service_market_price_cap`](@ref).
+[`_add_mpc_penalty!`](@ref).
 
 # Arguments
   - `container`: the `PSI.OptimizationContainer` being built.
@@ -80,7 +66,7 @@ end
     _resolved_market_price_cap(t::DateTime, market_price_cap = nothing) -> Float64
 
 The Market Price Cap of a build whose first interval is `t`: `market_price_cap` when given, else
-[`_financial_year_mpc`](@ref)`(t)`. A replay resolves its cap once through this function and gives the
+[`_financial_year_mpc`](@ref)`(t)`. A run resolves its cap once through this function and gives the
 same value to its network model and to its model settings.
 
 # Returns
@@ -102,13 +88,13 @@ end
 """
     _area_balance_network_model(sys::PSY.System, initial_time::DateTime; market_price_cap = nothing, duals = Vector{DataType}()) -> PSI.NetworkModel{PSI.AreaBalancePowerModel}
 
-The `AreaBalancePowerModel` network model of a replay, with slacks priced at `slack_cost` per
+The `AreaBalancePowerModel` network model of a run, with slacks priced at `slack_cost` per
 per-unit slack variable: [`AREA_BALANCE_CVP_FACTOR`](@ref) times the Market Price Cap per MW of one
 dispatch interval, times the system base power. The cap is [`_resolved_market_price_cap`](@ref) of
 `initial_time` and `market_price_cap`.
 
 # Arguments
-- `sys`: the replay system, whose base power scales the slack cost.
+- `sys`: the NEMDE system, whose base power scales the slack cost.
 - `initial_time`: the first interval of the build.
 - `market_price_cap`: a Market Price Cap that replaces the dated one, or `nothing`.
 - `duals`: the dual constraints to record on the network model.

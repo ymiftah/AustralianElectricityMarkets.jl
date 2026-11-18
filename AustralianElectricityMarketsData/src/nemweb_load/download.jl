@@ -110,15 +110,30 @@ _is_transient_status(status::Integer) =
 
 
 """
-    _fetch_with_retry(url::String; headers = Pair{String, String}[], ok = (200,)) -> HTTP.Response
+    _fetch_with_retry(url::String; headers = Pair{String, String}[], ok = (200,),
+                      dest = nothing, http_get = HTTP.get) -> HTTP.Response
 
 GET `url`, retrying transient failures with exponential backoff.
 
 Returns the response when its status is in `ok`. Throws [`MissingDataError`](@ref) on any other
 non-transient status (404 included), or [`TransientDownloadError`](@ref) if a transient failure
 - see [`_is_transient_status`](@ref) \\- persists across [`_DOWNLOAD_MAX_ATTEMPTS`](@ref) attempts.
+
+# Arguments
+- `url::String`: URL to fetch.
+- `headers`: Request headers.
+- `ok`: Statuses that count as success.
+- `dest`: When a path, the body is streamed to it, truncated at the start of every attempt,
+  instead of being buffered in the response. The file is left in place only on success.
+- `http_get`: The request function, replaceable for testing.
+
+# Returns
+- `HTTP.Response`: The successful response; its body is empty when `dest` is set.
 """
-function _fetch_with_retry(url::String; headers = Pair{String, String}[], ok = (200,))
+function _fetch_with_retry(
+        url::String; headers = Pair{String, String}[], ok = (200,),
+        dest::Union{Nothing, String} = nothing, http_get = HTTP.get,
+    )
     last_reason = "unknown"
     for attempt in 1:_DOWNLOAD_MAX_ATTEMPTS
         transient = false
@@ -128,11 +143,18 @@ function _fetch_with_retry(url::String; headers = Pair{String, String}[], ok = (
             # rather than an exception; retry=false so backoff stays in one place here.
             # The timeouts turn a wedged socket into a retryable failure instead of an
             # indefinite hang (see _DOWNLOAD_READ_TIMEOUT_S).
-            response = HTTP.get(
-                url; headers, status_exception = false, retry = false,
+            options = (
+                headers, status_exception = false, retry = false,
                 readtimeout = _DOWNLOAD_READ_TIMEOUT_S,
                 connect_timeout = _DOWNLOAD_CONNECT_TIMEOUT_S,
             )
+            response = if isnothing(dest)
+                http_get(url; options...)
+            else
+                open(dest, "w") do io
+                    http_get(url; options..., response_stream = io)
+                end
+            end
         catch e
             # Connection-level failure (DNS, reset, timeout) - no status to classify, and
             # transient by nature.
@@ -168,12 +190,26 @@ end
 
 
 """
-    _download_and_cache(url::String, cache_path::String)
+    _download_and_cache(url::String, cache_path::String; http_get = HTTP.get) -> Nothing
 
-Download `url` to `cache_path` through [`_fetch_with_retry`](@ref).
+Stream `url` to `cache_path` through [`_fetch_with_retry`](@ref), without holding the body in
+memory. A failed download leaves no file at `cache_path`.
+
+# Arguments
+- `url::String`: URL to download.
+- `cache_path::String`: Destination file; its directory is created.
+- `http_get`: The request function, replaceable for testing.
+
+# Returns
+- `Nothing`.
 """
-function _download_and_cache(url::String, cache_path::String)
-    response = _fetch_with_retry(url)
+function _download_and_cache(url::String, cache_path::String; http_get = HTTP.get)
     mkpath(dirname(cache_path))
-    return write(cache_path, response.body)
+    try
+        _fetch_with_retry(url; dest = cache_path, http_get)
+    catch
+        rm(cache_path; force = true)
+        rethrow()
+    end
+    return
 end

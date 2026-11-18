@@ -1,51 +1,22 @@
-# 0030. Elastic unit ramp rows
+# 0030 Elastic unit ramp rows
 
 ## Status
 
-Accepted
+Accepted. Extended to storage and the other families by [0037](0037-elastic-rows-remaining-families.md), and always-on by [0068](0068-device-rows-always-elastic.md).
 
-## Context
+## What
 
-The two failed validation intervals (2026-06-13T04:15 and 2026-06-29T11:55) are infeasible on one
-hard `PSI.RampConstraint` up row: HUMENSW, an offline hydro unit with `INITIALMW` -0.395 MW and
-`RAMPUPRATE` 0, gives `x <= INITIALMW + RAMPUPRATE * dt < 0` against the bound `x >= 0`. NEMDE does
-not fail here: the Unit Ramp Rate constraint carries `DeficitRampRate`/`SurplusRampRate`
-variables.
+- The `PSI.RampConstraint` up and down rows of `AbstractNEMDispatch` devices are soft, as NEMDE's Unit Ramp Rate constraint carries `DeficitRampRate`/`SurplusRampRate`.
+- Priced at `UNIT_RAMP_CVP_FACTOR` = 1155 times the Market Price Cap (AEMO *Schedule of Constraint Violation Penalty Factors* v8.0, item 3, "Unit Ramp Rate constraint"; old factor 440). It ranks below Non-Conformance and above Energy Inflexible Offer and Interconnector Capacity Limit.
 
-AEMO *Schedule of Constraint Violation Penalty Factors* v8.0 (nem-expert
-`constraint-violation-penalty-factors/03-items-01-11.md`), item 3 "Unit Ramp Rate constraint":
-current CVP factor 1155 (old 440). Ranking: below Non-Conformance, above Energy Inflexible Offer
-and Interconnector Capacity Limit.
+## How
 
-## Decision
+- `_add_nem_ramp_constraints!` adds a `NEMUnitSlack` per `(device, t)` of variant `unit_ramp|up` / `unit_ramp|down`: `power - base - slack_up <= rate * minutes` and `base - power - slack_dn <= rate * minutes`.
+- Priced through `_add_cvp_slack!` at `base_power * interval_cost_coefficient(1155, resolution) * mpc`, `mpc` from `_container_market_price_cap` (so the settings `"market_price_cap"` override applies).
+- Always built, not gated on `use_slacks`. Variable bounds (availability, minimum, band capacity) stay hard; only the ramp side relaxes.
+- Violations are read with `read_constraint_violations` (family `unit_ramp`).
 
-- `UnitRampUpSlack`/`UnitRampDownSlack`, one non-negative variable per `(device, t)`, enter the up
-  and down rows of the `AbstractNEMDispatch` `PSI.RampConstraint` (`power - base - slack <= rate *
-  minutes`, `base - power - slack <= rate * minutes`).
-- Priced at `UNIT_RAMP_CVP_FACTOR` (1155) times the Market Price Cap, in `$/MW` per interval
-  (`base_power * interval_cost_coefficient(1155 * MPC, resolution)`), the same scaling as the
-  area-balance and FCAS slacks. The MPC comes from `_container_market_price_cap`, so the settings
-  `"market_price_cap"` override applies.
-- Always elastic, not gated on `use_slacks`: NEMDE's ramp row is always soft, and the device
-  model has no slack switch of its own. The variable bounds (availability, minimum, band
-  capacity) stay hard; only the ramp side relaxes, so an envelope that conflicts with the bounds
-  is violated on the ramp row.
-- Storage (`nem_dispatch_storage.jl`) ramp rows are not changed here; they and the other hard
-  rows are the remainder of gap G10.
+## Why
 
-## Consequences
-
-- The model is feasible whenever the bounds are, and the slack is zero whenever the hard row was
-  satisfiable. Given the modelled CVPs, at 1155 x MPC the slack is priced above every offer and
-  above the 150 x MPC balance and 155 x MPC FCAS ramping slacks, so it is used only when no other
-  relaxation exists.
-- `replicate_interval` returns `ramp_violations` (DUID, interval, MW, direction) so a ramp
-  violation is never silent.
-- `_check_dispatch_envelope` is kept. A ramp-down floor above the availability ceiling would now
-  be resolved by the elastic down row, but NEMDE breaks MaxAvail (item 14) or UIGF (item 12)
-  before the unit ramp row (item 3, 1155), and availability is hard here, so the check reports a
-  conflict the model would otherwise resolve against AEMO's order.
-- Hard rows that remain: storage ramp rows, and the FCAS and generic-constraint rows when the
-  owning service model has `use_slacks = false`. Follow-up: a BDU with INITIALMW -50, a zero up
-  rate and its load MAXAVAIL rebid to 40 is infeasible on the hard storage ramp row.
-- Surplus and deficit slacks are reported per direction, not as one signed pair.
+- A unit with `INITIALMW` below zero (an offline unit's auxiliary load) and a zero ramp-up rate gave `x <= INITIALMW + 0 < 0` against `x >= 0`: a hard row made two June 2026 intervals infeasible (HiGHS conflict: variable bounds plus the `RampConstraint` up row).
+- At 1155 x cap the slack is priced above every offer and above the 150 balance and 155 FCAS slacks, so it is used only when nothing else can relax.

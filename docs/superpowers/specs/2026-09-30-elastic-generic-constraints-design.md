@@ -6,7 +6,7 @@ Status: implemented 2026-09-30, corrected 2026-09-30 after review. Plan:
 ## Goal
 
 `LinearFactorLimit` builds every `GenericConstraint` as a hard bound. A real dispatch interval
-whose requirement genuinely wasn't met makes the LP infeasible the moment it is replayed. This PR
+whose requirement genuinely wasn't met makes the LP infeasible the moment it is run. This PR
 adds elastic slack variables, priced at AEMO's own constraint-violation rate, so a genuinely
 violated interval builds and solves with a nonzero slack instead of throwing or failing to solve.
 2.8 (FCAS joint requirement rows) reuses the same mechanism, so the slack construction is written
@@ -35,7 +35,7 @@ once, keyed only off `get_sense(gc)`.
 ## nempy cross-check
 
 `nempy.historical_inputs.constraint_data.ConstraintData.get_violation_costs` reads a per-`set`
-dollar cost straight from the NEMDE XML case file for the interval being replayed (values like
+dollar cost straight from the NEMDE XML case file for the interval being run (values like
 $6,300,000 for a network constraint, $525,000 for others), not derived from
 `GENERICCONSTRAINTWEIGHT` or a Market Price Cap, because nempy has the real per-constraint price
 available from AEMO's own solver input. This codebase caches MMSDM only, not NEMDE XML, so it
@@ -79,7 +79,7 @@ Only the side(s) `get_sense(gc)` needs are built, gated on `PSI.ServiceModel`'s 
   bare type parameter (`ServiceModel{T, D}` dispatches on `D` as a type), not an instance.
 - No `NEMDispatchPolicy` type (already dropped by the plan itself).
 - `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` only covers FY25-26 and FY26-27, the years the cited AEMC
-  schedule publishes; a replay outside that range throws rather than guessing a rate.
+  schedule publishes; a run outside that range throws rather than guessing a rate.
 - Pricing PSI's own area-balance slack at its correct CVP rate (factor 150) is deferred to 2.8,
   recorded in the Phase 2 plan file, not fixed here.
 

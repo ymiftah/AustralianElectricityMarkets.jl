@@ -1,5 +1,5 @@
-# Private test-only `PSI.ProblemTemplate` builders for the PSCB fixture, not part of the
-# package's public API.
+# Private test-only helpers (templates, decision models, one-step parameter updates) for the PSCB
+# fixture, not part of the package's public API.
 
 import PowerSimulations as PSI
 import PowerSystems as PSY
@@ -21,7 +21,22 @@ function _decision_model(args...; mpc = _HELPER_MPC, kwargs...)
     return model
 end
 
-"Per-area balances via `AreaBalancePowerModel`, with balance slacks priced at `mpc`. Mirrors `docs/literate/interchanges.jl`."
+# One step of the simulation's parameter update, mirroring `PowerSimulations.update_parameters!` for
+# a `DecisionModel` (`operation_model_simulation_interface.jl:17-29`) without the simulation-status
+# recording, so it also runs on the solve a simulation skips.
+function _update_step_parameters!(model)
+    container = PSI.get_optimization_container(model)
+    PSI.cost_function_unsynch(container)
+    input = PSI.DatasetContainer{PSI.InMemoryDataset}()
+    for key in Base.keys(PSI.get_parameters(model))
+        PSI.update_container_parameter_values!(container, model, key, input)
+    end
+    PSI.update_objective_function!(container)
+    PSI.set_synchronized_status!(PSI.get_objective_expression(container), true)
+    return
+end
+
+"Per-area balances via `AreaBalancePowerModel`, with balance slacks priced at `mpc`. Mirrors `docs/literate/howto/interchanges.jl`."
 function _area_balance_template(
         sys::PSY.System; mpc = _HELPER_MPC,
         network_model = AEMS._area_balance_network_model(
@@ -39,10 +54,8 @@ function _area_balance_template(
     return template
 end
 
-# Buildable subset of every `GenericConstraint` in `sys` for `template`.
-_buildable_gcs(sys, template; kwargs...) = AEMS._filter_buildable_generic_constraints(
-    sys, template, PSY.get_components(GenericConstraint, sys); kwargs...,
-)
+# The rows of `AEMS._diagnose_constraints` for every available `GenericConstraint` of `sys` against `template`.
+_diagnosed_gcs(sys, template) = AEMS._diagnose_constraints(sys, template, PSY.get_components(PSY.get_available, GenericConstraint, sys))
 
 # Sundance's 100 MW floor exceeds fixture demand under no-commitment dispatch; zero every
 # `ThermalStandard` floor before building an `augmented_pscb_system()` template.
@@ -55,13 +68,17 @@ function _fix_thermal_floor!(sys)
 end
 
 
-# `name => (DateTime => raw dual)` of every `NEMConstraintLimit` in `results`.
+# `name => (DateTime => raw dual)` of every constraint of the `NEMConstraintLimit` container in `results`.
 function stock_gc_duals(results)
     read(k) = results isa PSI.SimulationProblemResults ? only(values(PSI.read_realized_duals(results, [k]))) : PSI.read_dual(results, k)
-    return Dict(
-        k.meta => Dict(r.DateTime => r.value for r in eachrow(read(k)))
-            for k in PSI.list_dual_keys(results) if PSI.IS.Optimization.get_entry_type(k) === NEMConstraintLimit
-    )
+    out = Dict{String, Dict{DateTime, Float64}}()
+    for k in PSI.list_dual_keys(results)
+        PSI.IS.Optimization.get_entry_type(k) === NEMConstraintLimit || continue
+        for r in eachrow(read(k))
+            get!(Dict{DateTime, Float64}, out, r.name)[r.DateTime] = r.value
+        end
+    end
+    return out
 end
 
 # The exception `f()` throws, or `nothing` if it returns normally.
@@ -69,4 +86,92 @@ _caught(f) = try
     f(); nothing
 catch e
     e
+end
+
+# The `template_nemde` dispatch participants and static demand, with no interchange and no services.
+function energy_template()
+    template = PSI.ProblemTemplate(
+        PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true, duals = [PSI.CopperPlateBalanceConstraint]),
+    )
+    PSI.set_device_model!(template, ThermalStandard, AEMS.NEMDispatch)
+    PSI.set_device_model!(template, HydroDispatch, AEMS.NEMDispatch)
+    PSI.set_device_model!(template, RenewableDispatch, AEMS.NEMDispatch)
+    PSI.set_device_model!(template, InterruptiblePowerLoad, AEMS.NEMDispatch)
+    PSI.set_device_model!(template, EnergyReservoirStorage, AEMS.NEMDispatch)
+    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+    return template
+end
+
+# Adds the `template_nemde` FCAS service model to `template` and returns it.
+function with_fcas!(template::PSI.ProblemTemplate)
+    PSI.set_service_model!(
+        template,
+        PSI.ServiceModel(FCASService, AEMS.FCASMarket; duals = [AEMS.FCASJointCapacityConstraint], use_slacks = true),
+    )
+    return template
+end
+
+# Adds the `template_nemde` generic-constraint service model to `template`, excluding the constraints of
+# the `Dict` `exclude_constraints` (name => reason), and returns it.
+function with_generic_constraints!(template::PSI.ProblemTemplate; exclude_constraints = Dict{String, Symbol}())
+    PSI.set_service_model!(template, AEMS._generic_constraint_model(exclude_constraints))
+    return template
+end
+
+# Adds the `template_nemde` tie-break service model to `template` and returns it.
+function with_tie_breaks!(template::PSI.ProblemTemplate)
+    PSI.set_service_model!(template, PSI.ServiceModel(EnergyTieBreak, AEMS.TieBreakMarket))
+    return template
+end
+
+# Checks `template` against `sys` as `PSI.validate_template` does before a build, with the records of the
+# constraints it leaves out appended to `skipped`, and returns `template`.
+function problem_template(
+        sys::PSY.System; template::PSI.ProblemTemplate = AEMS.template_nemde(), skipped = nothing,
+    )
+    isnothing(skipped) || append!(skipped, NamedTuple.(eachrow(AEMS.template_skipped_constraints(sys, template))))
+    AEMS._check_excluded_constraints(sys, template)
+    AEMS.check_template_against_sys(template, sys)
+    AEMS._check_blocked_constraints(AEMS._blocked_constraints(sys, template))
+    return template
+end
+
+"""
+    problem_simulation(sys, steps; optimizer, template, folder, name, simulation_name, problem) -> (; simulation, model, skipped_constraints)
+
+Constructs, without building, the PSI simulation of `steps` on `sys`, with the skipped constraints of `template`.
+`problem` is the NEM dispatch problem type, `NEMDispatchProblem` by default.
+"""
+function problem_simulation(
+        sys::PSY.System, steps; optimizer = nemde_optimizer(), template::PSI.ProblemTemplate = template_nemde(),
+        folder::AbstractString = mktempdir(), name = "dispatch", simulation_name = "NEMDE",
+        problem::Type{<:AEMS.AbstractNEMDispatchProblem} = NEMDispatchProblem,
+    )
+    model = PSI.DecisionModel(problem, template, sys; optimizer, initial_time = first(steps), name)
+    skipped_constraints = template_skipped_constraints(sys, template)
+    models = PSI.SimulationModels(; decision_models = [model])
+    sequence = PSI.SimulationSequence(; models, ini_cond_chronology = PSI.InterProblemChronology())
+    simulation = PSI.Simulation(;
+        name = simulation_name, steps = length(steps), models, sequence, simulation_folder = folder, initial_time = first(steps),
+    )
+    return (; simulation, model, skipped_constraints)
+end
+
+"""
+    run_problem(sys, steps; cache_size_mib = nothing, name = "dispatch", kwargs...) -> (; simulation, model, results, skipped_constraints)
+
+Builds and executes the [`problem_simulation`](@ref) of `sys` over `steps` and reads the results of the decision
+problem `name`. Throws when the build or the execution does not succeed. `kwargs` go to `problem_simulation`.
+"""
+function run_problem(sys, steps; cache_size_mib = nothing, name = "dispatch", kwargs...)
+    (; simulation, model, skipped_constraints) = problem_simulation(sys, steps; name, kwargs...)
+    status = PSI.build!(simulation; store_systems_in_results = false)
+    status == PSI.SimulationBuildStatus.BUILT ||
+        error("Range from $(first(steps)) failed to build ($status); see the simulation logs.")
+    execute_kwargs = isnothing(cache_size_mib) ? (;) : (; cache_size_mib)
+    status = PSI.execute!(simulation; execute_kwargs...)
+    status == PSI.RunStatus.SUCCESSFULLY_FINALIZED ||
+        error("Range from $(first(steps)) failed to execute ($status); see the simulation logs.")
+    results = PSI.get_decision_problem_results(PSI.SimulationResults(simulation), name)
+    return (; simulation, model, results, skipped_constraints)
 end

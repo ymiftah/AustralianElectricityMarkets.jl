@@ -1,8 +1,52 @@
+# Sets runchecks without the Info line PowerSystems logs on each call.
+function _set_runchecks_quietly!(sys::PSY.System, value::Bool)
+    Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+        PSY.set_runchecks!(sys, value)
+    end
+    return
+end
+
+# Adds a NEM service whose type has no PowerSystems validation entry, without the per-component
+# "does not exist in validation configuration" warning; runchecks is restored afterwards.
+function _add_nem_service!(sys::PSY.System, service::PSY.Service, devices)
+    runchecks = PSY.get_runchecks(sys)
+    _set_runchecks_quietly!(sys, false)
+    try
+        PSY.add_service!(sys, service, devices)
+    finally
+        _set_runchecks_quietly!(sys, runchecks)
+    end
+    return
+end
+
+
 function table_requirements(::NetworkConfiguration)
     error("Not implemented")
 end
 
 
+"""
+    nem_system(db, network_configuration; kwargs...)
+
+Builds a regional NEM system from cached market data according to `network_configuration`.
+
+# Arguments
+- `db`: the market cache connection.
+- `network_configuration`: a [`RegionalNetworkConfiguration`](@ref) or
+  [`NEMDEConfiguration`](@ref).
+- `as_of`: the `Date` or `DateTime` for resolving static metadata; regional construction defaults
+  to the latest cached version and NEMDE construction to the first requested interval.
+- `date_range`: required for NEMDE construction, including the exclusive stop.
+- `kwargs`: configuration-specific inputs and `PowerSystems.System` storage options.
+
+# Returns
+A `PowerSystems.System` populated according to the requested configuration.
+
+# Example
+```julia
+sys = nem_system(db, RegionalNetworkConfiguration())
+```
+"""
 function nem_system(db, network_configuration::T) where {T <: NetworkConfiguration}
     error("Not implemented for $(typeof(network_configuration))")
 end
@@ -19,13 +63,14 @@ starting at `start_date`.
 - `start_date`: The timestamp of the first value.
 - `values`: The per-interval values, one element per interval.
 - `resolution`: The spacing between consecutive timestamps.
+- `kwargs`: Passed to `SingleTimeSeries`, e.g. `scaling_factor_multiplier`.
 
 # Returns
 A `SingleTimeSeries`.
 """
-function single_series(name::AbstractString, start_date, values, resolution)
+function single_series(name::AbstractString, start_date, values, resolution; kwargs...)
     timestamps = [start_date + (k - 1) * resolution for k in 1:length(values)]
-    return SingleTimeSeries(; name = name, data = TimeArray(timestamps, values), resolution = resolution)
+    return SingleTimeSeries(; name = name, data = TimeArray(timestamps, values), resolution = resolution, kwargs...)
 end
 
 
@@ -79,39 +124,20 @@ Attaches `ts` to `component`, first removing an existing `SingleTimeSeries` of t
 - `ts`: The series to attach.
 
 # Returns
-`nothing`.
+The `StaticTimeSeriesKey` of the attached series.
 """
 function replace_single_series!(sys, component, ts::SingleTimeSeries)
     remove_single_series!(sys, component, get_name(ts))
-    add_time_series!(sys, component, ts)
-    return
+    return add_time_series!(sys, component, ts)
 end
 
 
 """
-    _registration_spans(units) -> Dict{String, Tuple{DateTime, DateTime}}
+    _is_registered(registration::NEMRegistration, t) -> Bool
 
-Maps each `DUID` of `units` to its registration span `(REGISTERED_FROM, REGISTERED_UNTIL)`, as
-[`read_units`](@ref) reports it.
+Whether the unit is registered at the interval-ending stamp `t`, that is `registered_from < t <=
+registered_until`.
 """
-function _registration_spans(units)
-    return Dict(String(r.DUID) => (r.REGISTERED_FROM, r.REGISTERED_UNTIL) for r in eachrow(units))
-end
-
-
-"""
-    _is_registered(registered, duid, t) -> Bool
-
-Whether `duid` is registered at the interval-ending stamp `t`, that is `REGISTERED_FROM < t <=
-REGISTERED_UNTIL`. A `nothing` `registered` means every unit is registered at every stamp. Throws an
-`ArgumentError` naming `duid` when a span dictionary has no entry for it.
-"""
-function _is_registered(::Nothing, duid, t)
-    return true
-end
-function _is_registered(registered::AbstractDict, duid, t)
-    span = get(registered, String(duid), nothing)
-    isnothing(span) && throw(ArgumentError("$duid has no registration span, so whether it is registered at $t is unknown"))
-    from, until = span
-    return from < t <= until
+function _is_registered(registration::NEMRegistration, t)
+    return registration.registered_from < t <= registration.registered_until
 end

@@ -8,7 +8,7 @@ const _TABLE_SPECS = [
         columns = [
             "SETTLEMENTDATE", "RUNNO", "INTERVENTION", "REGIONID", "TOTALDEMAND", "DEMANDFORECAST",
             "DISPATCHABLELOAD", "INITIALSUPPLY", "SS_SOLAR_AVAILABILITY",
-            "SS_WIND_AVAILABILITY", "AVAILABLEGENERATION", "AVAILABLELOAD",
+            "SS_WIND_AVAILABILITY", "SS_SOLAR_UIGF", "SS_WIND_UIGF", "AVAILABLEGENERATION", "AVAILABLELOAD",
         ],
         sort_by = ["SETTLEMENTDATE", "REGIONID"],
     ),
@@ -122,6 +122,17 @@ const _TABLE_SPECS = [
             "MINIMUMLOAD", "T1", "T2", "T3", "T4", "NORMALSTATUS", "ENTRYTYPE",
         ],
         sort_by = ["SETTLEMENTDATE", "DUID", "VERSIONNO", "BIDTYPE", "DIRECTION"],
+    ),
+    # Every rebid version of each daily offer, ENERGY only: the fast-start profile and minimum load
+    # in force at an interval are those of the version whose OFFERDATE is the period offer's LASTCHANGED.
+    (
+        name = "BIDDAYOFFER",
+        columns = [
+            "DUID", "SETTLEMENTDATE", "OFFERDATE", "VERSIONNO", "BIDTYPE", "DIRECTION",
+            "MINIMUMLOAD", "T1", "T2", "T3", "T4", "ENTRYTYPE",
+        ],
+        sort_by = ["SETTLEMENTDATE", "DUID", "DIRECTION", "OFFERDATE"],
+        row_filter = "BIDTYPE" => "ENERGY",
     ),
     (
         name = "BIDPEROFFER_D",
@@ -351,6 +362,7 @@ function get_table(db::AEMDB, table_name::Symbol)::DataSource
         spec.name, spec.columns, db.config;
         table_sort_by = spec.sort_by,
         month_filter_column = get(spec, :month_filter_column, nothing),
+        row_filter = get(spec, :row_filter, nothing),
     )
 end
 

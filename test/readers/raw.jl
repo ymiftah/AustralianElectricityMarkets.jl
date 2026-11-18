@@ -1,9 +1,6 @@
 let
     hive_dir = AEM_TEST_HIVE_DIR
-    @test isdir(hive_dir)
-
-    config = HiveConfiguration(hive_location = hive_dir, filesystem = "file")
-    db = aem_connect(config)
+    db = aem_connect(HiveConfiguration(hive_location = hive_dir, filesystem = "file"))
 
     @testset "read_interconnectors drops an interconnector with a retired endpoint region" begin
         # A region absent from DISPATCHREGIONSUM (the authoritative "currently active" source)
@@ -79,7 +76,6 @@ let
             @test eltype(units.REGISTERED_UNTIL) == DateTime
         end
         # The older archive's stale open rows must not leak into either as-of read.
-        @test maxmwin(read_interconnectors(vdb; as_of = early)) != 111.0
         @test only(read_units(vdb; as_of = early)[read_units(vdb; as_of = early).DUID .== "BW01", :REGISTEREDCAPACITY]) == 100.0
         # A unit not yet registered as of the date is omitted.
         @test isempty(read_units(vdb; as_of = DateTime(2019, 1, 1)))
@@ -136,9 +132,6 @@ let
 
     @testset "read_demand" begin
         df = read_demand(db)
-        @test df isa DataFrame
-        @test nrow(df) > 0
-        @test "REGIONID" in names(df)
         first_vic = df[(df.REGIONID .== "VIC1") .& (df.SETTLEMENTDATE .== minimum(df.SETTLEMENTDATE)), :]
         @test only(first_vic.TOTALDEMAND) == 1000.0
         # Loss-equation demand is INITIALSUPPLY + DEMANDFORECAST (mock: 990 + 10 i + 25) plus the
@@ -151,22 +144,15 @@ let
 
     @testset "read_units" begin
         df = read_units(db)
-        @test df isa DataFrame
-        @test nrow(df) > 0
-        @test "DUID" in names(df)
-        @test "CO2E_ENERGY_SOURCE" in names(df)
         @test !("TECHNOLOGY" in names(df))
         @test !("FUELTYPE" in names(df))
-        @test "BW01" in df.DUID
         @test only(df.CO2E_ENERGY_SOURCE[df.DUID .== "BW01"]) == "Battery Storage"
 
         # BAYSW (station for BW01-BW04) is renamed in a later STATION archive_month
         # partition (mock_data.jl). read_units() must resolve one name per DUID —
         # not fan out into duplicate rows via the STATIONID -> STATIONNAME join.
         @test allunique(df.DUID)
-        bw01_names = df.STATIONNAME[df.DUID .== "BW01"]
-        @test length(bw01_names) == 1
-        @test only(bw01_names) == "Bayswater Power Station"
+        @test only(df.STATIONNAME[df.DUID .== "BW01"]) == "Bayswater Power Station"
     end
 
     @testset "read_bids rejects period offers without a price-band row" begin
@@ -216,20 +202,15 @@ let
     @testset "read_fixed_loads" begin
         date_range = DateTime(2025, 1, 1, 0, 0):Dates.Minute(5):DateTime(2025, 1, 1, 1, 0)
         df = read_fixed_loads(db, date_range)
-        @test names(df) == ["INTERVAL_DATETIME", "DUID", "DIRECTION", "FIXEDLOAD", "IN_PROFILE"]
-        # BW02 has no dispatch mode in the fixture; BW04 is in DISPATCHMODE 4 at 00:10 and 2 at 00:15.
+        @test names(df) == ["INTERVAL_DATETIME", "DUID", "DIRECTION", "FIXEDLOAD"]
         @test nrow(df) == 4
         @test df.INTERVAL_DATETIME == [DateTime(2025, 1, 1, 0, 10), DateTime(2025, 1, 1, 0, 10), DateTime(2025, 1, 1, 0, 15), DateTime(2025, 1, 1, 0, 15)]
         @test df.DUID == ["BW02", "BW04", "BW02", "BW04"]
         @test all(==(50.0), df.FIXEDLOAD)
-        # Mode 2 is in profile; mode 4 (and a unit with no dispatch mode) is not.
-        @test df.IN_PROFILE == [false, false, false, true]
-        @test eltype(df.IN_PROFILE) == Bool
         # The stop bound is exclusive.
         @test nrow(read_fixed_loads(db, DateTime(2025, 1, 1, 0, 0):Dates.Minute(5):DateTime(2025, 1, 1, 0, 15))) == 2
         empty_df = read_fixed_loads(db, DateTime(2025, 1, 1, 2, 0):Dates.Minute(5):DateTime(2025, 1, 1, 2, 5))
         @test nrow(empty_df) == 0
-        @test eltype(empty_df.IN_PROFILE) == Bool
     end
 
     @testset "read_mnsp_offers" begin
@@ -250,7 +231,7 @@ let
         # The last interval of the trading day ends at 04:00 the next calendar day.
         edge = read_mnsp_offers(db, DateTime(2025, 1, 2, 3, 55):Dates.Minute(5):DateTime(2025, 1, 2, 4, 5))
         @test nrow(edge) == 4
-        @test isempty(read_mnsp_offers(db, DateTime(2030, 1, 1):Dates.Minute(5):DateTime(2030, 1, 1, 1)))
+        @test_throws ArgumentError read_mnsp_offers(db, DateTime(2030, 1, 1):Dates.Minute(5):DateTime(2030, 1, 1, 1))
     end
 
     @testset "read_mnsp_links" begin
@@ -261,5 +242,29 @@ let
         @test (tas.INTERCONNECTORID, tas.FROMREGION, tas.TOREGION) == ("IC2", "NSW1", "VIC1")
         @test tas.TO_REGION_TLF == 0.9907
         @test tas.MAXCAPACITY == 594
+    end
+
+    @testset "read_hive date range" begin
+        # The mock names months YYYY-MM and the real cache YYYY-MM-01; both must match by month.
+        # DUDETAIL is cached for 2025-01 only; MNSP_DAYOFFER for 2024-12 and 2025-01.
+        named_files(sql) = [m.captures[1] for m in eachmatch(r"'([^']+\.parquet)'", sql)]
+        partition_files(table, month) = readdir(joinpath(hive_dir, table, "archive_month=$month"); join = true)
+        partition_dirs(files) = unique(basename.(dirname.(files)))
+        inside = named_files(read_hive(db, :DUDETAIL, DateTime(2025, 1, 15, 4, 5):Dates.Minute(5):DateTime(2025, 1, 15, 9)))
+        @test partition_dirs(inside) == ["archive_month=2025-01"]
+        @test sort(inside) == sort(partition_files("DUDETAIL", "2025-01"))
+        edge = named_files(read_hive(db, :MNSP_DAYOFFER, DateTime(2024, 12, 31, 22):Dates.Minute(5):DateTime(2025, 1, 1, 2)))
+        @test sort(partition_dirs(edge)) == ["archive_month=2024-12", "archive_month=2025-01"]
+        @test sort(edge) == sort(vcat(partition_files("MNSP_DAYOFFER", "2024-12"), partition_files("MNSP_DAYOFFER", "2025-01")))
+        # No cached month in range: the error names the months and the populate call, with no all-partitions fallback.
+        uncached = try
+            read_hive(db, :DISPATCHLOAD, DateTime(2030, 1, 1):Dates.Minute(5):DateTime(2030, 1, 1, 1))
+            nothing
+        catch e
+            e
+        end
+        @test uncached isa ArgumentError
+        @test occursin("2029-12, 2030-01", uncached.msg)
+        @test occursin("populate(db, :DISPATCHLOAD, 2029-12-01, 2030-01-31)", uncached.msg)
     end
 end

@@ -6,10 +6,13 @@ const DISPATCH_INTERVAL = Dates.Minute(5)
     MARKET_PRICE_CAP_BY_FINANCIAL_YEAR
 
 Published Market Price Cap (`\$/MWh`), by the `Date` its financial year starts (1 July).
-Source: AEMC *Schedule of reliability settings, 2026-27 financial year* (FY2024-25: AEMC's
-2024-25 schedule).
+Source: AEMC *Schedule of reliability settings, 2026-27 financial year*; earlier years are
+AEMC's schedules for FY2021-22 to FY2024-25.
 """
 const MARKET_PRICE_CAP_BY_FINANCIAL_YEAR = [
+    Date(2021, 7, 1) => 15_100.0,
+    Date(2022, 7, 1) => 15_500.0,
+    Date(2023, 7, 1) => 16_600.0,
     Date(2024, 7, 1) => 17_500.0,
     Date(2025, 7, 1) => 20_300.0,
     Date(2026, 7, 1) => 23_200.0,
@@ -20,8 +23,8 @@ const MARKET_PRICE_CAP_BY_FINANCIAL_YEAR = [
     UNIT_RAMP_CVP_FACTOR
 
 CVP factor (1155) of AEMO's Unit Ramp Rate constraint (`DeficitRampRate` and `SurplusRampRate`),
-item 3 of the *Schedule of Constraint Violation Penalty Factors* v8.0. Prices
-`UnitRampUpSlack` and `UnitRampDownSlack`.
+item 3 of the *Schedule of Constraint Violation Penalty Factors* v8.0. Prices the
+`unit_ramp|up` and `unit_ramp|down` variants of `NEMUnitSlack`.
 """
 const UNIT_RAMP_CVP_FACTOR = 1155.0
 
@@ -30,8 +33,8 @@ const UNIT_RAMP_CVP_FACTOR = 1155.0
     INTERCONNECTOR_FLOW_CVP_FACTOR
 
 CVP factor (1150) of AEMO's Interconnector Capacity Limit constraint, item 5 of the *Schedule of
-Constraint Violation Penalty Factors* v8.0. Prices `InterconnectorFlowSurplusSlack` and
-`InterconnectorFlowDeficitSlack`.
+Constraint Violation Penalty Factors* v8.0. Prices the surplus and deficit variants of
+`InterconnectorFlowSlack`.
 """
 const INTERCONNECTOR_FLOW_CVP_FACTOR = 1150.0
 
@@ -40,7 +43,7 @@ const INTERCONNECTOR_FLOW_CVP_FACTOR = 1150.0
     ENERGY_OFFER_CVP_FACTOR
 
 CVP factor (1135) of AEMO's Total Band MW Offer constraint, item 8 of the *Schedule of Constraint
-Violation Penalty Factors* v8.0. Prices the `EnergyOfferSurplusSlack` family.
+Violation Penalty Factors* v8.0. Prices the energy offer variants of `NEMUnitSlack`.
 """
 const ENERGY_OFFER_CVP_FACTOR = 1135.0
 
@@ -49,7 +52,7 @@ const ENERGY_OFFER_CVP_FACTOR = 1135.0
     ENERGY_UIGF_CVP_FACTOR
 
 CVP factor (385) of AEMO's semi-scheduled UIGF constraint, item 12 of the *Schedule of Constraint
-Violation Penalty Factors* v8.0. Prices `EnergyUIGFSlack`.
+Violation Penalty Factors* v8.0. Prices the `energy_limit|uigf` variant of `NEMUnitSlack`.
 """
 const ENERGY_UIGF_CVP_FACTOR = 385.0
 
@@ -58,8 +61,8 @@ const ENERGY_UIGF_CVP_FACTOR = 385.0
     ENERGY_MAX_AVAIL_CVP_FACTOR
 
 CVP factor (370) of AEMO's Unit MaxAvail constraint, item 14 of the *Schedule of Constraint
-Violation Penalty Factors* v8.0. Prices `EnergyMaxAvailSlack`,
-`EnergyMaxAvailOutSlack` and `EnergyMaxAvailInSlack`.
+Violation Penalty Factors* v8.0. Prices the `energy_limit|max_avail`, `energy_limit|max_avail_out`
+and `energy_limit|max_avail_in` variants of `NEMUnitSlack`.
 """
 const ENERGY_MAX_AVAIL_CVP_FACTOR = 370.0
 
@@ -88,16 +91,25 @@ const INTERCONNECTOR_ZERO_CVP_FACTOR = 1160.0
 
 CVP factor (380) of AEMO's Energy Inflexible Offer constraint, a unit held at its participant
 fixed loading, item 13 of the *Schedule of Constraint Violation Penalty Factors* v8.0. Prices
-`EnergyFixedLoadSurplusSlack` and `EnergyFixedLoadDeficitSlack`.
+the `fixed_load|surplus` and `fixed_load|deficit` variants of `NEMUnitSlack`.
 """
 const FIXED_LOADING_CVP_FACTOR = 380.0
+
+
+"""
+    FAST_START_CVP_FACTOR
+
+CVP factor (1130) of AEMO's Fast Start Inflexibility Profile constraint, item 10 of the *Schedule of Constraint
+Violation Penalty Factors* v8.0. Prices the deficit and surplus of a fast-start unit's profile rows.
+"""
+const FAST_START_CVP_FACTOR = 1130.0
 
 
 """
     FCAS_CAPACITY_CVP_FACTOR
 
 CVP factor (70) of AEMO's FCAS EnablementMin/EnablementMax constraint, item 24 of the *Schedule of
-Constraint Violation Penalty Factors* v8.0. Prices `FCASJointCapacitySlack`.
+Constraint Violation Penalty Factors* v8.0. Prices the joint capacity variant of `FCASSlack`.
 """
 const FCAS_CAPACITY_CVP_FACTOR = 70.0
 
@@ -106,7 +118,7 @@ const FCAS_CAPACITY_CVP_FACTOR = 70.0
     FCAS_RAMPING_CVP_FACTOR
 
 CVP factor (155) of AEMO's FCAS Joint Ramping constraint, item 20 of the *Schedule of Constraint
-Violation Penalty Factors* v8.0. Prices `FCASJointRampingSlack`.
+Violation Penalty Factors* v8.0. Prices the joint ramping variant of `FCASSlack`.
 """
 const FCAS_RAMPING_CVP_FACTOR = 155.0
 
@@ -115,7 +127,7 @@ const FCAS_RAMPING_CVP_FACTOR = 155.0
     FCAS_MAXAVAIL_CVP_FACTOR
 
 CVP factor (155) of AEMO's FCAS MaxAvail constraint, item 19 of the *Schedule of Constraint
-Violation Penalty Factors* v8.0. Prices `FCASMaxAvailSlack`.
+Violation Penalty Factors* v8.0. Prices the MaxAvail variant of `FCASSlack`.
 """
 const FCAS_MAXAVAIL_CVP_FACTOR = 155.0
 
@@ -124,7 +136,7 @@ const FCAS_MAXAVAIL_CVP_FACTOR = 155.0
     FCAS_BDU_RAMPING_CVP_FACTOR
 
 CVP factor (155) of AEMO's BDU Regulation FCAS SCADA Ramping constraint, item 21 of the
-*Schedule of Constraint Violation Penalty Factors* v8.0. Prices `FCASBDURampingSlack`.
+*Schedule of Constraint Violation Penalty Factors* v8.0. Prices the BDU ramping variant of `FCASSlack`.
 """
 const FCAS_BDU_RAMPING_CVP_FACTOR = 155.0
 

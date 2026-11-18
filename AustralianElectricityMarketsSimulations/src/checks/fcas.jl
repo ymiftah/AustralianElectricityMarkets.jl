@@ -15,7 +15,7 @@ end
 
 
 """
-    check_fcas_services(sys, template; excluded_device_types = ())
+    check_fcas_services(template, sys)
 
 Verifies every available [`FCASService`](@ref) that `template` models under
 [`FCASMarket`](@ref) is buildable: each available contributing device's type is modeled by a
@@ -23,21 +23,19 @@ Verifies every available [`FCASService`](@ref) that `template` models under
 bid direction is one [`FCASMarket`](@ref) models (incremental on any device but a load, decremental
 on a `PSY.Storage` device or a load, both only on a `PSY.Storage` device's regulation market), no device
 contributes to more than one such `FCASService` of the same market, and a regulation contributor
-with a positive AGC ramp rate also carries an `"initial_mw"` series, which AEMO *FCAS Model in
-NEMDE* §6.1's joint ramping constraint needs. A per-interval gap in `"initial_mw"` is not checked.
+with a positive AGC ramp rate also keys an observed initial MW series, which AEMO *FCAS Model in
+NEMDE* §6.1's joint ramping constraint needs. A per-interval gap in the observed initial MW is not checked.
 
 # Arguments
-- `sys`: system to read services and components from.
 - `template`: `PSI.ProblemTemplate` to check device coverage against.
-- `excluded_device_types`: device types deliberately omitted from the template; their contributors
-  are not checked. The default checks every available contributor.
+- `sys`: system to read services and components from.
 
 # Returns
 `nothing`. Throws `ArgumentError` naming every problem device otherwise.
 """
-function check_fcas_services(sys::PSY.System, template::PSI.ProblemTemplate; excluded_device_types = ())
+function check_fcas_services(template::PSI.ProblemTemplate, sys::PSY.System)
     device_models = collect(values(PSI.get_device_models(template)))
-    fcas_market_services = _modeled_fcas_services(template)
+    fcas_market_services = _modeled_fcas_services(template, sys)
     problems = String[]
     services_by_market = Dict{Tuple{String, BidType}, Vector{String}}()
     for svc in PSY.get_components(FCASService, sys)
@@ -47,7 +45,6 @@ function check_fcas_services(sys::PSY.System, template::PSI.ProblemTemplate; exc
         bid_type = get_bid_type(svc)
         for device in PSY.get_contributing_devices(sys, svc)
             PSY.get_available(device) || continue
-            any(t -> device isa t, excluded_device_types) && continue
             dname = PSY.get_name(device)
             push!(get!(services_by_market, (dname, bid_type), String[]), svc_name)
             idx = findfirst(m -> device isa PSI.get_component_type(m), device_models)
@@ -69,12 +66,12 @@ function check_fcas_services(sys::PSY.System, template::PSI.ProblemTemplate; exc
             problem = _fcas_direction_problem(device, bid_type, direction)
             isnothing(problem) || push!(problems, "FCASService \"$svc_name\": device \"$dname\" $problem.")
             if bid_type in FCAS_REGULATION_MARKETS && _fcas_ramp_series_positive(device, bid_type) &&
-                    !PSY.has_time_series(device, PSY.SingleTimeSeries, NEM_SERIES.initial_mw)
+                    !(AustralianElectricityMarkets.get_observed_state(device).initial_mw isa IS.StaticTimeSeriesKey)
                 push!(
                     problems,
                     "FCASService \"$svc_name\": device \"$dname\" ($(typeof(device))) carries a " *
-                        "positive fcas_agc_ramp_rate_$(string(bid_type)) series but no " *
-                        "\"initial_mw\" series; AEMO §6.1's joint ramping constraint needs both.",
+                        "positive fcas_agc_ramp_rate_$(string(bid_type)) series but no observed " *
+                        "initial MW series; AEMO §6.1's joint ramping constraint needs both.",
                 )
             end
         end

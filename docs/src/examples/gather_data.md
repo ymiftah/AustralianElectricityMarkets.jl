@@ -78,7 +78,7 @@ db = aem_connect()
 
 # Low-level access to a specific hive table: read_hive returns a SQL source
 # fragment that can be queried directly with DuckDB
-source = read_hive(db, :DISPATCH_UNIT_SOLUTION)
+source = read_hive(db, :DISPATCHLOAD)
 df_raw = DataFrame(DuckDB.execute(db.db, "SELECT * FROM $source LIMIT 10"))
 
 # Load unit information from the cached data

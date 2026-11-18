@@ -1,3 +1,21 @@
+# The values of `gc`'s series in `field` (`:rhs` or `:invoked`), read through its key.
+_constraint_series(gc, field::Symbol) = PowerSystems.IS.get_time_series_values(gc, getproperty(gc, field))
+
+# Removes `device`'s series `name` with the forecast windows the NEMDE input stage transformed from it.
+function remove_series_and_forecast!(sys, device, name)
+    PowerSystems.has_time_series(device, PowerSystems.DeterministicSingleTimeSeries, name) &&
+        PowerSystems.remove_time_series!(sys, PowerSystems.DeterministicSingleTimeSeries, device, name)
+    PowerSystems.has_time_series(device, PowerSystems.SingleTimeSeries, name) &&
+        PowerSystems.remove_time_series!(sys, PowerSystems.SingleTimeSeries, device, name)
+    return
+end
+
+# Replaces `device`'s series of the name of `ts` with `ts`, dropping the forecast windows transformed from the old one.
+function replace_series_and_forecast!(sys, device, ts)
+    remove_series_and_forecast!(sys, device, PowerSystems.get_name(ts))
+    return PowerSystems.add_time_series!(sys, device, ts)
+end
+
 using DataFrames
 using Dates
 using DuckDB
@@ -7,7 +25,8 @@ using DuckDB
 
 Writes the mock Hive-partitioned cache under `hive_root`. With `complete_inputs`, the invoked
 constraints whose terms cannot all resolve (`N_PHANTOM_TEST`, `N_ONE_PHANTOM_TERM`) are removed and
-`PUMP2` is inactive in `DISPATCHLOAD`, so a strict replay can run on it.
+`PUMP2` is inactive in `DISPATCHLOAD`, so a strict run can run on it. Every interconnector also
+gets a `LOSSMODEL`.
 """
 function create_mock_data(hive_root::String; complete_inputs::Bool = false)
     db = DuckDB.DB()
@@ -58,10 +77,11 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
         ), :INTERCONNECTORCONSTRAINT
     )
 
-    # 2b. LOSSMODEL — IC1..IC5 only, so an interconnector with loss parameters but no breakpoints
-    # exercises `interconnector_loss_models`'s skip-and-warn path. IC1 additionally carries a
-    # superseded EFFECTIVEDATE, so version resolution is exercised rather than assumed.
-    let ics = ["IC$i" for i in 1:5], breaks = [-500.0, -250.0, 0.0, 250.0, 500.0]
+    # 2b. LOSSMODEL: IC1..IC5 only, so an interconnector with loss parameters but no breakpoints
+    # exercises `interconnector_loss_models`'s skip-and-warn path. With `complete_inputs` IC6 is
+    # modelled too, since a NEMDE build throws on an unmodelled interconnector. IC1 additionally
+    # carries a superseded EFFECTIVEDATE, so version resolution is exercised rather than assumed.
+    let ics = ["IC$i" for i in 1:(complete_inputs ? n : 5)], breaks = [-500.0, -250.0, 0.0, 250.0, 500.0]
         nb = length(breaks)
         current = DataFrame(
             INTERCONNECTORID = repeat(ics; inner = nb),
@@ -108,6 +128,9 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
                 DEMANDFORECAST = fill(25.0, n),
                 SS_SOLAR_AVAILABILITY = fill(100.0 + i, n),
                 SS_WIND_AVAILABILITY = fill(200.0 - i, n),
+                SS_SOLAR_UIGF = fill(120.0 + i, n),
+                SS_WIND_UIGF = fill(220.0 - i, n),
+                INTERVENTION = fill(0, n),
                 archive_month = fill("2025-01", n)
             )
         )
@@ -328,8 +351,8 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
                 LOWBREAKPOINT = fill(30.0, n),
                 HIGHBREAKPOINT = fill(90.0, n),
                 ENABLEMENTMAX = fill(100.0, n),
-                ROCUP = fill(bid_type in ("RAISEREG", "LOWERREG") ? 1.0 : missing, n),
-                ROCDOWN = fill(bid_type in ("RAISEREG", "LOWERREG") ? 1.0 : missing, n),
+                ROCUP = fill(missing, n),
+                ROCDOWN = fill(missing, n),
             )
             for b in 1:10
                 block[!, "BANDAVAIL$b"] = fill(10.0, nrow(block))
@@ -356,8 +379,8 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
                 LOWBREAKPOINT = [30.0, 0.0],
                 HIGHBREAKPOINT = [90.0, 0.0],
                 ENABLEMENTMAX = [100.0, 0.0],
-                ROCUP = fill(bid_type in ("RAISEREG", "LOWERREG") ? 1.0 : missing, 2),
-                ROCDOWN = fill(bid_type in ("RAISEREG", "LOWERREG") ? 1.0 : missing, 2),
+                ROCUP = fill(missing, 2),
+                ROCDOWN = fill(missing, 2),
             )
             for b in 1:10
                 block[!, "BANDAVAIL$b"] = fill(10.0, nrow(block))
@@ -374,6 +397,20 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
         (df_bid_per_offer.INTERVAL_DATETIME .>= DateTime(2025, 1, 1, 0, 10)) .&
         (df_bid_per_offer.INTERVAL_DATETIME .<= DateTime(2025, 1, 1, 0, 15))
     df_bid_per_offer.FIXEDLOAD[fixed] .= 50.0
+    # ROCUP and ROCDOWN are set on energy bids only; ENERGYLIMIT is absent from every unit.
+    df_bid_per_offer.ROCUP = [b == "ENERGY" ? 1.0 : r for (b, r) in zip(df_bid_per_offer.BIDTYPE, df_bid_per_offer.ROCUP)]
+    df_bid_per_offer.ROCDOWN = [b == "ENERGY" ? 1.0 : r for (b, r) in zip(df_bid_per_offer.BIDTYPE, df_bid_per_offer.ROCDOWN)]
+    df_bid_per_offer.ENERGYLIMIT = Vector{Union{Missing, Float64}}(missing, nrow(df_bid_per_offer))
+    # Every offer was made on 2024-12-31 at noon, except BW04's energy GEN rebids in force from 03:05
+    # (exact OFFERDATE) and from 03:20 (a LASTCHANGED after the 03:17 version, which is in force).
+    initial_offer = DateTime(2024, 12, 31, 12)
+    bw04_energy = (df_bid_per_offer.DUID .== "BW04") .& (df_bid_per_offer.BIDTYPE .== "ENERGY") .&
+        (df_bid_per_offer.DIRECTION .== "GEN")
+    df_bid_per_offer.LASTCHANGED = map(zip(bw04_energy, df_bid_per_offer.INTERVAL_DATETIME)) do (rebid, t)
+        rebid && t >= DateTime(2025, 1, 1, 3, 20) && return DateTime(2025, 1, 1, 3, 17, 30)
+        rebid && t >= DateTime(2025, 1, 1, 3, 5) && return DateTime(2025, 1, 1, 3, 2, 34)
+        return initial_offer
+    end
     save_hive(df_bid_per_offer, :BIDPEROFFER_D)
 
     # 11. BIDDAYOFFER_D (Daily)
@@ -440,7 +477,27 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
     end
     # T1 > 0 marks a fast-start inflexibility profile; only BW04 has one.
     bid_day_offer.T1 = Float64.(bid_day_offer.DUID .== "BW04") .* 10.0
+    bid_day_offer.T2 = zeros(nrow(bid_day_offer))
+    bid_day_offer.T3 = zeros(nrow(bid_day_offer))
+    bid_day_offer.T4 = zeros(nrow(bid_day_offer))
+    bid_day_offer.NORMALSTATUS = fill("ON", nrow(bid_day_offer))
     save_hive(bid_day_offer, :BIDDAYOFFER_D)
+
+    # 11b. BIDDAYOFFER: every energy version. The initial offers match BIDDAYOFFER_D (PUMP1 and WDR1 have
+    # none, so they keep its values); BW04 rebids at 03:02:34 to T1 = 12 with a 5 MW minimum load and at
+    # 03:17 to a zero profile, which is not fast-start.
+    initial_versions = select(
+        subset(bid_day_offer, :BIDTYPE => ByRow(==("ENERGY")), :DUID => ByRow(d -> d ∉ ("PUMP1", "WDR1"))),
+        :DUID, :SETTLEMENTDATE, :BIDTYPE, :DIRECTION, :VERSIONNO, :MINIMUMLOAD, :T1, :T2, :T3, :T4, :archive_month,
+    )
+    initial_versions.OFFERDATE = fill(initial_offer, nrow(initial_versions))
+    bw04_rebids = DataFrame(
+        DUID = ["BW04", "BW04"], SETTLEMENTDATE = fill(test_date, 2), BIDTYPE = fill("ENERGY", 2),
+        DIRECTION = fill("GEN", 2), VERSIONNO = [2, 3], MINIMUMLOAD = [5.0, 0.0], T1 = [12.0, 0.0],
+        T2 = [0.0, 0.0], T3 = [0.0, 0.0], T4 = [0.0, 0.0], archive_month = fill("2025-01", 2),
+        OFFERDATE = [DateTime(2025, 1, 1, 3, 2, 34), DateTime(2025, 1, 1, 3, 17)],
+    )
+    save_hive(vcat(initial_versions, bw04_rebids), :BIDDAYOFFER)
 
     # FCAS requirements are generic-constraint-based (RESERVE has been unpopulated by AEMO
     # since Dec 2003 - see read_fcas_requirements docstring): one governing GENCONID per
@@ -714,6 +771,8 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
     initial_mw_for(duid, i) = duid == "BW01" && i == last(intervals) ? -30.0 : duid == "ASLOAD1" ? 0.1 : duid in nonscheduled ? 0.0 : 40.0 + duid_offset(duid) + (i % 10)
     # BW04 (fast-start, T1 > 0) is in DISPATCHMODE 4 at 00:10 and 2 at 00:15, its fixed-load intervals.
     dispatch_mode_for(duid, i) = duid == "BW04" && i == 2 ? 4 : duid == "BW04" && i == 3 ? 2 : 0
+    # BW04's mode times exceed its zero T2 and T4, so the NEMDE state caps them to 0.
+    dispatch_mode_time_for(duid, i) = dispatch_mode_for(duid, i) == 0 ? 0 : 7
     ramp_up_rate_for(duid, i) = duid in nonscheduled ? 0.0 : 4.0 + duid_offset(duid) + (i % 5)
     ramp_down_rate_for(duid, i) = duid in nonscheduled ? 0.0 : 3.0 + duid_offset(duid) + (i % 5)
     availability_for(duid, i) = duid in nonscheduled ? 0.0 : 90.0 - 3 * duid_offset(duid) + (i % 6)
@@ -730,7 +789,8 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
     lower_reg_enablement_min_for(duid, i) = 22.0 + duid_offset(duid) + (i % 3)
     lower_reg_enablement_max_for(duid, i) = 98.0 - duid_offset(duid) - (i % 3)
     df_dispatchload = DataFrame()
-    for i in intervals
+    # One interval before the first, so a run starting at the first interval has its previous row.
+    for i in (first(intervals) - 1):last(intervals)
         t = base_datetime + Minute(5 * i)
         block = DataFrame(
             SETTLEMENTDATE = fill(t, m),
@@ -738,6 +798,7 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
             INTERVENTION = fill(0, m),
             DUID = dl_duids,
             DISPATCHMODE = [dispatch_mode_for(d, i) for d in dl_duids],
+            DISPATCHMODETIME = [dispatch_mode_time_for(d, i) for d in dl_duids],
             INITIALMW = [initial_mw_for(d, i) for d in dl_duids],
             RAMPUPRATE = [ramp_up_rate_for(d, i) for d in dl_duids],
             RAMPDOWNRATE = [ramp_down_rate_for(d, i) for d in dl_duids],
@@ -1023,15 +1084,18 @@ function write_mock_interconnector_results(hive_root::String)
 end
 
 
-# Copies the hive at `source`, rewrites `table` through the SQL `query` (over the copy named `input`)
-# and returns a connection to the copy, so each damaged cache is private to its test.
+# Copies the hive at `source`, rewrites `table` through the SQL `query` (one statement, or a vector
+# of statements run in order, over the copy named `input`) and returns a connection to the copy,
+# so each damaged cache is private to its test.
 function damaged_cache(source, table, query)
     hive = joinpath(mktempdir(), "hive")
     cp(source, hive)
     path = joinpath(hive, string(table))
     conn = DuckDB.DB()
     DuckDB.execute(conn, "CREATE TABLE input AS SELECT * FROM read_parquet('$path/**/*.parquet', hive_partitioning = true)")
-    DuckDB.execute(conn, query)
+    for statement in (query isa AbstractString ? [query] : query)
+        DuckDB.execute(conn, statement)
+    end
     rm(path; recursive = true)
     DuckDB.execute(conn, "COPY input TO '$path' (FORMAT PARQUET, PARTITION_BY (archive_month))")
     DuckDB.close(conn)

@@ -22,7 +22,7 @@ regulation bid.
 """
 function _fcas_direction_problem(device::PSY.Device, bid_type::BidType, direction::FCASBidDirection)
     bid = string(bid_type)
-    direction === FCASBidDirection.NONE && return "carries neither an incremental nor a decremental $bid bid; call set_fcas_bids! first"
+    direction === FCASBidDirection.NONE && return "carries neither an incremental nor a decremental $bid bid; call set_market_bids! first"
     direction === FCASBidDirection.BOTH && !(device isa PSY.Storage && bid_type in FCAS_REGULATION_MARKETS) &&
         return "carries both an incremental and a decremental $bid bid; bidirectional FCAS capacity is modeled " *
         "only for a `PSY.Storage` device's regulation markets"
@@ -39,7 +39,7 @@ end
 """
     _fcas_direction(device, bid_type) -> FCASBidDirection
 
-Which of `bid_type`'s `"fcas_trapezium_<bid_type>[_decremental]"` series `device` carries. Throws
+Which of `bid_type`'s FCAS bid sides `device` carries (see `fcas_bid_direction`). Throws
 an `ArgumentError` when [`FCASMarket`](@ref) does not model that direction
 ([`_fcas_direction_problem`](@ref)).
 
@@ -146,7 +146,7 @@ end
 
 Adds `param`, keyed by `model`'s component type and `meta`, unless it exists, through PowerSimulations'
 time-series parameter `add_parameters!` for the available components of `model` carrying a `ts_name`
-forecast, on the axes of [`_fcas_parameter_axes`](@ref).
+forecast, on the axes of `_fcas_parameter_axes`.
 
 # Returns
 `nothing`.
@@ -164,8 +164,8 @@ function _add_fcas_parameter!(
 end
 
 
-# PowerSimulations adds the FCAS offer and ramping parameters on the axes of `_fcas_parameter_axes`, and
-# the band prices on the band axis. Every FCAS parameter is read at unit multiplier.
+# PowerSimulations adds the FCAS offer and ramping parameters on the axes of `_fcas_parameter_axes`.
+# Every FCAS parameter is read at unit multiplier.
 function PSI.calc_additional_axes(
         ::PSI.OptimizationContainer,
         param::Union{FCASOfferLimitParameter, FCASBandWidthParameter, FCASRampingLimitParameter, FCASUpperSlopeParameter, FCASLowerSlopeParameter},
@@ -174,17 +174,10 @@ function PSI.calc_additional_axes(
     return _fcas_parameter_axes(param)
 end
 
-function PSI.calc_additional_axes(
-        ::PSI.OptimizationContainer, ::FCASBandPriceParameter,
-        ::Union{Vector{D}, IS.FlattenIteratorWrapper{D}}, ::PSI.DeviceModel{D, W},
-    ) where {D <: PSY.Device, W <: PSI.AbstractDeviceFormulation}
-    return (_FCAS_BAND_LABELS,)
-end
-
 function PSI.get_multiplier_value(
         ::Union{
             FCASOfferLimitParameter, FCASBandWidthParameter, FCASRampingLimitParameter,
-            FCASUpperSlopeParameter, FCASLowerSlopeParameter, FCASBandPriceParameter,
+            FCASUpperSlopeParameter, FCASLowerSlopeParameter,
         },
         ::PSY.StaticInjection, ::AbstractNEMDispatch,
     )
@@ -195,8 +188,9 @@ end
 """
     _check_fcas_effective_series(container, devices, bid_type, directions)
 
-Throws `ArgumentError` naming every device in `devices` without a forecast of its
-[`AustralianElectricityMarkets.set_fcas_effective_offers!`](@ref) series for `bid_type`.
+Throws `ArgumentError` naming every device in `devices` without a series of its
+[`fcas_effective_series_name`](@ref) offer for `bid_type`, or without its [`fcas_ramping_series_name`](@ref)
+limits in a regulation market.
 
 # Returns
 `nothing`.
@@ -213,7 +207,7 @@ function _check_fcas_effective_series(container::PSI.OptimizationContainer, devi
     isempty(uncovered) || throw(
         ArgumentError(
             "FCASMarket: $(length(uncovered)) device(s) carry no effective $(string(bid_type)) offer forecast: " *
-                "$(join(uncovered, ", ")). Call set_fcas_effective_offers!(sys) before transform_single_time_series!.",
+                "$(join(uncovered, ", ")). Build the System with nem_system(db, NEMDEConfiguration(); date_range) first.",
         ),
     )
     return
@@ -283,22 +277,37 @@ end
 
 
 """
-    _add_fcas_slack!(container, model, var_type, meta, names, time_steps, cvp_factor)
+    _fcas_unit_meta(row, meta) -> String
 
-When `PSI.get_use_slacks(model)`, builds an [`_add_cvp_slack!`](@ref) slack of `var_type` per
-`(name, t)` keyed by `FCASService` and `meta`, at the model's Market Price Cap override.
+The key meta of an [`FCASUnitConstraint`](@ref) row: `row` (`"joint_ramping"`, `"max_avail"`, `"offer_band"` or
+`"bdu_ramping"`) joined to the row's own container `meta` with `|`.
+"""
+_fcas_unit_meta(row::AbstractString, meta::AbstractString) = string(row, "|", meta)
+
+
+"""
+    _add_fcas_slack!(container, model, variant, meta, names, time_steps, cvp_factor; label)
+
+When `PSI.get_use_slacks(model)`, builds an [`_add_cvp_slack!`](@ref) [`FCASSlack`](@ref) of `variant` per
+`(name, t)`, keyed by `FCASService` and the variant's composite meta of `meta`, priced at the container's
+Market Price Cap. Its variables are named `label`.
+
+# Arguments
+- `variant`: the slack's variant tag, such as `FCASMaxAvailVariant()`.
+- `meta`: the row's own container meta, without the variant.
+- `label`: the prefix of each variable's name.
 
 # Returns
 The slack variable container, or `nothing` when `use_slacks` is `false`.
 """
 function _add_fcas_slack!(
-        container::PSI.OptimizationContainer, model::PSI.ServiceModel, var_type, meta::AbstractString,
-        names, time_steps, cvp_factor::Real,
+        container::PSI.OptimizationContainer, model::PSI.ServiceModel, variant, meta::AbstractString,
+        names, time_steps, cvp_factor::Real; label::AbstractString,
     )
     PSI.get_use_slacks(model) || return nothing
     return _add_cvp_slack!(
-        container, var_type, FCASService, names, time_steps, cvp_factor;
-        meta = meta, label = "$(nameof(var_type))_$meta", rate = PSI.get_attribute(model, "market_price_cap"),
+        container, FCASSlack, FCASService, names, time_steps, cvp_factor;
+        meta = _fcas_slack_meta(variant, meta), label = label,
     )
 end
 
@@ -311,8 +320,8 @@ variable: elastic when `slack` is a slack container, hard when it is `nothing`.
 
 # Arguments
 - `jm`: the JuMP model.
-- `variable`, `slack`: the capacity variable and the slack container of [`FCASMaxAvailSlack`](@ref), or `nothing`.
-- `con`: the [`FCASMaxAvailConstraint`](@ref) container the row is stored in, at `[dname, t]`.
+- `variable`, `slack`: the capacity variable and the slack container of [`FCASSlack`](@ref)'s MaxAvail variant, or `nothing`.
+- `con`: the [`FCASUnitConstraint`](@ref) container the row is stored in, at `[dname, t]`.
 - `max_avail`: the effective MaxAvail in per-unit, a number or a parameter.
 
 # Returns
@@ -380,9 +389,9 @@ end
 
 Builds the MaxAvail and joint capacity rows ([`_add_fcas_capacity_rows!`](@ref)) of each of
 `devices` at every time step, on its `capacity` variable and the [`FCASJointCapacityLHS`](@ref)
-expressions of meta `"<label>_upper"` and `"<label>_lower"`. The [`FCASMaxAvailConstraint`](@ref)
-and [`FCASJointCapacityConstraint`](@ref) containers and their slacks take the metas
-`"<label>_maxavail"`, `"<label>_upper"` and `"<label>_lower"`.
+expressions of meta `"<label>_upper"` and `"<label>_lower"`. The [`FCASUnitConstraint`](@ref) MaxAvail rows take the meta `"max_avail|<label>_maxavail"`, and the
+[`FCASJointCapacityConstraint`](@ref) containers the metas `"<label>_upper"` and `"<label>_lower"`. Their
+[`FCASSlack`](@ref)s take the same metas after the variant prefix.
 
 # Arguments
 - `devices`: the devices sharing the capacity variable container `capacity`.
@@ -400,26 +409,32 @@ function _add_fcas_capacity_constraints!(
     time_steps = PSI.get_time_steps(container)
     upper_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(label)_upper")
     lower_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(label)_lower")
+    max_meta = "$(label)_maxavail"
+    upper_meta = "$(label)_upper"
+    lower_meta = "$(label)_lower"
     slacks = (
         max = _add_fcas_slack!(
-            container, model, FCASMaxAvailSlack, "$(label)_maxavail", names, time_steps, FCAS_MAXAVAIL_CVP_FACTOR,
+            container, model, FCASMaxAvailVariant(), max_meta, names, time_steps, FCAS_MAXAVAIL_CVP_FACTOR;
+            label = "FCASMaxAvailSlack_$max_meta",
         ),
         upper = _add_fcas_slack!(
-            container, model, FCASJointCapacitySlack, "$(label)_upper", names, time_steps, FCAS_CAPACITY_CVP_FACTOR,
+            container, model, FCASJointCapacityVariant(), upper_meta, names, time_steps, FCAS_CAPACITY_CVP_FACTOR;
+            label = "FCASJointCapacitySlack_$upper_meta",
         ),
         lower = _add_fcas_slack!(
-            container, model, FCASJointCapacitySlack, "$(label)_lower", names, time_steps, FCAS_CAPACITY_CVP_FACTOR,
+            container, model, FCASJointCapacityVariant(), lower_meta, names, time_steps, FCAS_CAPACITY_CVP_FACTOR;
+            label = "FCASJointCapacitySlack_$lower_meta",
         ),
     )
     cons = (
         max = PSI.add_constraints_container!(
-            container, FCASMaxAvailConstraint(), FCASService, names, time_steps; meta = "$(label)_maxavail",
+            container, FCASUnitConstraint(), FCASService, names, time_steps; meta = _fcas_unit_meta("max_avail", max_meta),
         ),
         upper = PSI.add_constraints_container!(
-            container, FCASJointCapacityConstraint(), FCASService, names, time_steps; meta = "$(label)_upper",
+            container, FCASJointCapacityConstraint(), FCASService, names, time_steps; meta = upper_meta,
         ),
         lower = PSI.add_constraints_container!(
-            container, FCASJointCapacityConstraint(), FCASService, names, time_steps; meta = "$(label)_lower",
+            container, FCASJointCapacityConstraint(), FCASService, names, time_steps; meta = lower_meta,
         ),
     )
     for (device, dname, meta) in zip(devices, names, metas), t in time_steps
@@ -434,7 +449,7 @@ end
 """
     _add_fcas_joint_ramping_constraints!(container, model, jm, devices, bid_type, name, time_steps)
 
-Builds AEMO *FCAS Model in NEMDE* §6.1's [`FCASJointRampingConstraint`](@ref) for every
+Builds AEMO *FCAS Model in NEMDE* §6.1's joint ramping rows of [`FCASUnitConstraint`](@ref) for every
 contributing `device` of a regulation `FCASService` named `name`: the unit's net energy
 ([`_energy_variables`](@ref)) combined with its [`FCASUnitRegulationTarget`](@ref) against
 the `"joint_ramping"` field of its [`FCASRampingLimitParameter`](@ref), in the upper or lower form
@@ -450,11 +465,12 @@ function _add_fcas_joint_ramping_constraints!(
     )
     names = PSY.get_name.(devices)
     con = PSI.add_constraints_container!(
-        container, FCASJointRampingConstraint(), FCASService, names, time_steps; meta = name,
+        container, FCASUnitConstraint(), FCASService, names, time_steps; meta = _fcas_unit_meta("joint_ramping", name),
     )
     target = PSI.get_expression(container, FCASUnitRegulationTarget(), FCASService, name)
     slack = _add_fcas_slack!(
-        container, model, FCASJointRampingSlack, name, names, time_steps, FCAS_RAMPING_CVP_FACTOR,
+        container, model, FCASJointRampingVariant(), name, names, time_steps, FCAS_RAMPING_CVP_FACTOR;
+        label = "FCASJointRampingSlack_$name",
     )
     for device in devices
         dname = PSY.get_name(device)
@@ -518,11 +534,11 @@ function PSI.construct_service!(
         incompatible_device_types::Set{<:DataType},
         network_model::PSI.NetworkModel,
     )
-    unsupported = filter(!in((FCASJointCapacityConstraint, FCASJointRampingConstraint)), PSI.get_duals(model))
+    unsupported = filter(!in((FCASJointCapacityConstraint, FCASUnitConstraint)), PSI.get_duals(model))
     isempty(unsupported) || throw(
         ArgumentError(
             "FCASMarket records duals for FCASJointCapacityConstraint and " *
-                "FCASJointRampingConstraint only; got $(unsupported).",
+                "FCASUnitConstraint only (its joint ramping rows); got $(unsupported).",
         ),
     )
     name = PSI.get_service_name(model)
@@ -542,7 +558,9 @@ function PSI.construct_service!(
             container, FCASUnitRegulationTarget(), FCASService, PSY.get_name.(devices), time_steps; meta = name,
         ) : nothing
 
-    for group in _fcas_offer_groups(name, devices, directions)
+    groups = _fcas_offer_groups(name, devices, directions)
+    _build_scratch(container)[(:fcas_offer_groups, name)] = groups
+    for group in groups
         names = [PSY.get_name(d) for (d, _) in group.offers]
         var = PSI.add_variable_container!(container, group.variable, FCASService, names, time_steps; meta = group.meta)
         lhs = [
@@ -569,35 +587,47 @@ function PSI.construct_service!(
 end
 
 
-"""
-    _fcas_offer_groups(name, devices, bid_type) -> Vector{NamedTuple}
-    _fcas_offer_groups(name, devices, directions) -> Vector{NamedTuple}
-
-The offers of an `FCASService` named `name`, grouped by the capacity variable container they sum
-to: `(meta, variable, offers)` with `offers` a vector of `(device, decremental)`. Single-sided
-devices form the group `meta = name` on [`FCASCapacityVariable`](@ref); a `PSY.Storage` device
-bidding both sides of a regulation market has one offer in each of `"<name>_gen"` and
-`"<name>_load"` on [`FCASSideCapacityVariable`](@ref). `directions` maps each device name to its
-[`_fcas_direction`](@ref), computed from `bid_type` when not given.
-
-# Returns
-`Vector{NamedTuple{(:meta, :variable, :offers)}}`.
-"""
 # The capacity-variable meta of one side of a `PSY.Storage` device's two-sided regulation offer.
 _fcas_side_meta(name::AbstractString, decremental::Bool) = decremental ? "$(name)_load" : "$(name)_gen"
 
 
-function _fcas_offer_groups(name::AbstractString, devices, bid_type::BidType)
-    return _fcas_offer_groups(name, devices, Dict(PSY.get_name(d) => _fcas_direction(d, bid_type) for d in devices))
+"""
+    _FCASOfferGroup
+
+One capacity variable container of an `FCASService` and the offers summing to it: the container's
+`meta`, its capacity `variable` type and `offers`, a vector of `(device, decremental)`.
+"""
+struct _FCASOfferGroup{D}
+    meta::String
+    variable::PSI.VariableType
+    offers::Vector{Tuple{D, Bool}}
 end
+
+
+"""
+    _fcas_offer_groups(name, devices, directions) -> Vector{_FCASOfferGroup}
+
+The offers of an `FCASService` named `name`, grouped by the capacity variable container they sum
+to: [`_FCASOfferGroup`](@ref)s of `(meta, variable, offers)` with `offers` a vector of `(device, decremental)`. Single-sided
+devices form the group `meta = name` on [`FCASCapacityVariable`](@ref); a `PSY.Storage` device
+bidding both sides of a regulation market has one offer in each of `"<name>_gen"` and
+`"<name>_load"` on [`FCASSideCapacityVariable`](@ref). `directions` maps each device name to its
+[`_fcas_direction`](@ref).
+
+# Returns
+`Vector{_FCASOfferGroup}`.
+"""
 function _fcas_offer_groups(name::AbstractString, devices, directions::AbstractDict)
-    both = [d for d in devices if directions[PSY.get_name(d)] == FCASBidDirection.BOTH]
-    single = [(d, directions[PSY.get_name(d)] == FCASBidDirection.DECREMENTAL) for d in devices if directions[PSY.get_name(d)] != FCASBidDirection.BOTH]
-    groups = NamedTuple[]
-    isempty(single) || push!(groups, (meta = String(name), variable = FCASCapacityVariable(), offers = single))
+    D = eltype(devices)
+    both = D[d for d in devices if directions[PSY.get_name(d)] == FCASBidDirection.BOTH]
+    single = Tuple{D, Bool}[
+        (d, directions[PSY.get_name(d)] == FCASBidDirection.DECREMENTAL) for d in devices if directions[PSY.get_name(d)] != FCASBidDirection.BOTH
+    ]
+    groups = _FCASOfferGroup{D}[]
+    isempty(single) || push!(groups, _FCASOfferGroup{D}(String(name), FCASCapacityVariable(), single))
     if !isempty(both)
         for decremental in (false, true)
-            push!(groups, (meta = _fcas_side_meta(name, decremental), variable = FCASSideCapacityVariable(), offers = [(d, decremental) for d in both]))
+            push!(groups, _FCASOfferGroup{D}(_fcas_side_meta(name, decremental), FCASSideCapacityVariable(), Tuple{D, Bool}[(d, decremental) for d in both]))
         end
     end
     return groups
@@ -608,7 +638,7 @@ end
     _fcas_band_labels(offers, svc::FCASService) -> Vector{String}
 
 Band labels `"1"` to `"n"`, `n` the most bands any offer in `offers` has over the whole of its
-offer curve series (the service bid of `svc`, see [`fcas_offer_series_name`](@ref)), at least 1.
+offer curve series (the `offer_curves` series of its bid, see `_fcas_offer_key`), at least 1.
 
 # Returns
 `Vector{String}`.
@@ -616,8 +646,8 @@ offer curve series (the service bid of `svc`, see [`fcas_offer_series_name`](@re
 function _fcas_band_labels(offers, svc::FCASService)
     n = 1
     for (device, decremental) in offers
-        name = fcas_offer_series_name(svc, decremental)
-        curves = PSY.get_time_series_values(PSY.SingleTimeSeries, device, name)
+        key = AustralianElectricityMarkets._fcas_offer_key(device, get_bid_type(svc), offer_side(decremental))
+        curves::Vector{IS.PiecewiseStepData} = PSY.get_time_series_values(PSY.SingleTimeSeries, device, IS.get_name(key))
         n = max(n, maximum(c -> length(PSY.get_y_coords(c)), curves))
     end
     return string.(1:n)
@@ -654,7 +684,7 @@ end
 
 For an [`_fcas_offer_groups`](@ref) `group`, bounds each [`FCASOfferBandVariable`](@ref) by its
 [`FCASBandWidthParameter`](@ref) width and ties the bands' sum to the group's capacity variable
-([`FCASOfferBandConstraint`](@ref), meta `group.meta`). Widths are per-unit of the system base.
+([`FCASUnitConstraint`](@ref) offer band rows, meta `"offer_band|<group.meta>"`). Widths are per-unit of the system base.
 
 # Returns
 `nothing`.
@@ -667,7 +697,7 @@ function _add_fcas_band_constraints!(container::PSI.OptimizationContainer, group
     bands = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, group.meta)
     labels = axes(bands)[2]
     con = PSI.add_constraints_container!(
-        container, FCASOfferBandConstraint(), FCASService, names, time_steps; meta = group.meta,
+        container, FCASUnitConstraint(), FCASService, names, time_steps; meta = _fcas_unit_meta("offer_band", group.meta),
     )
     for (device, decremental) in group.offers
         dname = PSY.get_name(device)
@@ -684,64 +714,37 @@ end
 
 
 """
-    _add_fcas_band_costs!(container, group, svc, devices_template)
+    _add_fcas_band_costs!(container, group, svc)
 
-Prices the [`FCASOfferBandVariable`](@ref)s of an [`_fcas_offer_groups`](@ref) `group` through
-[`FCASBandPriceParameter`](@ref) time-series cost parameters: one per device type and side, of meta
-`"<group.meta>_gen"` or `"<group.meta>_load"`, read from the offers' service series (see
-[`fcas_offer_series_name`](@ref)). Each band's cost target is its price in `\$/MWh` times the system base
-power and the interval length in hours.
+Prices the [`FCASOfferBandVariable`](@ref)s of an [`_fcas_offer_groups`](@ref) `group` in the invariant objective
+expression. Each band's cost is its `band_prices` entry (`\$/MWh`, the day price of the device's bid on that side)
+times the system base power and the interval length in hours.
 
 # Arguments
 - `container`: the optimization container of the model being built.
 - `group`: the offer group.
 - `svc`: the `FCASService` of the group.
-- `devices_template`: the template's device models, supplying the model of each device type.
 
 # Returns
 `nothing`.
 """
-function _add_fcas_band_costs!(container::PSI.OptimizationContainer, group, svc::FCASService, devices_template)
+function _add_fcas_band_costs!(container::PSI.OptimizationContainer, group, svc::FCASService)
     bands = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, group.meta)
     labels = axes(bands)[2]
-    for decremental in (false, true)
-        side = [device for (device, dec) in group.offers if dec == decremental]
-        isempty(side) && continue
-        meta = _fcas_band_price_meta(group, decremental)
-        ts_name = fcas_offer_series_name(svc, decremental)
-        for D in unique(typeof.(side))
-            devices = D[device for device in side if device isa D]
-            PSI.add_parameters!(
-                container, FCASBandPriceParameter, devices, _fcas_device_model(devices_template, D);
-                meta = meta, time_series_name = ts_name,
-            )
+    scale = PSI.get_base_power(container) * interval_hours(PSI.get_resolution(container))
+    invariant = _invariant_objective(container)
+    for (device, decremental) in group.offers
+        dname = PSY.get_name(device)
+        bid = AustralianElectricityMarkets._fcas_side_bid(device, get_bid_type(svc), offer_side(decremental))
+        prices = isnothing(bid) ? nothing : bid.band_prices
+        isnothing(prices) && throw(
+            ArgumentError("$dname has no $(get_bid_type(svc)) band prices; run the NEMDE input stage."),
+        )
+        for t in PSI.get_time_steps(container), (b, label) in enumerate(labels)
+            JuMP.add_to_expression!(invariant, scale * prices[b], bands[dname, label, t])
         end
     end
-    scale = PSI.get_base_power(container) * interval_hours(PSI.get_resolution(container))
-    for (device, decremental) in group.offers, t in PSI.get_time_steps(container), (b, label) in enumerate(labels)
-        dname = PSY.get_name(device)
-        key = PSI.ParameterKey(FCASBandPriceParameter, typeof(device), _fcas_band_price_meta(group, decremental))
-        PSI.add_cost_target!(container, key, dname, (b,), t, bands[dname, label, t], scale)
-    end
     return
-end
-
-
-"""
-    _fcas_band_price_meta(group, decremental::Bool) -> String
-
-The meta of a band-price parameter of `group` on the side `decremental`: `<group.meta>_gen` for the
-generation side or `<group.meta>_load` for the load side.
-
-# Arguments
-- `group`: the offer group of [`_fcas_offer_groups`](@ref).
-- `decremental`: `true` for the load side.
-
-# Returns
-A `String`.
-"""
-function _fcas_band_price_meta(group, decremental::Bool)
-    return "$(group.meta)_$(decremental ? "load" : "gen")"
 end
 
 
@@ -764,7 +767,7 @@ function PSI.construct_service!(
     time_steps = PSI.get_time_steps(container)
     jm = PSI.get_jump_model(container)
 
-    groups = _fcas_offer_groups(name, devices, bid_type)
+    groups = _build_scratch(container)[(:fcas_offer_groups, name)]
 
     # Contingency services carry the regulation targets: `RaiseReg` upper, `LowerReg` lower, swapped for a load.
     if !is_regulation
@@ -795,10 +798,11 @@ function PSI.construct_service!(
         both_names = PSY.get_name.(both_devices)
         target = PSI.get_expression(container, FCASUnitRegulationTarget(), FCASService, name)
         con_ramp = PSI.add_constraints_container!(
-            container, FCASBDURampingConstraint(), FCASService, both_names, time_steps; meta = name,
+            container, FCASUnitConstraint(), FCASService, both_names, time_steps; meta = _fcas_unit_meta("bdu_ramping", name),
         )
         slack_ramp = _add_fcas_slack!(
-            container, model, FCASBDURampingSlack, name, both_names, time_steps, FCAS_BDU_RAMPING_CVP_FACTOR,
+            container, model, FCASBDURampingVariant(), name, both_names, time_steps, FCAS_BDU_RAMPING_CVP_FACTOR;
+            label = "FCASBDURampingSlack_$name",
         )
         for device in both_devices
             dname = PSY.get_name(device)
@@ -825,13 +829,15 @@ function PSI.construct_service!(
         end
     end
 
-    if is_regulation && FCASJointRampingConstraint in PSI.get_duals(model)
+    if is_regulation && FCASUnitConstraint in PSI.get_duals(model)
         names = PSY.get_name.(devices)
-        PSI.add_dual_container!(container, FCASJointRampingConstraint, FCASService, names, time_steps; meta = name)
+        PSI.add_dual_container!(
+            container, FCASUnitConstraint, FCASService, names, time_steps; meta = _fcas_unit_meta("joint_ramping", name),
+        )
     end
 
     for group in groups
-        _add_fcas_band_costs!(container, group, svc, devices_template)
+        _add_fcas_band_costs!(container, group, svc)
     end
     return
 end

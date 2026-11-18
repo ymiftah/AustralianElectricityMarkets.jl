@@ -1,63 +1,29 @@
-# 0028. Interconnector limits and as-of static tables
+# 0028 Interconnector limits and as-of static tables
 
 ## Status
 
 Accepted
 
-## Context
+## What
 
-The replication path took interconnector flow bounds from the newest `INTERCONNECTORCONSTRAINT`
-version (static `MAXMWIN`/`MAXMWOUT`) and unit loss factors from the newest `DUDETAILSUMMARY`
-row. For June 2026 data the newest rows are the FY26-27 versions effective 2026-07-01 (for
-example MURRAY MLF 0.9565 where 0.9819 was in force), so static inputs came from the wrong
-period.
+- Static tables resolve as of the run start, not the newest cached version. For June 2026 data the newest rows are the FY26-27 versions effective 2026-07-01 (MURRAY MLF 0.9565 where 0.9819 was in force).
+- Per-interval published flow limits are opt-in and a diagnostic only.
 
-## Decision
+## How
 
-- **As-of resolution.** `read_interconnectors` and `read_units` take `as_of`. Each monthly
-  archive holds the full history, so only the latest archive is read (older archives carry stale
-  rows that the latest one has since closed or superseded). Within it, the latest
-  `INTERCONNECTORCONSTRAINT` row with `EFFECTIVEDATE <= as_of` (then highest `VERSIONNO`), the
-  `DUDETAIL` row likewise, and the `DUDETAILSUMMARY` row with `START_DATE <= as_of < END_DATE`
-  (loss factors are published per financial year with a 1 July start; see the Marginal Loss
-  Factors reports). `AUTHORISEDDATE` is ignored: a version is selected by its effective date, not
-  by when it was authorised. Units registered now but not in force as of the date drop out with a
-  warning. `as_of = nothing` keeps the previous latest-version behaviour. `nem_system` accepts
-  `as_of`; `ConstrainedNetworkConfiguration` defaults it to the start of `date_range`, while
-  `RegionalNetworkConfiguration` keeps the latest version because it has no date range.
-- **Per-interval limits are opt-in and a diagnostic.** `set_interconnector_flow_limits!` bounds
-  flow by the `DISPATCHINTERCONNECTORRES` `IMPORTLIMIT` and `EXPORTLIMIT` through the
-  `"from_to_flow_limit"` and `"to_from_flow_limit"` series `NEMInterconnectorLoss` reads. AEMO
-  computes these limits after the solve (each binding constraint's right-hand side projected with
-  the other terms held at NEMDE's solved values), so they are results, not inputs. Using them as
-  hard bounds pins flows to NEMDE's answer and can conflict with generic constraint rows that are
-  elastic. It is not redundant with those constraints. This differs from taking
-  `DISPATCHCONSTRAINT.RHS` as the constraint right-hand side, which fixes a data input rather
-  than a solved quantity. `replication_system` and `replicate_interval` therefore take
-  `interval_flow_limits = false`; set it to `true` only to isolate flow gaps, never when
-  validating flows. The signed limits are ordered (lower = min, upper = max) and each is clamped
-  into the static envelope `[-MAXMWIN, MAXMWOUT]`. `FCASEXPORTLIMIT`/`FCASIMPORTLIMIT` are not
-  used.
-- **Initial flow.** `METEREDMWFLOW` is the flow at the start of the interval; `MWFLOW` is the
-  target NEMDE chose. `read_interconnector_limits` returns `METEREDMWFLOW`, but nothing consumes
-  it: it is the ramp base of MNSP links, which are not modelled per link yet.
-  `IntervalInputs.interconnector_flows` holds the target `MWFLOW`.
+- `read_interconnectors` and `read_units` take `as_of`; `nem_system` passes `first(date_range)`. Only the latest monthly archive is read (each holds the full history; older ones carry superseded rows). Within it:
+  - `INTERCONNECTORCONSTRAINT` and `DUDETAIL`: the latest row with `EFFECTIVEDATE <= as_of`, then highest `VERSIONNO`.
+  - `DUDETAILSUMMARY`: the row in force at the date (loss factors are published per financial year from 1 July; see the Marginal Loss Factors reports).
+  - `AUTHORISEDDATE` is ignored. `as_of = nothing` keeps the latest version.
+- Interconnector region pairs still come from the newest `INTERCONNECTOR` partition: they do not change for active interconnectors.
+- `set_interconnector_flow_limits!` (called when `nem_system` gets `interval_flow_limits = true`, default `false`) bounds flow by `DISPATCHINTERCONNECTORRES` `IMPORTLIMIT` / `EXPORTLIMIT`, as the `"from_to_flow_limit"` / `"to_from_flow_limit"` series `NEMInterconnectorLoss` reads. The lower bound is the smaller signed limit, the upper the larger, each clamped into `[-MAXMWIN, MAXMWOUT]`. `FCASEXPORTLIMIT` / `FCASIMPORTLIMIT` are not used.
+- `METEREDMWFLOW` is the flow at the start of the interval (initial flow); `MWFLOW` is the target NEMDE chose.
 
-## Consequences
+## Why
 
-- A constrained build differs from before whenever a static table gained a newer version after
-  `date_range`'s start. Pass `as_of = nothing` to restore the latest version.
-- Interconnector region pairs still come from the newest `INTERCONNECTOR` partition: they do not
-  change over time for active interconnectors.
-- Basslink changed type (MNSP to regulated in the newest version); as-of resolution removes the
-  mismatch between its limits and its loss parameters, but its per-link offers remain unmodelled.
+- AEMO computes the published limits after the solve (each binding constraint's right-hand side projected with the other terms held at NEMDE's solved values), so they are results. As hard bounds they pin flows to NEMDE's answer and can conflict with elastic generic constraint rows. Use them only to isolate flow gaps, never when validating flows. This differs from taking `DISPATCHCONSTRAINT.RHS` as a constraint right-hand side, which is a data input.
+- Basslink changed type (MNSP to regulated) in the newest version; as-of resolution keeps its limits and loss parameters from the same period.
 
-## Follow-up
+## Open
 
-- `INTERCONNECTORCONSTRAINT` also carries static `IMPORTLIMIT`/`EXPORTLIMIT` (unsigned, whole MW,
-  with the import limit negated by nempy), a pre-solve envelope that nempy uses in place of
-  `MAXMWIN`/`MAXMWOUT`. In the cache's 2026-07-01 version they are `MAXMWIN`/`MAXMWOUT` minus
-  1 MW for every active interconnector (VIC1-NSW1 2300/2400 against 2299/2399, NSW1-QLD1
-  2479/2205 against 2478/2204), and the data model gives no semantics beyond "limit". The
-  default is unchanged. Whether the 1 MW difference matters is to be checked against published
-  limits on a few intervals before switching.
+- `INTERCONNECTORCONSTRAINT` carries static `IMPORTLIMIT` / `EXPORTLIMIT`, which nempy uses in place of `MAXMWIN` / `MAXMWOUT`. In the 2026-07-01 version they are 1 MW below them for every active interconnector (VIC1-NSW1 2300/2400 against 2299/2399). Whether the 1 MW matters is unchecked; the default is unchanged.

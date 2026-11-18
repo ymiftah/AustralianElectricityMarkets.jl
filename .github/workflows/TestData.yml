@@ -36,8 +36,7 @@ jobs:
       fail-fast: false
       matrix:
         version:
-          - "1.11"
-          - "1.12"
+          - "1.13"
           - "pre"
     steps:
       - uses: actions/checkout@v6
@@ -53,13 +52,13 @@ jobs:
       - uses: julia-actions/julia-runtest@v1
         with:
           project: AustralianElectricityMarketsData
-          coverage: ${{ matrix.version == '1.11' }}
+          coverage: ${{ matrix.version == '1.13' }}
       - uses: julia-actions/julia-processcoverage@v1
-        if: matrix.version == '1.11'
+        if: matrix.version == '1.13'
         with:
           directories: AustralianElectricityMarketsData/src
       - uses: codecov/codecov-action@v5
-        if: matrix.version == '1.11'
+        if: matrix.version == '1.13'
         with:
           files: lcov.info
           flags: AustralianElectricityMarketsData

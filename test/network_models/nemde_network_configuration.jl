@@ -1,0 +1,453 @@
+# One complete mock hive with interconnector results, shared read-only by the testsets below.
+const _NEMDE_HIVE = let hive = mktempdir()
+    create_mock_data(hive; complete_inputs = true)
+    write_mock_interconnector_results(hive)
+    hive
+end
+
+# The NEMDE system of the shared hive, read-only for the testsets below.
+const _NEMDE_INTERVAL = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
+const _NEMDE_SYS = nem_system(aem_connect(HiveConfiguration(hive_location = _NEMDE_HIVE)), NEMDEConfiguration(); date_range = _NEMDE_INTERVAL)
+
+@testset "NEMDE requirements include mandatory MNSP metering" begin
+    @test :DISPATCHINTERCONNECTORRES in table_requirements(NEMDEConfiguration())
+end
+
+@testset "every NEM device of the network carries its registration" begin
+    hive = _NEMDE_HIVE
+    db = aem_connect(HiveConfiguration(hive_location = hive))
+    interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
+    as_of, through = first(interval), last(interval) - Minute(5)
+    sys, units = nem_network(db; as_of, through)
+    units_by_duid = Dict(String(r.DUID) => r for r in eachrow(units))
+    factors = Dict(String(r.DUID) => r for r in eachrow(read_loss_factors(db; as_of, through)))
+    schedule_types = Dict(
+        "SCHEDULED" => ScheduleType.SCHEDULED, "SEMI-SCHEDULED" => ScheduleType.SEMI_SCHEDULED,
+        "NON-SCHEDULED" => ScheduleType.NON_SCHEDULED,
+    )
+    devices = [d for T in (Generator, ControllableLoad, Storage) for d in get_components(T, sys)]
+    @test !isempty(devices)
+    function registered(device)
+        registration, unit, factor = get_registration(device), units_by_duid[get_name(device)], factors[get_name(device)]
+        return registration.schedule_type == schedule_types[unit.SCHEDULE_TYPE] &&
+            registration.gen_loss_factor == factor.GEN_LOSS_FACTOR && registration.load_loss_factor == factor.LOAD_LOSS_FACTOR &&
+            registration.registered_from == unit.REGISTERED_FROM && registration.registered_until == unit.REGISTERED_UNTIL &&
+            isempty(get_ext(device))
+    end
+    @test isempty(filter(!registered, devices))
+
+    # Station metadata is typed, attached as one shared NEMStation per station.
+    station_of = Dict(get_name(g) => only(get_supplemental_attributes(NEMStation, g)) for g in get_components(Generator, sys))
+    @test all(station_of) do (name, station)
+        unit = units_by_duid[name]
+        return (station.station_id, station.station_name, station.postcode) == (unit.STATIONID, unit.STATIONNAME, unit.POSTCODE)
+    end
+    @test station_of["BW02"] === station_of["BW03"]
+    @test station_of["BW03"] === station_of["BW04"]
+    @test station_of["ER01"] === station_of["ER02"]
+    @test station_of["BW02"] !== station_of["ER01"]
+
+    # The non-scheduled and commissioned flags read the typed registration, not ext.
+    asload = get_component(ControllableLoad, sys, "ASLOAD1")
+    pump = get_component(ControllableLoad, sys, "PUMP1")
+    @test is_non_scheduled_load(asload)
+    @test is_commissioned(asload)
+    @test !is_non_scheduled_load(pump)
+
+    # A device built without a registration fails the build steps that read it, naming it.
+    set_registration!(get_component(ThermalStandard, sys, "ER01"), nothing)
+    @test_throws r"ER01 has no registration" set_unit_conditions!(sys, db, interval)
+end
+
+@testset "NEMDEConfiguration" begin
+    hive = _NEMDE_HIVE
+    db = aem_connect(HiveConfiguration(hive_location = hive))
+    interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
+    config = NEMDEConfiguration()
+    @test_throws ArgumentError nem_system(db, config; date_range = first(interval):Minute(10):last(interval))
+    @test_throws ArgumentError nem_system(db, config; date_range = first(interval):Minute(5):first(interval))
+    sys = _NEMDE_SYS
+    @test all(d -> isempty(get_ext(d)), (d for T in (Generator, ControllableLoad, Storage, GenericConstraint, AreaInterchange) for d in get_components(T, sys)))
+    gen = get_component(RenewableDispatch, sys, "BW03")
+    @test get_time_series_values(SingleTimeSeries, gen, "bid_energy_max_avail_gen") ≈ [101.0, 102.0, 103.0]
+    @test get_time_series_values(SingleTimeSeries, gen, "telemetry_uigf"; ignore_scaling_factors = true) ≈ [41.0, 42.0, 43.0]
+    @test has_time_series(gen, DeterministicSingleTimeSeries, "bid_energy_max_avail_gen")
+    @test !isempty(collect(get_components(FCASService, sys)))
+    ic = get_component(AreaInterchange, sys, "IC2")
+    @test !isempty(get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPBid, ic))
+    @test isempty(get_supplemental_attributes(AustralianElectricityMarkets.NEMInterconnectorLimits, ic))
+    diagnostic = nem_system(db, config; date_range = interval, interval_flow_limits = true)
+    @test !isempty(get_supplemental_attributes(AustralianElectricityMarkets.NEMInterconnectorLimits, get_component(AreaInterchange, diagnostic, "IC2")))
+    directory = mktempdir()
+    on_disk = nem_system(db, config; date_range = interval, time_series_in_memory = false, time_series_directory = directory)
+    @test !isempty(readdir(directory))
+    @test get_time_series_values(SingleTimeSeries, get_component(RenewableDispatch, on_disk, "BW03"), "telemetry_uigf"; ignore_scaling_factors = true) ≈ [41.0, 42.0, 43.0]
+    @testset "a mixed range takes the physical run only where the interval has one" begin
+        # Only 00:10 has a physical run in DISPATCHLOAD; 00:05 and 00:15 fall back to the pricing run.
+        mixed_db = damaged_cache(
+            hive, :DISPATCHLOAD,
+            "INSERT INTO input SELECT * REPLACE (1 AS INTERVENTION, INITIALMW + CASE WHEN DUID = 'BW03' THEN 10 ELSE 0 END AS INITIALMW) FROM input WHERE INTERVENTION = 0 AND SETTLEMENTDATE = TIMESTAMP '2025-01-01 00:10'",
+        )
+        mixed = nem_system(mixed_db, config; date_range = interval, intervention = 1)
+        mixed_gen = get_component(RenewableDispatch, mixed, "BW03")
+        @test get_time_series_values(SingleTimeSeries, mixed_gen, "observed_initial_mw"; ignore_scaling_factors = true) .- get_time_series_values(SingleTimeSeries, gen, "observed_initial_mw"; ignore_scaling_factors = true) ≈ [0.0, 10.0, 0.0]
+    end
+    @testset "missing bids and demand cannot remove participants or create zero demand" begin
+        interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 15)
+        for (table, query, expected) in [
+                (:BIDDAYOFFER_D, "DELETE FROM input WHERE BIDTYPE = 'ENERGY' AND DUID = 'BW02'", r"price.*BW02"),
+                (:BIDPEROFFER_D, "DELETE FROM input WHERE BIDTYPE = 'ENERGY' AND DUID = 'BW01' AND DIRECTION = 'LOAD'", r"BW01 LOAD"),
+                (:BIDPEROFFER_D, "DELETE FROM input WHERE BIDTYPE = 'ENERGY' AND DUID = 'BW02'", r"BW02 GEN"),
+                (:DISPATCHREGIONSUM, "DELETE FROM input WHERE REGIONID = 'VIC1'", r"missing regional demand.*VIC1"),
+                (:DISPATCHREGIONSUM, "DELETE FROM input WHERE SETTLEMENTDATE = TIMESTAMP '2025-01-01 00:10'", r"missing regional demand"),
+            ]
+            db = damaged_cache(hive, table, query)
+            @test_throws expected nem_system(db, NEMDEConfiguration(); date_range = interval)
+        end
+    end
+
+    @testset "zero availability does not hide a missing ramping unit's offer" begin
+        missing_bids = damaged_cache(hive, :BIDPEROFFER_D, "DELETE FROM input WHERE BIDTYPE = 'ENERGY' AND DUID = 'BW02'")
+        db = damaged_cache(missing_bids.config.hive_location, :DISPATCHLOAD, "UPDATE input SET AVAILABILITY = 0 WHERE DUID = 'BW02'")
+        interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 15)
+        @test_throws r"BW02 GEN" nem_system(db, NEMDEConfiguration(); date_range = interval)
+    end
+
+    @testset "an interchange with fewer than two loss breakpoints throws" begin
+        # Leaving one breakpoint for IC1 leaves it unmodelled, which would otherwise run it lossless.
+        damaged = damaged_cache(hive, :LOSSMODEL, "DELETE FROM input WHERE INTERCONNECTORID = 'IC1' AND LOSSSEGMENT > 1")
+        @test_throws r"without a loss model would run lossless: IC1;" nem_system(damaged, NEMDEConfiguration(); date_range = interval)
+    end
+
+end
+
+@testset "the NEMDE build validates its NEMDE inputs" begin
+    AEM = AustralianElectricityMarkets
+    hive = _NEMDE_HIVE
+    db = aem_connect(HiveConfiguration(hive_location = hive))
+    interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
+
+    # One fresh build for the two hand-edited systems; the telemetry is restored before the MNSP edit.
+    edited = nem_system(db, NEMDEConfiguration(); date_range = interval)
+    @testset "a dispatch device without its typed fields" begin
+        er01 = get_component(ThermalStandard, edited, "ER01")
+        telemetry = get_telemetry(er01)
+        set_telemetry!(er01, nothing)
+        @test_throws r"ER01.*telemetry" AEM._check_nemde_inputs(edited)
+        set_telemetry!(er01, telemetry)
+    end
+
+    @testset "an MNSP without two directional links" begin
+        damaged = damaged_cache(hive, :MNSP_INTERCONNECTOR, "DELETE FROM input WHERE LINKID = 'BLNKVIC'")
+        @test_throws r"IC2.*link" nem_system(damaged, NEMDEConfiguration(); date_range = interval)
+        # The build rejects the damaged cache itself; the check also guards a hand-edited system.
+        sys = edited
+        ic2 = get_component(AreaInterchange, sys, "IC2")
+        remove_supplemental_attribute!(sys, ic2, first(get_supplemental_attributes(AEM.NEMMNSPLink, ic2)))
+        @test_throws r"IC2.*link" AEM._check_nemde_inputs(sys)
+    end
+
+    @testset "an invoked constraint without an exact GENCONDATA definition" begin
+        damaged = damaged_cache(hive, :GENCONDATA, "DELETE FROM input WHERE GENCONID = 'N_BAYSW_THERMAL'")
+        @test_throws r"N_BAYSW_THERMAL.*no_definition" nem_system(damaged, NEMDEConfiguration(); date_range = interval)
+    end
+
+    @testset "a NULL GENERICCONSTRAINTWEIGHT is reported, defaulted" begin
+        damaged = damaged_cache(
+            hive, :GENCONDATA,
+            "UPDATE input SET GENERICCONSTRAINTWEIGHT = NULL WHERE GENCONID = 'N_BAYSW_THERMAL'",
+        )
+        @test_throws r"default 1\.0.*N_BAYSW_THERMAL" nem_system(damaged, NEMDEConfiguration(); date_range = interval)
+        both = damaged_cache(
+            hive, :GENCONDATA,
+            "UPDATE input SET GENERICCONSTRAINTWEIGHT = NULL " *
+                "WHERE GENCONID IN ('N_BAYSW_THERMAL', 'N_PUMP_THERMAL')",
+        )
+        err = try
+            nem_system(both, NEMDEConfiguration(); date_range = interval)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("N_BAYSW_THERMAL", err.msg)
+        @test occursin("N_PUMP_THERMAL", err.msg)
+    end
+
+    @testset "a unit term whose DUID is absent from the system is reported, dropped" begin
+        # CP_PHANTOM resolves to PHANTOM1, a DUDETAILSUMMARY DUID the build never creates.
+        phantom_term =
+            "INSERT INTO input SELECT 'CP_PHANTOM' AS CONNECTIONPOINTID, EFFECTIVEDATE, VERSIONNO, GENCONID, " *
+            "PERIODID + 1 AS PERIODID, 1.0 AS FACTOR, BIDTYPE, LASTCHANGED, archive_month FROM input " *
+            "WHERE GENCONID = 'N_BAYSW_THERMAL'"
+        damaged = damaged_cache(hive, :SPDCONNECTIONPOINTCONSTRAINT, phantom_term)
+        @test_throws r"N_BAYSW_THERMAL.*PHANTOM1" nem_system(damaged, NEMDEConfiguration(); date_range = interval)
+        both_terms =
+            "INSERT INTO input SELECT 'CP_PHANTOM' AS CONNECTIONPOINTID, EFFECTIVEDATE, VERSIONNO, GENCONID, " *
+            "PERIODID + 1 AS PERIODID, 1.0 AS FACTOR, BIDTYPE, LASTCHANGED, archive_month FROM input " *
+            "WHERE GENCONID IN ('N_BAYSW_THERMAL', 'N_PUMP_THERMAL')"
+        both = damaged_cache(hive, :SPDCONNECTIONPOINTCONSTRAINT, both_terms)
+        err = try
+            nem_system(both, NEMDEConfiguration(); date_range = interval)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("N_BAYSW_THERMAL", err.msg)
+        @test occursin("N_PUMP_THERMAL", err.msg)
+    end
+
+    @testset "fixed-load constraints need no GENCONDATA" begin
+        fixed = damaged_cache(hive, :DISPATCHCONSTRAINT, "UPDATE input SET CONSTRAINTID = '\$BW01'")
+        fixed = damaged_cache(
+            fixed.config.hive_location, :BIDPEROFFER_D,
+            "UPDATE input SET FIXEDLOAD = 1.0 WHERE DUID = 'BW01' AND BIDTYPE = 'ENERGY'",
+        )
+        # Keep the table cached, with no definition of any invoked constraint.
+        without_definitions = damaged_cache(
+            fixed.config.hive_location, :GENCONDATA, "DELETE FROM input WHERE GENCONID <> 'N_BAYSW_THERMAL'",
+        )
+        @test nem_system(without_definitions, NEMDEConfiguration(); date_range = interval) isa System
+    end
+
+    @testset "exact padded coverage and versions" begin
+        sys = _NEMDE_SYS
+        @test isempty(get_skipped_constraints(sys))
+        @test isempty(get_defaulted_constraint_weights(sys))
+        @test isempty(get_missing_constraint_intervals(sys))
+        @test isempty(get_dropped_terms(sys))
+    end
+
+    @testset "a built-in zero-flow definition needs no GENCONDATA" begin
+        zero = damaged_cache(
+            hive, :INTERCONNECTOR,
+            "INSERT INTO input SELECT 'V-S-MNSP1' AS INTERCONNECTORID, 'VIC1' AS REGIONFROM, 'SA1' AS REGIONTO, '2025-01' AS archive_month",
+        )
+        zero = damaged_cache(
+            zero.config.hive_location, :INTERCONNECTORCONSTRAINT,
+            "INSERT INTO input SELECT 'V-S-MNSP1' AS INTERCONNECTORID, TIMESTAMP '2025-01-01 00:00:00' AS EFFECTIVEDATE, " *
+                "1 AS VERSIONNO, 200.0 AS MAXMWIN, 200.0 AS MAXMWOUT, 0.1 AS FROMREGIONLOSSSHARE, 0.01 AS LOSSCONSTANT, " *
+                "0.001 AS LOSSFLOWCOEFFICIENT, 'REGULATED' AS ICTYPE, '2025-01' AS archive_month",
+        )
+        # A NEMDE build throws on an interchange without a loss model, so it borrows IC1's breakpoints.
+        zero = damaged_cache(
+            zero.config.hive_location, :LOSSMODEL,
+            "INSERT INTO input SELECT * REPLACE ('V-S-MNSP1' AS INTERCONNECTORID) FROM input " *
+                "WHERE INTERCONNECTORID = 'IC1' AND EFFECTIVEDATE = TIMESTAMP '2025-01-01 00:00:00'",
+        )
+        zero = damaged_cache(
+            zero.config.hive_location, :DISPATCHCONSTRAINT,
+            "UPDATE input SET CONSTRAINTID = 'SVML_ZERO', GENCONID_EFFECTIVEDATE = DATE '2013-08-21', GENCONID_VERSIONNO = 1",
+        )
+        sys = nem_system(zero, NEMDEConfiguration(); date_range = interval)
+        @test isnothing(AEM._check_nemde_inputs(sys))
+        @test get_source(get_component(GenericConstraint, sys, "SVML_ZERO@2013-08-21#1")) == "built-in"
+    end
+end
+
+@testset "Run shared inputs preserve independent setter results" begin
+    AEM = AustralianElectricityMarkets
+    hive = _NEMDE_HIVE
+    db = aem_connect(HiveConfiguration(hive_location = hive))
+    grid = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
+    shared, units = constrained_system(db; date_range = grid)
+    independent, _ = constrained_system(db; date_range = grid)
+    @test isequal(units, read_units(db; as_of = first(grid)))
+    demand = read_demand(db, grid; resolution = Minute(5))
+    demand_before = deepcopy(demand)
+    AustralianElectricityMarkets._set_demand!(shared, demand, grid; resolution = Minute(5))
+    attach_demand!(independent, db, grid; resolution = Minute(5))
+    @test isequal(demand, demand_before)
+    for sys in (shared, independent)
+        set_market_bids!(sys, db, grid; resolution = Minute(5))
+        set_unit_conditions!(sys, db, grid)
+    end
+    # (component, series) pairs whose values differ between the two builds.
+    differing = Tuple{String, String}[]
+    compared = 0
+    for T in (PowerLoad, ThermalStandard, HydroDispatch, RenewableDispatch, EnergyReservoirStorage, InterruptiblePowerLoad), component in get_components(T, shared)
+        other = get_component(T, independent, get_name(component))
+        for key in PowerSystems.get_time_series_keys(component)
+            name = get_name(key)
+            compared += 1
+            isequal(
+                get_time_series_values(SingleTimeSeries, component, name; ignore_scaling_factors = true),
+                get_time_series_values(SingleTimeSeries, other, name; ignore_scaling_factors = true),
+            ) || push!(differing, (get_name(component), name))
+        end
+    end
+    @test compared > 0
+    @test isempty(differing)
+end
+
+# Whether every numeric term of an operation cost is zero.
+_zero_cost_term(::Nothing) = true
+_zero_cost_term(x::Real) = iszero(x)
+_zero_cost_term(x::NamedTuple) = all(_zero_cost_term, values(x))
+_zero_cost_term(x::LinearCurve) = iszero(get_proportional_term(x)) && iszero(get_constant_term(x))
+_zero_cost_term(x::CostCurve) = _zero_cost_term(get_value_curve(x)) && _zero_cost_term(get_vom_cost(x))
+function _zero_cost_term(cost::PowerSystems.OperationalCost)
+    return all(f -> _zero_cost_term(getfield(cost, f)), fieldnames(typeof(cost)))
+end
+
+@testset "Stock regional network builds generators with zero operation costs" begin
+    AEM = AustralianElectricityMarkets
+    hive = _NEMDE_HIVE
+    db = aem_connect(HiveConfiguration(hive_location = hive))
+    sys, _, _ = AustralianElectricityMarkets.RegionModel._nem_network(db)
+    generators = collect(get_components(Generator, sys))
+    @test !isempty(generators)
+    @test all(g -> get_operation_cost(g) isa Union{RenewableGenerationCost, HydroGenerationCost, ThermalGenerationCost}, generators)
+    @test all(g -> _zero_cost_term(get_operation_cost(g)), generators)
+    others = [
+        d for T in (EnergyReservoirStorage, ControllableLoad) for d in get_components(T, sys)
+    ]
+    @test !isempty(others)
+    @test all(d -> _zero_cost_term(get_operation_cost(d)), others)
+    @test !any(has_nem_unit_data, Iterators.flatten((generators, others)))
+end
+
+@testset "NEMDE systems hold only NEM dispatch units" begin
+    hive = _NEMDE_HIVE
+    db = aem_connect(HiveConfiguration(hive_location = hive))
+    interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
+    sys = _NEMDE_SYS
+    @test all(has_nem_unit_data, (d for T in (ThermalStandard, HydroDispatch, RenewableDispatch, EnergyReservoirStorage, InterruptiblePowerLoad) for d in get_components(T, sys)))
+    @test !any(d -> get_operation_cost(d) isa MarketBidCost, Iterators.flatten((get_components(Generator, sys), get_components(Storage, sys), get_components(ControllableLoad, sys))))
+    nem_devices = [d for T in (ThermalStandard, HydroDispatch, RenewableDispatch, EnergyReservoirStorage, InterruptiblePowerLoad) for d in get_components(T, sys)]
+    @test !isempty(nem_devices)
+    @test all(d -> AustralianElectricityMarkets._nem_offer_cost(d) isa NEMOfferCost, nem_devices)
+    # Every recorded bid key resolves to a series on its device.
+    bids = [(d, b) for d in nem_devices for b in AustralianElectricityMarkets.get_energy_bids(AustralianElectricityMarkets._nem_offer_cost(d))]
+    @test !isempty(bids)
+    @test all(((d, b),) -> has_time_series(d, SingleTimeSeries, b.offer_curves.name) && has_time_series(d, SingleTimeSeries, b.max_avail.name), bids)
+end
+
+@testset "units registered mid-chunk are built for the whole chunk" begin
+    hive = _NEMDE_HIVE
+    interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
+    grid = collect(interval)[1:(end - 1)]
+    full = _NEMDE_SYS
+    series(device, name) = get_time_series_values(SingleTimeSeries, device, name; ignore_scaling_factors = true) .* get_base_power(full)
+    # Natural-unit telemetry and observed-state series, as published.
+    raw(device, name) = get_time_series_values(SingleTimeSeries, device, name; ignore_scaling_factors = true)
+    # A unit first registered at `stamp`: its summary and loss-factor rows start there, and its
+    # bids and dispatch rows before it are removed, as NEMWEB has them.
+    function registered_from(source, duid, stamp)
+        t = "TIMESTAMP '$stamp'"
+        steps = [
+            (:DUDETAILSUMMARY, "UPDATE input SET START_DATE = $t WHERE DUID = '$duid'"),
+            (:DUDETAIL, "UPDATE input SET EFFECTIVEDATE = $t WHERE DUID = '$duid'"),
+            (:BIDPEROFFER_D, "DELETE FROM input WHERE DUID = '$duid' AND INTERVAL_DATETIME <= $t"),
+            (:DISPATCHLOAD, "DELETE FROM input WHERE DUID = '$duid' AND SETTLEMENTDATE <= $t"),
+        ]
+        for (table, query) in steps
+            source = damaged_cache(source, table, query).config.hive_location
+        end
+        return source
+    end
+    connect(source) = aem_connect(HiveConfiguration(hive_location = source, filesystem = "file"))
+    late_hive = registered_from(hive, "BW02", "2025-01-01 00:10:00")
+    late = nem_system(connect(late_hive), NEMDEConfiguration(); date_range = interval)
+    bw02 = get_component(Generator, late, "BW02")
+    bw02_full = get_component(Generator, full, "BW02")
+    # BW02 is registered only at 00:15, so the two earlier stamps are zero-padded.
+    @test series(bw02, "bid_energy_max_avail_gen") ≈ [0.0, 0.0, series(bw02_full, "bid_energy_max_avail_gen")[3]]
+    @test raw(bw02, "observed_initial_mw") ≈ [0.0, 0.0, raw(bw02_full, "observed_initial_mw")[3]]
+    # Ramp rates have no value at the stamps without a row; the AGC ramp reads them as NaN there.
+    for name in ("telemetry_ramp_up_limit", "telemetry_ramp_down_limit")
+        @test all(isnan, raw(bw02, name)[1:2])
+        @test raw(bw02, name)[3] ≈ raw(bw02_full, name)[3]
+    end
+
+    # Every single-time-series input of every injection spans the whole chunk.
+    short = [
+        (get_name(device), get_name(key)) for device in get_components(StaticInjection, late) for key in get_time_series_keys(device)
+            if get_time_series_type(key) === SingleTimeSeries && get_time_series_timestamps(SingleTimeSeries, device, get_name(key)) != grid
+    ]
+    @test isempty(short)
+    @test isempty(get_dropped_terms(late))
+    @test isempty(get_skipped_constraints(late))
+
+    @testset "BW02's padded offer curve has no width" begin
+        raise6 = BidType.RAISE6SEC
+        # The padded offer curve has zero width, so the service bid offers nothing there.
+        svc = only(s for s in get_components(FCASService, late) if get_bid_type(s) == raise6 && "BW02" in get_name.(get_contributing_devices(late, s)))
+        curves = get_time_series_values(SingleTimeSeries, bw02, AustralianElectricityMarkets.bid_series_name(BidType.RAISE6SEC, :offer_curves, AustralianElectricityMarkets.BidDirection.GEN); ignore_scaling_factors = true)
+        @test all(i -> sum(diff(PowerSystems.get_x_coords(curves[i]))) == 0.0, 1:2)
+    end
+    @test_nowarn PowerSystems.transform_single_time_series!(late, DISPATCH_INTERVAL, DISPATCH_INTERVAL)
+
+    @testset "a partly published FCAS trapezium is zero where AEMO publishes none" begin
+        partial = damaged_cache(
+            hive, :BIDPEROFFER_D,
+            "DELETE FROM input WHERE DUID = 'BW01' AND BIDTYPE <> 'ENERGY' AND INTERVAL_DATETIME = TIMESTAMP '2025-01-01 00:05:00'",
+        )
+        sys = nem_system(partial, NEMDEConfiguration(); date_range = interval)
+        battery = get_component(EnergyReservoirStorage, sys, "BW01")
+        battery_full = get_component(EnergyReservoirStorage, full, "BW01")
+        trapezium = AustralianElectricityMarkets.bid_series_name(BidType.RAISE6SEC, :trapezium, AustralianElectricityMarkets.BidDirection.GEN)
+        values = get_time_series_values(SingleTimeSeries, battery, trapezium; ignore_scaling_factors = true)
+        @test length(values) == length(grid)
+        @test isequal(values[1], (0.0, 0.0, 0.0, 0.0))
+        @test isequal(values[2:3], get_time_series_values(SingleTimeSeries, battery_full, trapezium; ignore_scaling_factors = true)[2:3])
+        # Every FCAS offer curve, whichever device carries it, spans the whole chunk.
+        bidders = Iterators.flatten((get_components(Generator, sys), get_components(Storage, sys), get_components(ControllableLoad, sys)))
+        @test all(
+            length(get_time_series_values(SingleTimeSeries, device, bid.offer_curves.name; ignore_scaling_factors = true)) == length(grid)
+                for device in bidders for bid in AustralianElectricityMarkets.get_fcas_bids(AustralianElectricityMarkets._nem_offer_cost(device))
+        )
+    end
+
+    @testset "a non-scheduled FCAS-only load is zero where its data stops" begin
+        stopped = damaged_cache(
+            hive, :DISPATCHLOAD,
+            "DELETE FROM input WHERE DUID = 'ASLOAD1' AND SETTLEMENTDATE = TIMESTAMP '2025-01-01 00:15:00'",
+        ).config.hive_location
+        stopped = damaged_cache(
+            stopped, :BIDPEROFFER_D,
+            "DELETE FROM input WHERE DUID = 'ASLOAD1' AND INTERVAL_DATETIME = TIMESTAMP '2025-01-01 00:15:00'",
+        ).config.hive_location
+        sys = nem_system(connect(stopped), NEMDEConfiguration(); date_range = interval)
+        load = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
+        @test all(iszero, raw(load, "observed_initial_mw"))
+        values = get_time_series_values(SingleTimeSeries, load, AustralianElectricityMarkets.bid_series_name(BidType.RAISE6SEC, :trapezium, AustralianElectricityMarkets.BidDirection.LOAD); ignore_scaling_factors = true)
+        @test length(values) == length(grid)
+        @test all(iszero, values[3])
+    end
+
+    @testset "a unit deregistered inside the chunk is zero after its last stamp" begin
+        ended = damaged_cache(hive, :DUDETAILSUMMARY, "UPDATE input SET END_DATE = TIMESTAMP '2025-01-01 00:10:00' WHERE DUID = 'BW04'").config.hive_location
+        ended = damaged_cache(ended, :BIDPEROFFER_D, "DELETE FROM input WHERE DUID = 'BW04' AND INTERVAL_DATETIME = TIMESTAMP '2025-01-01 00:15:00'").config.hive_location
+        ended = damaged_cache(ended, :DISPATCHLOAD, "DELETE FROM input WHERE DUID = 'BW04' AND SETTLEMENTDATE = TIMESTAMP '2025-01-01 00:15:00'").config.hive_location
+        sys = nem_system(connect(ended), NEMDEConfiguration(); date_range = interval)
+        gen = get_component(RenewableDispatch, sys, "BW04")
+        @test raw(gen, "telemetry_uigf")[3] == 0.0
+    end
+
+    @testset "a semi-scheduled unit registered mid-chunk has zero UIGF before registration" begin
+        semi_late = registered_from(hive, "BW03", "2025-01-01 00:10:00")
+        sys = nem_system(connect(semi_late), NEMDEConfiguration(); date_range = interval)
+        gen = get_component(RenewableDispatch, sys, "BW03")
+        @test get_registration(gen).schedule_type == ScheduleType.SEMI_SCHEDULED
+        @test raw(gen, "telemetry_uigf")[1:2] == [0.0, 0.0]
+        @test raw(gen, "telemetry_uigf")[3] ≈ raw(get_component(RenewableDispatch, full, "BW03"), "telemetry_uigf")[3]
+    end
+
+    @testset "missing rows inside a registration still throw" begin
+        gap = damaged_cache(hive, :DISPATCHLOAD, "DELETE FROM input WHERE DUID = 'BW01' AND SETTLEMENTDATE = TIMESTAMP '2025-01-01 00:10:00'")
+        @test_throws r"BW01.*missing DISPATCHLOAD" nem_system(gap, NEMDEConfiguration(); date_range = interval)
+        gap = damaged_cache(hive, :BIDPEROFFER_D, "DELETE FROM input WHERE DUID = 'BW03' AND BIDTYPE = 'ENERGY' AND DIRECTION = 'GEN' AND INTERVAL_DATETIME = TIMESTAMP '2025-01-01 00:10:00'")
+        @test_throws r"incomplete energy bid inputs for BW03 GEN" nem_system(gap, NEMDEConfiguration(); date_range = interval)
+        gap = damaged_cache(late_hive, :BIDPEROFFER_D, "DELETE FROM input WHERE DUID = 'BW02' AND BIDTYPE = 'ENERGY' AND DIRECTION = 'GEN' AND INTERVAL_DATETIME = TIMESTAMP '2025-01-01 00:15:00'")
+        @test_throws r"incomplete energy bid inputs for BW02 GEN" nem_system(gap, NEMDEConfiguration(); date_range = interval)
+    end
+
+    @testset "the as-of network keeps units in force at the first stamp" begin
+        # The regional build itself needs a region with generators left, so the unit table is checked directly.
+        network, units, _ = AustralianElectricityMarkets.RegionModel._nem_network(connect(late_hive); as_of = DateTime(2025, 1, 1, 0, 5))
+        @test !("BW02" in units.DUID)
+        @test isnothing(get_component(Generator, network, "BW02"))
+    end
+end

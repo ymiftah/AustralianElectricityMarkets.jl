@@ -1,8 +1,5 @@
 @testset "RegionModel common" begin
-
-    hive_dir = AEM_TEST_HIVE_DIR
-    config = HiveConfiguration(hive_location = hive_dir, filesystem = "file")
-    db = aem_connect(config)
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
 
     @testset "get_bus_dataframe" begin
         df = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db)
@@ -26,6 +23,25 @@
         @test df.name[1] == "BW01"
         @test df.storage_capacity[1] == 200.0
         @test df.base_power[1] == 100.0
+    end
+
+    @testset "generator unit of a battery registered as separate generator and load units" begin
+        RM = AustralianElectricityMarkets.RegionModel
+        bus_df = RM.get_bus_dataframe(db)
+        units = read_units(db)
+        # BW02 as the generator half of a split battery: a battery energy source, no storage data.
+        units.CO2E_ENERGY_SOURCE = [d == "BW02" ? "Battery Storage" : s for (d, s) in zip(units.DUID, units.CO2E_ENERGY_SOURCE)]
+        gen_df = RM.get_generators_dataframe(bus_df, units)
+        @test gen_df.legacy_battery == (gen_df.name .== "BW02")
+        for legacy_batteries in (false, true)
+            sys = System(100.0)
+            RM._add_buses!(sys, bus_df)
+            RM._add_generation!(sys, gen_df; legacy_batteries)
+            bw02 = get_component(Device, sys, "BW02")
+            @test isnothing(bw02) == !legacy_batteries
+            legacy_batteries && @test bw02 isa ThermalStandard && get_prime_mover_type(bw02) == PrimeMovers.BA
+            @test isnothing(get_component(Device, sys, "BW01"))  # a bidirectional unit is a storage, not a generator
+        end
     end
 
     @testset "read_units keeps units without a GENUNITS row" begin
@@ -58,12 +74,6 @@
         @test all(==("NSW1"), df.region)
         @test all(==(100.0), df.base_power)
         @test all(==(1.0), df.max_active_power)
-        # Without the DISPATCHTYPE column no load can be identified
-        @test isempty(
-            AustralianElectricityMarkets.RegionModel.get_scheduled_loads_dataframe(
-                bus_df, select(read_units(db), Not(:DISPATCHTYPE)),
-            )
-        )
     end
 
     @testset "get_interfaces_dataframe" begin
@@ -74,9 +84,11 @@
         @test all(snowy_rows.available .== false)
     end
 
+    # One regional system, read-only for the two testsets below.
+    regional = nem_system(db, RegionalNetworkConfiguration())
+
     @testset "nem_system" begin
-        system = nem_system(db, RegionalNetworkConfiguration())
-        @test system isa System
+        system = regional
 
         areas = get_components(Area, system) |> collect .|> get_name |> sort!
         @test areas == ["NSW1", "QLD1", "SA1", "SNOWY1", "TAS1", "VIC1"]
@@ -93,10 +105,7 @@
         # BW03 is Solar (RenewableDispatch)
         # BW04 is Wind (RenewableDispatch)
         # ER01, ER02 are ThermalStandard
-        @test length(get_components(ThermalStandard, system)) == 2
-        @test length(get_components(HydroDispatch, system)) == 1
-        @test length(get_components(EnergyReservoirStorage, system)) == 1
-        @test length(get_components(RenewableDispatch, system)) == 2
+        @test length.(get_components.((ThermalStandard, HydroDispatch, EnergyReservoirStorage, RenewableDispatch), Ref(system))) == (2, 1, 1, 2)
 
         # Check battery scaling (fix in a2b1f67)
         bat = get_component(EnergyReservoirStorage, system, "BW01")
@@ -111,7 +120,6 @@
 
         # The scheduled load PUMP1 is a controllable load with a market bid slot, in NSW1.
         pump = get_component(InterruptiblePowerLoad, system, "PUMP1")
-        @test !isnothing(pump)
         @test get_name(get_area(get_bus(pump))) == "NSW1"
         @test get_operation_cost(pump) isa LoadCost
         @test length(get_components(InterruptiblePowerLoad, system)) == 5
@@ -121,7 +129,7 @@
         @test !haskey(get_ext(pump), "non_scheduled")
         # A load with a GENUNITS row is not also a generator: its DUID names exactly one Device.
         @test get_component(Device, system, "PUMP1") isa InterruptiblePowerLoad
-        @test isnothing(get_component(HydroDispatch, system, "PUMP1"))
+        @test !has_nem_unit_data(get_component(Device, system, "PUMP1"))
 
         # Interconnectors/Interfaces
         @test length(get_components(AreaInterchange, system)) == 6
@@ -130,12 +138,13 @@
     @testset "regional system carries the ISP operating costs" begin
         # Values from the ISP cost fill on this mock data, captured before the network builder
         # was split from the cost fill. Units of the mock data: fuel in AUD/GJ, O&M in AUD/MWh.
-        sys = nem_system(db, RegionalNetworkConfiguration())
+        sys = regional
         thermal = get_operation_cost(get_component(ThermalStandard, sys, "ER01"))
         fuel = get_variable(thermal)
         @test get_proportional_term(get_value_curve(fuel)) ≈ 9.26
         @test get_constant_term(get_value_curve(fuel)) ≈ 648.0
-        @test get_fuel_cost(fuel) ≈ 4.96
+        # ER01 keeps its station's own Eraring coal price (7.02 AUD/GJ, Step Change 2025-26), not a technology median.
+        @test get_fuel_cost(fuel) ≈ 7.02
         @test get_proportional_term(get_vom_cost(fuel)) ≈ 8.0
         @test get_fixed(thermal) ≈ 319.634703196347
         @test get_start_up(thermal) == 100.0
@@ -155,9 +164,8 @@
         # raw isp_technology strings (that package does not depend on PowerSystems); the
         # PM_MAPPING lookup, used by RegionModel._map_primemover!, must have an entry for
         # every isp_technology value present in the bundled ISP2025 data.
-        for tech in unique(vcat(read_isp_variable_opex().isp_technology, read_isp_fixed_opex().isp_technology))
-            @test haskey(AustralianElectricityMarkets.PM_MAPPING, tech)
-        end
+        technologies = unique(vcat(read_isp_variable_opex().isp_technology, read_isp_fixed_opex().isp_technology))
+        @test isempty(filter(!in(keys(AustralianElectricityMarkets.PM_MAPPING)), technologies))
     end
 
 end

@@ -1,7 +1,7 @@
 # AustralianElectricityMarkets.jl
 
 Julia monorepo that turns AEMO **NEMWEB (MMSDM)** market data into **PowerSystems.jl** `System`s and
-solves NEM dispatch replicas of them with **PowerSimulations.jl**. It is a Julia 1.11 workspace of
+solves NEM dispatch replicas of them with **PowerSimulations.jl**. It is a Julia 1.13 workspace of
 four packages sharing the root `Manifest.toml`:
 
 | Package | Path | Responsible for |
@@ -9,7 +9,7 @@ four packages sharing the root `Manifest.toml`:
 | `AustralianElectricityMarketsCache` | `AustralianElectricityMarketsCache/` | Shared configuration, DuckDB connections, cache metadata and partition inspection. No market readers or population pipeline. |
 | `AustralianElectricityMarketsData` | `AustralianElectricityMarketsData/` | NEMWEB download and Hive-partitioned parquet population. Depends on Cache, with no AEM, AEMSim or PowerSystems dependency. |
 | `AustralianElectricityMarkets` | repo root (`src/`) | Domain types, Readers submodule, PSY system construction and modification, attached-data accessors, per-interval NEM inputs and market-rule tables (CVP factors, MPC). Depends on Cache, with no Data or Simulations dependency. |
-| `AustralianElectricityMarketsSimulations` | `AustralianElectricityMarketsSimulations/` | NEMDE replication in PSI: `AbstractNEMDispatch` device formulations (batteries included), FCAS market and trapezium formulations, NEM constraint formulations, replication template, decision-model constructor and pre-flight checks. The simulation runner is in `scripts/replay_simulation.jl`. |
+| `AustralianElectricityMarketsSimulations` | `AustralianElectricityMarketsSimulations/` | NEMDE problems in PSI: `AbstractNEMDispatch` device formulations (batteries included), FCAS market and trapezium formulations, NEM constraint formulations, NEMDE template builder and its presets, decision-model constructor and pre-flight checks. The overnight batch runner is in `scripts/batch_run.jl`. |
 
 ## Quick start
 
@@ -22,7 +22,7 @@ db = aem_connect()                                    # AEMDB wrapper over DuckD
 populate(db, :DISPATCHPRICE, Date(2025, 1, 1), Date(2025, 1, 3))
 sys = nem_system(db, RegionalNetworkConfiguration())  # energy-only regional system
 sys = nem_system(db, NEMDEConfiguration(); date_range = start:Minute(5):stop)
-                                                      # replay system: bids, FCAS, constraints, losses
+                                                      # NEMDE system: bids, FCAS, constraints, losses
 ```
 
 Cache layout: `~/.nemdb_cache/<TABLE>/archive_month=YYYY-MM-01/*.parquet`. Configuration is entirely
@@ -42,7 +42,7 @@ julia --project=AustralianElectricityMarketsSimulations/test \
     AustralianElectricityMarketsSimulations/test/real_data/runtests.jl [hive_location]
 ```
 
-All four suites run on generated mock parquet data and never hit the network. Each package has
+All four suites run on generated test data and never hit the network. Each package has
 its own CI workflow with native `paths` filters including its source dependencies and shared
 fixtures. Dependency or test CI changes and tags run all packages. Manual dispatch tests the
 selected workflow's package. See the README's continuous integration section.
@@ -53,7 +53,7 @@ names (listed in `TEST_GROUPS` at the top of each `runtests.jl`; no arguments ru
 ```bash
 julia --project -e 'using Pkg; Pkg.test(; test_args = ["fcas", "timeseries_setters"])'
 julia --project=AustralianElectricityMarketsSimulations/test \
-    AustralianElectricityMarketsSimulations/test/runtests.jl fcas_market preprocessing
+    AustralianElectricityMarketsSimulations/test/runtests.jl fcas_market fcas_preprocessing
 ```
 
 Pick the groups whose test file covers the source you edited (e.g. `src/types/fcas.jl` → `fcas`,
@@ -61,7 +61,7 @@ Pick the groups whose test file covers the source you edited (e.g. `src/types/fc
 suites only for cross-cutting changes (shared fixtures, runner, dependencies, a change in one
 package that the next one consumes) or before opening a PR. Use absolute paths when launching Julia
 from a backgrounded subshell. Shared fixtures: `test/fixtures/mock_data.jl`
-(all three suites), `test/integration/pscb_*.jl` (root and Simulations), and
+(root and Simulations), `test/integration/pscb_*.jl` (root and Simulations), and
 `…Simulations/test/toy_fixture.jl` / `template_helpers.jl`; each runner loads its fixtures up
 front, so every group runs on its own.
 
@@ -72,16 +72,23 @@ front, so every group runs on its own.
 | `…Cache/src/tables.jl` | `_TABLE_SPECS`, table lookup and supported-table metadata |
 | `…Data/src/nemweb_load/column_types.jl` | `COLUMN_TYPES`; unlisted columns silently become `VARCHAR` |
 | `src/AustralianElectricityMarkets.jl` | exports, includes, `@doc` re-binding of Readers/Cache/RegionModel names |
-| `src/types/` | Domain types, constructors, field accessors and type-specific calculations |
+| `src/types/` | Domain types, constructors, field accessors and type-specific calculations (`NEMUnitData`, `NEMUnitState`, bids, FCAS, generic constraints, losses, tie-break) |
 | `src/readers/` | Readers submodule; one file per external-data category |
 | `src/system/` | System construction and modification; RegionModel submodule |
+| `src/system/nemde_inputs.jl`, `src/system/nemde_inputs/` | `_set_nemde_inputs!`, the last stage of `nem_system(db, NEMDEConfiguration(); date_range)`: one writer per input family, the forecast transform and the availability record |
+| `src/derivations/` | Scalar run-input kernels (state, energy, ramps, FCAS, fast-start, tie-break, loss demand): `Float64` inputs and an `NEMUnitState`, no System access |
+| `src/network_configurations/` | `NetworkConfiguration` and its `RegionalNetworkConfiguration` and `NEMDEConfiguration` variants |
 | `src/accessors/` | Attached component data and time-series lookup |
-| `…Simulations/src/types/`, `…Simulations/src/formulations/` | PSI types and dispatch, FCAS, constraint and loss formulations |
-| `…Simulations/src/checks/<what_is_checked>.jl` | pre-flight checks run before a build |
+| `…Simulations/src/types/` | PSI parameter, variable, constraint and slack types and formulation structs; `state.jl` holds the initial-condition types and the telemetry and observed-state accessors of a NEMDE unit |
+| `…Simulations/src/formulations/` | `AbstractNEMDispatch` device formulations, FCAS, generic-constraint, loss, MNSP, slack and tie-break formulations |
+| `…Simulations/src/offers/derivation.jl` | The energy `MAXAVAIL` series name the dispatch parameters register |
+| `…Simulations/src/templates/` | `template_nemde`, the keyword builder, and its presets |
+| `…Simulations/src/problems/` | `NEMDispatchProblem`, the closed-loop sequence and the HiGHS optimizer settings |
+| `…Simulations/src/results/` | Solved and violation readers of PSI results: `read_solved_interval`, `read_constraint_violations`, the `read_prices` / `read_fcas_prices` methods, and the comparison against published outcomes |
+| `…Simulations/src/checks/` | Pre-flight checks run before a build, one file per thing checked |
 | `…Simulations/src/psi_compat.jl` | shims over the pinned PowerSimulations fork |
-| `scripts/replay_simulation.jl` | `ReplaySimulation`: replay simulation runner (`replication_simulation`, `run_replication`, `REPLICATION_OPTIMIZER`) |
-| `scripts/replay_results.jl` | `ReplayResults`: post-processing of replay results (prices, dispatch, flows, violations) |
-| `docs/adr/` | architecture decisions — design rationale goes here |
+| `scripts/batch_run.jl` | overnight batch run of random trading days or sampled intervals on the AEMSim run API |
+| `docs/adr/` | architecture decisions; design rationale goes here |
 | `docs/superpowers/plans/` | implementation plans; follow-up work is recorded here or in an ADR |
 
 ## Standards
@@ -99,6 +106,10 @@ front, so every group runs on its own.
   non-obvious thing is.
 - Naming: NEMWEB tables/columns stay `SCREAMING_CASE`; Julia API is `snake_case`; private helpers
   are `_`-prefixed; mutating functions take `!`.
+- Mutation verbs describe the operation: `set_...!` assigns or replaces a property, input or
+  named dataset; `add_...!` creates components or services in a system; `attach_...!` associates
+  supplemental attributes or metadata with existing components. State repeat-call behaviour in
+  each public mutator's docstring; the verb alone does not guarantee idempotence.
 - Names exported from Cache or the Readers/RegionModel submodules are re-exported at the top
   level with `@doc (@doc Sub.f) f` so Documenter resolves the docstring from the top-level name.
 - DataFrame work uses `@chain`. Parquet access goes through **DuckDB.jl** — `read_hive` returns a
@@ -129,4 +140,16 @@ bound, constraint and cost term. Record any departure from AEMO in an ADR.
   module: `IS.get_module` only resolves top-level package names, so submodule-nested types break
   `System` JSON round-trips.
 - Simulations depends on a **pinned PowerSimulations fork** (`[sources]` in its `Project.toml`);
-  check PSI behaviour against that revision, not upstream.
+  check PSI behaviour against that revision, not upstream. The root `Project.toml` also pins forks of
+  InfrastructureSystems and HDF5. PowerSystems is the registered release.
+- NEMDE systems use stock PowerSystems devices (`NEM_DISPATCH_DEVICE_TYPES`) each carrying a
+  `NEMUnitData` supplemental attribute (offer, registration, telemetry, observed state); a device is a
+  NEMDE unit when `has_nem_unit_data` holds, never by its type. Regional systems carry none.
+- Series-key fields of the typed structs are `IS.StaticTimeSeriesKey`; store the static key, never a
+  forecast key.
+- AEM writes every NEMDE input once, in `nem_system`; AEMSim never writes to the System (no PSY/IS
+  mutator, `add_time_series!`, `set_available!` or `ext` write under `…Simulations/src/`). Set device
+  availability before `nem_system` builds the NEMDE inputs: `validate_template` refuses a System whose
+  availability changed afterwards. The run interface is `nem_system -> DecisionModel(NEMDispatchProblem,
+  template, sys) -> Simulation -> build! -> execute!`; `DecisionModel` takes no `horizon`, `interval` or
+  `resolution`.

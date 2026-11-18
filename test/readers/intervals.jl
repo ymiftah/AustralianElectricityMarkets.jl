@@ -14,9 +14,12 @@
         @test !isempty(published.prices)
         @test all(==(t), published.fcas_prices.SETTLEMENTDATE)
 
-        # The mock carries only the pricing run (and no INTERVENTION column on interconnector results).
+        # The mock carries only the pricing run, so every interval falls back to it.
         physical = read_published_interval(db, t; intervention = 1)
-        @test all(isempty, (physical.dispatch, physical.prices, physical.fcas_prices))
+        @test isequal(physical.dispatch, published.dispatch)
+        @test isequal(physical.interconnectors, published.interconnectors)
+        @test isequal(physical.prices, published.prices)
+        @test isequal(physical.fcas_prices, published.fcas_prices)
     end
 
     @testset "published steps have the rows of their single intervals" begin

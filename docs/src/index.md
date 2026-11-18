@@ -17,11 +17,16 @@ This package provides a set of tools to fetch, cache, and process data from AEMO
 
 ## Installation
 
-To install the package, open the Julia REPL and run:
+To install the packages, open the Julia REPL and run the following. `AustralianElectricityMarketsSimulations`
+is needed only to run NEMDE dispatch with PowerSimulations.jl.
 
 ```julia
 using Pkg
-Pkg.add(["AustralianElectricityMarkets", "AustralianElectricityMarketsData"])
+Pkg.add([
+    "AustralianElectricityMarkets",
+    "AustralianElectricityMarketsData",
+    "AustralianElectricityMarketsSimulations",
+])
 ```
 
 ## Usage

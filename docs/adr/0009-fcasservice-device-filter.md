@@ -1,60 +1,22 @@
-# 0009. `FCASService` is a bare `add_service!` anchor, filtered by region + bid presence
+# 0009 `FCASService` is a bare `(region, bid_type)` anchor
 
 ## Status
 
 Accepted
 
-## Context
+## What
 
-`add_nem_constraints!` already replays AEMO's regional FCAS requirement as the `"rhs"`/
-`"invoked"` series on each governing [`GenericConstraint`](@ref) — that is the market's only
-arithmetic source of truth. What's still missing is a `PSY.Service` a `PowerSimulations.jl`
-extension can `add_service!`-join to sum device-level FCAS enablement variables per `(region,
-bid_type)`, the same way `RegionTerm` already does for network terms.
+- One `FCASService` per `(region, bid_type)`, named `"<REGIONID>_<BIDTYPE>"`, with `region`, `bid_type`, `available` and `ext`. It has no RHS and no time series (`supports_time_series` is `false`).
+- The requirement RHS stays on the governing `GenericConstraint`; the service only joins devices.
 
-AEMO clears one FCAS price per `(region, bid_type, interval)`, not per unit — so the natural
-container key is `(region, bid_type)`, not device. A per-unit service would both misrepresent
-the market and multiply template registrations for no benefit; the decision variable a
-formulation sums over still lives per `(device, t)`, unchanged.
+## How
 
-Which devices join a `(region, bid_type)` service is a question this package can answer today:
-region membership (`_region_devices`) and bid-series presence (`set_fcas_bids!`'s
-`"fcas_curve_<SERVICE>"`/`"..._decremental"` naming) are both already computed. Whether a
-`PowerSimulations.jl` template actually models a given device is not something this package
-knows — that's a Phase 2 / `PSI.ProblemTemplate` concept, out of scope here.
+- `add_fcas_services!(sys; bid_types)` creates a service for each region and market with at least one available bidder, independent of any `GenericConstraint`, and returns `(added, excluded)`.
+- It attaches only devices whose bid direction `FCASMarket` models (incremental, decremental-only on a `Storage` or load, or a `Storage` regulation bid on both sides) and warns once about the rest.
+- A service already in `sys` under that name is left as is.
 
-## Decision
+## Why
 
-- `FCASService` carries `region`, `bid_type`, `available`, `ext` — no RHS, no time series
-  (`supports_time_series` is `false`).
-- `add_fcas_services!(sys)` builds one per `(region, bid_type)` pair drawn from every
-  `GenericConstraint.fcas_requirements` in `sys`, attached to every device that is both in
-  `region` and carries an incremental or decremental FCAS curve series for `bid_type`.
-- A pair with zero contributing devices is skipped and collected into one aggregated `@warn`,
-  never thrown — sparse FCAS participation in a region/market is ordinary, unlike an empty
-  `RegionTerm` (see `add_nem_constraints!`'s `allow_empty_region_terms`), which signals
-  abnormal topology.
-
-## Consequences
-
-- One arithmetic source of truth: a formulation reads the requirement off
-  `GenericConstraint`'s `"rhs"` and sums contributing devices via `FCASService`, never both.
-- `add_fcas_services!` must run after both `set_fcas_bids!` and `add_nem_constraints!`; wired
-  as the third step in `ConstrainedNetworkConfiguration`.
-- Device eligibility here is necessarily provisional — a Phase 2 formulation may still exclude
-  a device this service includes, if no template models it.
-
-## Amendment (FCASMarket, PR 2.5)
-
-The requirement-driven pair set and the "every bidder" device set are superseded:
-
-- `add_fcas_services!` builds one service per `(region, bid_type)` with at least one available
-  bidder, whether or not a `GenericConstraint` names that pair. NEMDE enables unit FCAS from the
-  offers alone; the requirement constraints bind on those enablements, so the services must
-  exist first and independently. It no longer needs `add_nem_constraints!` to have run.
-- It attaches only bids whose direction `FCASMarket` models (an incremental bid, or a
-  decremental-only bid on a `Storage` device) and reports the rest, rather than leaving an
-  unbuildable service for a template to reject. Unavailable devices are not attached.
-- It skips a name already in `sys`, so the real-data suite no longer deletes and rebuilds the
-  services `ConstrainedNetworkConfiguration` created - one builder, one set of components, which
-  the FCAS terms of the requirement constraints will reference.
+- AEMO clears one FCAS price per `(region, bid_type, interval)`, not per unit; the decision variable stays per `(device, t)`.
+- NEMDE enables FCAS from offers alone and the requirement constraints bind on those enablements, so services must exist first.
+- Sparse FCAS participation is ordinary, so a pair with no bidder is skipped, not an error (unlike [0007](0007-empty-region-terms-throw-by-default.md)).

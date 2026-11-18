@@ -8,43 +8,52 @@ decremental offer and withdrawn from the area balance.
 
 Methods are defined over `PowerSystems.StaticInjection`; a `PowerSimulations.ProblemTemplate`
 selects the component types they apply to. Subtypes differ only in what the ramp constraint
-measures against; [`NEMReplayDispatch`](@ref) is the one subtype. Ramp,
+measures against; [`NEMDispatch`](@ref) is the one subtype. Ramp,
 availability, offer-total and fixed-loading rows always carry priced slacks; the device model's
-`use_slacks` does not apply to them. Only the energy offer cost enters the device's
-`PowerSimulations.ProductionCostExpression`; slack penalties are objective terms only, reported as
-violation rows of a replay's results rather than as device cost.
+`use_slacks` does not apply to them. The energy offer cost and the slack penalties are objective terms
+only; no `PowerSimulations` cost expression is built, and slack penalties are reported as violation
+rows of a run's results rather than as device cost.
 """
 abstract type AbstractNEMDispatch <: PSI.AbstractDeviceFormulation end
 
 
 """
-    NEMReplayDispatch
+    NEMDispatch
 
-[`AbstractNEMDispatch`](@ref) whose ramp constraint measures against the device's `"initial_mw"`
-time series at every interval. Intervals are decoupled.
+[`AbstractNEMDispatch`](@ref) whose ramp constraint measures against the device's initial MW at every
+interval, read from the observed state series `NEM_STATE_INPUT_SERIES`. Intervals are decoupled.
 """
-struct NEMReplayDispatch <: AbstractNEMDispatch end
-
-
-"""
-    RampUpRateTimeSeriesParameter
-
-Time-series parameter for a device's `"ramp_up_rate"` series, in system-base per-unit per minute.
-"""
-struct RampUpRateTimeSeriesParameter <: PSI.TimeSeriesParameter end
+struct NEMDispatch <: AbstractNEMDispatch end
 
 
 """
-    RampDownRateTimeSeriesParameter
+    RampRateTimeSeriesParameter
 
-Time-series parameter for a device's `"ramp_down_rate"` series, in system-base per-unit per minute.
+Time-series parameter for a device's ramp-rate series, in system-base per-unit per minute. The key
+meta names the direction: `"up"` reads the `"ramp_up_rate"` series, `"down"` the `"ramp_down_rate"` series.
 """
-struct RampDownRateTimeSeriesParameter <: PSI.TimeSeriesParameter end
+struct RampRateTimeSeriesParameter <: PSI.TimeSeriesParameter end
+
+"Direction tag of the `\"up\"` [`RampRateTimeSeriesParameter`](@ref)."
+struct RampUp end
+
+"Direction tag of the `\"down\"` [`RampRateTimeSeriesParameter`](@ref)."
+struct RampDown end
+
+# The key meta of each ramp direction.
+_ramp_meta(::RampUp) = "up"
+_ramp_meta(::RampDown) = "down"
+
+
+# The series each direction reads on a device.
+_ramp_series_name(::RampUp) = NEM_SERIES.ramp_up_rate
+_ramp_series_name(::RampDown) = NEM_SERIES.ramp_down_rate
 
 
 """
     InitialPowerTimeSeriesParameter
 
-Time-series parameter for a device's `"initial_mw"` series, in system-base per-unit.
+Time-series parameter for a device's `"initial_mw_seed"` series, in MW; the parameter's multiplier
+converts it to system-base per unit.
 """
 struct InitialPowerTimeSeriesParameter <: PSI.TimeSeriesParameter end

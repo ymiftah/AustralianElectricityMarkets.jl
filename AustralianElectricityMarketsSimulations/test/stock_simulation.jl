@@ -6,18 +6,18 @@ const STOCK_OPTIMIZER = PSI.JuMP.optimizer_with_attributes(
     HiGHS.Optimizer, "output_flag" => false, "mip_rel_gap" => 0.0, "mip_abs_gap" => 1.0e-10,
 )
 const STOCK_STEPS = TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION)
-# Step 1: Alta ramp-bound at 60 MW, Park City 40 MW at $80. Step 2: N_TOY_LIMIT holds Alta at 65 MW, Park City 55 MW at $60.
+# Step 1: Alta ramp-bound at 60 MW, Park City 40 MW at $60. Step 2: N_TOY_LIMIT holds Alta at 65 MW, Park City 55 MW at $60.
 function sentinel_system(;
         alta_availability = [100.0, 90.0],
         alta_initial = [50.0, 70.0], alta_ramp_down = [100.0, 90.0], invoked = 1.0
     )
     units = [
         TOY_CHEAP => toy_unit(
-            100.0, [[(100.0, 20.0)], [(100.0, 30.0)]]; initial = alta_initial,
+            100.0, [(100.0, 20.0)]; initial = alta_initial,
             ramp_up = [2.0, 1.0], ramp_down = alta_ramp_down, availability = alta_availability,
         ),
         TOY_EXPENSIVE => toy_unit(
-            100.0, [[(100.0, 80.0)], [(100.0, 60.0)]]; initial = [40.0, 30.0],
+            100.0, [(100.0, 60.0)]; initial = [40.0, 30.0],
             ramp_up = [100.0, 90.0], ramp_down = [100.0, 90.0], availability = [100.0, 95.0],
         ),
     ]
@@ -43,24 +43,26 @@ function binding_sentinel_system()
     ]
     return nem_toy_system(units, [90.0, 130.0]; horizon = TOY_RESOLUTION)
 end
-# The solved tables of `_solved_tables` at interval `t`.
+# The solved tables of `read_solved_interval` at interval `t`.
 stock_at(tables, t) = map(df -> filter(:SETTLEMENTDATE => ==(t), df), tables)
-# One standalone one-interval solve of `template` (default the replication template) at `t`.
-function stock_standalone(sys, t; parts = REPLICATION_PARTS, template = replication_template(sys; parts))
-    model = AEMS.replication_decision_model(template, sys, t; optimizer = STOCK_OPTIMIZER, name = "standalone")
+# One standalone one-interval solve of `template` (default the NEMDE template) at `t`.
+function stock_standalone(sys, t; template = problem_template(sys))
+    model = PSI.DecisionModel(
+        AEMS.NEMDispatchProblem, template, sys; optimizer = STOCK_OPTIMIZER, initial_time = t, name = "standalone",
+    )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     results = PSI.OptimizationProblemResults(model)
     return (;
         # The MILP dual pass re-solves the model, so the objective is read from the optimizer stats.
         model, results, objective = only(PSI.read_optimizer_stats(results).objective_value),
-        solved = stock_at(ReplayResults._solved_tables(results, sys, parts), t),
+        solved = stock_at(read_solved_interval(results, sys), t),
     )
 end
 # The simulation, its per-step objectives and solved tables.
 function stock_simulate(sys; kwargs...)
-    out = ReplaySimulation.run_replication(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER, kwargs...)
-    tables = ReplayResults._solved_tables(out.results, sys, REPLICATION_PARTS)
+    out = run_problem(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER, kwargs...)
+    tables = read_solved_interval(out.results, sys)
     return (;
         out...,
         objectives = PSI.read_optimizer_stats(out.results).objective_value,
@@ -69,41 +71,45 @@ function stock_simulate(sys; kwargs...)
 end
 stock_price(solved) = only(solved.prices.ROP)
 stock_mw(solved, duid) = only(filter(:DUID => ==(duid), solved.dispatch).TOTALCLEARED)
+stock_dispatch(solved) = Dict(r.DUID => r.TOTALCLEARED for r in eachrow(solved.dispatch))
+# Whether two keyed tables of MW or prices hold the same keys and values to within `atol`.
+stock_close(a, b; atol = TOY_TOLERANCE) = keys(a) == keys(b) && all(k -> isapprox(a[k], b[k]; atol), keys(a))
 const STOCK_SIM = stock_simulate(sentinel_system())
 
-@testset "two simulation steps equal two standalone solves, with no initial conditions" begin
-    container = PSI.get_optimization_container(STOCK_SIM.model)
-    @test PSI.built_for_recurrent_solves(container) && isempty(PSI.get_initial_conditions(container))
-    @test length(STOCK_SIM.objectives) == 2
-    for (k, t) in enumerate(STOCK_STEPS)
-        ref = stock_standalone(sentinel_system(), t)
-        @test STOCK_SIM.objectives[k] ≈ ref.objective atol = TOY_TOLERANCE
-        @test stock_price(STOCK_SIM.solved[k]) ≈ stock_price(ref.solved) atol = TOY_TOLERANCE
-        @test Set(STOCK_SIM.solved[k].dispatch.DUID) == Set(ref.solved.dispatch.DUID)
-        for duid in ref.solved.dispatch.DUID
-            @test stock_mw(STOCK_SIM.solved[k], duid) ≈ stock_mw(ref.solved, duid) atol = TOY_TOLERANCE
-        end
+@testset "the problem type selects the run mode" begin
+    sys = sentinel_system()
+    closed = PSI.DecisionModel(
+        NEMClosedLoopDispatchProblem, problem_template(sys), sys; optimizer = STOCK_OPTIMIZER, initial_time = TOY_START,
+    )
+    @test PSI.get_ext(PSI.get_settings(closed))["closed_loop"] === true
+    open_loop = PSI.DecisionModel(
+        NEMDispatchProblem, problem_template(sys), sys; optimizer = STOCK_OPTIMIZER, initial_time = TOY_START,
+    )
+    @test PSI.get_ext(PSI.get_settings(open_loop))["closed_loop"] === false
+    for kw in (:horizon, :interval, :resolution)
+        err = _caught(() -> PSI.DecisionModel(NEMDispatchProblem, problem_template(sys), sys; kw => TOY_RESOLUTION))
+        @test err isa ArgumentError && occursin(string(kw), err.msg)
     end
+    container = PSI.get_optimization_container(STOCK_SIM.model)
+    @test !AEMS._closed_loop(container)
+    initial, covered = AEMS._initial_mw_accessor(container, ThermalStandard, false)
+    @test TOY_CHEAP in covered && initial(TOY_CHEAP, 1) isa PSI.JuMP.AffExpr
 end
 
-@testset "step 2 reads step-2 data" begin
+@testset "step 2 reads step-2 data, with no initial conditions" begin
+    container = PSI.get_optimization_container(STOCK_SIM.model)
+    @test PSI.built_for_recurrent_solves(container) && isempty(PSI.get_initial_conditions(container))
     expected = [
-        (step = 1, cheap = 60.0, expensive = 40.0, price = 80.0, objective = 4400 / 12, limit_price = 0.0),
-        (step = 2, cheap = 65.0, expensive = 55.0, price = 60.0, objective = 5250 / 12, limit_price = -30.0),
+        (step = 1, cheap = 60.0, expensive = 40.0, price = 60.0, objective = 3600 / 12, limit_price = 0.0),
+        (step = 2, cheap = 65.0, expensive = 55.0, price = 60.0, objective = 4600 / 12, limit_price = -40.0),
     ]
-    for e in expected
-        k = e.step
-        @test stock_mw(STOCK_SIM.solved[k], TOY_CHEAP) ≈ e.cheap atol = TOY_TOLERANCE
-        @test stock_mw(STOCK_SIM.solved[k], TOY_EXPENSIVE) ≈ e.expensive atol = TOY_TOLERANCE
-        @test stock_price(STOCK_SIM.solved[k]) ≈ e.price atol = TOY_TOLERANCE
-        @test STOCK_SIM.objectives[k] ≈ e.objective atol = TOY_TOLERANCE
-    end
+    @test [[stock_mw(s, TOY_CHEAP), stock_mw(s, TOY_EXPENSIVE), stock_price(s)] for s in STOCK_SIM.solved] ≈
+        [[e.cheap, e.expensive, e.price] for e in expected] atol = TOY_TOLERANCE
+    @test STOCK_SIM.objectives ≈ [e.objective for e in expected] atol = TOY_TOLERANCE
     key = only(k for k in PSI.list_dual_keys(STOCK_SIM.results) if PSI.IS.Optimization.get_entry_type(k) === NEMConstraintLimit)
     duals = only(values(PSI.read_realized_duals(STOCK_SIM.results, [key])))
     gc_price = Dict(r.DateTime => r.value / (100.0 * interval_hours(DISPATCH_INTERVAL)) for r in eachrow(duals))
-    for e in expected
-        @test gc_price[STOCK_STEPS[e.step]] ≈ e.limit_price atol = TOY_TOLERANCE
-    end
+    @test [gc_price[t] for t in STOCK_STEPS] ≈ [e.limit_price for e in expected] atol = TOY_TOLERANCE
 end
 
 @testset "availability and a ramp-down floor bind in step 2 only" begin
@@ -113,29 +119,11 @@ end
         (step = 1, alta = 90.0, mid = 0.0, expensive = 0.0, price = 20.0, objective = 1800 / 12),
         (step = 2, alta = 60.0, mid = 20.0, expensive = 50.0, price = 50.0, objective = 6200 / 12),
     ]
-    for e in expected
-        k = e.step
-        @test stock_mw(binding.solved[k], TOY_CHEAP) ≈ e.alta atol = TOY_TOLERANCE
-        @test stock_mw(binding.solved[k], BINDING_MID) ≈ e.mid atol = TOY_TOLERANCE
-        @test stock_mw(binding.solved[k], TOY_EXPENSIVE) ≈ e.expensive atol = TOY_TOLERANCE
-        @test stock_price(binding.solved[k]) ≈ e.price atol = TOY_TOLERANCE
-        @test binding.objectives[k] ≈ e.objective atol = TOY_TOLERANCE
-    end
+    @test [[stock_mw(s, TOY_CHEAP), stock_mw(s, BINDING_MID), stock_mw(s, TOY_EXPENSIVE), stock_price(s)] for s in binding.solved] ≈
+        [[e.alta, e.mid, e.expensive, e.price] for e in expected] atol = TOY_TOLERANCE
+    @test binding.objectives ≈ [e.objective for e in expected] atol = TOY_TOLERANCE
 end
 
-
-@testset "a constraint invoked at no step is left out and reported with its reason" begin
-    never = sentinel_system(; invoked = [0.0, 0.0])
-    @test AEMS.never_invoked_constraints(never, STOCK_STEPS) == Dict("N_TOY_LIMIT" => :never_invoked)
-    @test AEMS.never_invoked_constraints(sentinel_system(; invoked = [1.0, 0.0]), STOCK_STEPS) == Dict{String, Symbol}()
-    out_never = ReplaySimulation.run_replication(never, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
-    row_never = only(filter(:constraint => ==("N_TOY_LIMIT"), out_never.skipped_constraints))
-    @test (row_never.reason, row_never.n_missing) == (:never_invoked, 0)
-end
-
-@testset "argument checks" begin
-    @test_throws ArgumentError ReplaySimulation.run_replication(sentinel_system(), STOCK_STEPS; parts = (:nonsense,))
-end
 
 # Two intervals of 100 MW load: Alta $20 (150 MW, so part-loaded and marginal at 100 MW once the
 # constraint is masked), Park City $80 (100 MW). No binding ramp. One generic constraint `name` of
@@ -153,7 +141,7 @@ end
 stock_gc_price(raw) = raw / (100.0 * interval_hours(DISPATCH_INTERVAL))
 # One standalone solve at `t`, every `GenericConstraint` under `LinearFactorLimit` with `use_slacks`.
 function masked_standalone(sys, t)
-    template = replication_template(sys; parts = ())
+    template = problem_template(sys; template = energy_template())
     for gc in PSY.get_components(GenericConstraint, sys)
         name = PSY.get_name(gc)
         PSI.set_service_model!(
@@ -161,13 +149,13 @@ function masked_standalone(sys, t)
             PSI.ServiceModel(GenericConstraint, LinearFactorLimit, name; duals = [NEMConstraintLimit], use_slacks = true),
         )
     end
-    model = AEMS.replication_decision_model(template, sys, t; optimizer = STOCK_OPTIMIZER, name = "masked")
+    model = PSI.DecisionModel(AEMS.NEMDispatchProblem, template, sys; optimizer = STOCK_OPTIMIZER, initial_time = t, name = "masked")
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     results = PSI.OptimizationProblemResults(model)
     return (;
         results, objective = PSI.JuMP.objective_value(PSI.get_jump_model(model)),
-        solved = stock_at(ReplayResults._solved_tables(results, sys, REPLICATION_PARTS), t),
+        solved = stock_at(read_solved_interval(results, sys), t),
         gc = stock_gc_duals(results)["N_TOY_LIMIT"][t],
     )
 end
@@ -191,27 +179,20 @@ const MASK_CASES = [
         sys = masked_system(c.sense, c.duid, c.rhs)
         sim = stock_simulate(sys)
         gc_sim = stock_gc_duals(sim.results)["N_TOY_LIMIT"]
-        for (k, t) in enumerate(STOCK_STEPS)
-            new = masked_standalone(masked_system(c.sense, c.duid, c.rhs), t)
-            for run in (new, (; objective = sim.objectives[k], solved = sim.solved[k], gc = gc_sim[t]))
-                @test run.objective ≈ c.objective[k] atol = TOY_TOLERANCE
-                @test stock_mw(run.solved, TOY_CHEAP) ≈ c.cheap[k] atol = TOY_TOLERANCE
-                @test stock_mw(run.solved, TOY_EXPENSIVE) ≈ c.expensive[k] atol = TOY_TOLERANCE
-                @test stock_price(run.solved) ≈ c.price[k] atol = TOY_TOLERANCE
-            end
-            if k == 1
-                @test stock_gc_price(new.gc) ≈ c.gc_price atol = TOY_TOLERANCE
-                @test stock_gc_price(gc_sim[t]) ≈ c.gc_price atol = TOY_TOLERANCE
-            else
-                # The masked row's dual is zero up to simplex arithmetic.
-                @test abs(new.gc) <= 1.0e-9 && abs(gc_sim[t]) <= 1.0e-9
-                # The masked row is violated (vacuous), its slack takes the violation, and no violation is reported.
-                slack = only(PSI.read_variable(new.results, "$(c.slack)__GenericConstraint__N_TOY_LIMIT").value)
-                @test slack >= (c.sense == ConstraintSense.LE ? 40.0 : 30.0) - TOY_TOLERANCE
-                v = ReplayResults._constraint_violations(new.results, sys)
-                @test nrow(v) == 0 || !any(==("generic_constraint"), v.family)
-            end
-        end
+        run_values(run) = [run.objective, stock_mw(run.solved, TOY_CHEAP), stock_mw(run.solved, TOY_EXPENSIVE), stock_price(run.solved)]
+        @test [run_values((; objective = sim.objectives[k], solved = sim.solved[k])) for k in 1:2] ≈
+            [[c.objective[k], c.cheap[k], c.expensive[k], c.price[k]] for k in 1:2] atol = TOY_TOLERANCE
+        t1, t2 = STOCK_STEPS
+        @test stock_gc_price(gc_sim[t1]) ≈ c.gc_price atol = TOY_TOLERANCE
+        # A standalone build at the masked interval matches step 2; the masked row's dual is zero up to simplex arithmetic.
+        new = masked_standalone(masked_system(c.sense, c.duid, c.rhs), t2)
+        @test run_values(new) ≈ [c.objective[2], c.cheap[2], c.expensive[2], c.price[2]] atol = TOY_TOLERANCE
+        @test abs(new.gc) <= 1.0e-9 && abs(gc_sim[t2]) <= 1.0e-9
+        # The masked row is free: its priced slack stays zero and no violation is reported.
+        slack = only(filter(:name => ==("N_TOY_LIMIT"), PSI.read_variable(new.results, "$(c.slack)__GenericConstraint")).value)
+        @test slack == 0.0
+        v = read_constraint_violations(new.results, sys)
+        @test nrow(v) == 0 || !any(==("generic_constraint"), v.family)
     end
 end
 
@@ -239,18 +220,28 @@ end
     @test abs(duals["N_TOY_LIMIT@B"][t1]) <= 1.0e-9 && abs(duals["N_TOY_LIMIT@A"][t2]) <= 1.0e-9
 end
 
-@testset "a recurrent build without slacks throws" begin
+@testset "a recurrent build without slacks builds and solves, since non-invoked rows are freed by the invocation parameter" begin
     sys = masked_system(ConstraintSense.LE, TOY_CHEAP, 60.0)
-    template = replication_template(sys; parts = ())
+    template = problem_template(sys; template = energy_template())
     PSI.set_service_model!(template, "N_TOY_LIMIT", PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "N_TOY_LIMIT"; duals = [NEMConstraintLimit]))
-    model = AEMS.replication_decision_model(template, sys, TOY_START; optimizer = STOCK_OPTIMIZER, name = "hard")
+    model = PSI.DecisionModel(
+        AEMS.NEMDispatchProblem, template, sys; optimizer = STOCK_OPTIMIZER, initial_time = TOY_START, name = "hard",
+    )
     models = PSI.SimulationModels(; decision_models = [model])
     sim = PSI.Simulation(;
         name = "hard", steps = 2, models = models,
         sequence = PSI.SimulationSequence(; models = models, ini_cond_chronology = PSI.InterProblemChronology()),
         simulation_folder = mktempdir(), initial_time = TOY_START,
     )
-    @test_throws ArgumentError PSI.build!(sim; store_systems_in_results = false)
+    @test PSI.build!(sim; store_systems_in_results = false) == PSI.SimulationBuildStatus.BUILT
+    @test PSI.execute!(sim) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    results = PSI.get_decision_problem_results(PSI.SimulationResults(sim), "hard")
+    solved = read_solved_interval(results, sys)
+    # Step 1 holds Alta at the 60 MW limit; step 2's free row lets Alta serve the whole load.
+    c = first(MASK_CASES)
+    @test PSI.read_optimizer_stats(results).objective_value ≈ c.objective atol = TOY_TOLERANCE
+    @test [stock_mw(stock_at(solved, t), duid) for t in STOCK_STEPS for duid in (TOY_CHEAP, TOY_EXPENSIVE)] ≈
+        [c.cheap[1], c.expensive[1], c.cheap[2], c.expensive[2]] atol = TOY_TOLERANCE
 end
 
 # A battery whose net ramp-down floor exceeds raw generation availability in step 1 only.
@@ -265,62 +256,57 @@ function battery_sentinel_system()
 end
 
 
-@testset "a battery's ramp floor binds in step 1 only: simulation equals standalone solves" begin
-    expected = [
-        (battery = 15.0, alta = 25.0, price = 50.0, objective = (1325 + 5.0 * AustralianElectricityMarkets.ENERGY_MAX_AVAIL_CVP_FACTOR * AustralianElectricityMarkets._financial_year_mpc(TOY_START)) / 12),
-        (battery = 10.0, alta = 30.0, price = 50.0, objective = 1550 / 12),
-    ]
+const BATTERY_SENTINEL_EXPECTED = [
+    (battery = 15.0, alta = 25.0, price = 50.0, objective = (1325 + 5.0 * AustralianElectricityMarkets.ENERGY_MAX_AVAIL_CVP_FACTOR * AustralianElectricityMarkets._financial_year_mpc(TOY_START)) / 12),
+    (battery = 10.0, alta = 30.0, price = 50.0, objective = 1550 / 12),
+]
+
+@testset "a battery's ramp floor binds in step 1 only" begin
+    expected = BATTERY_SENTINEL_EXPECTED
     sim = stock_simulate(battery_sentinel_system())
     @test PSI.built_for_recurrent_solves(PSI.get_optimization_container(sim.model))
-    for (k, t) in enumerate(STOCK_STEPS)
-        ref = stock_standalone(battery_sentinel_system(), t)
-        for (objective, solved) in ((sim.objectives[k], sim.solved[k]), (ref.objective, ref.solved))
-            @test objective ≈ expected[k].objective atol = TOY_TOLERANCE
-            @test stock_mw(solved, TOY_BATTERY) ≈ expected[k].battery atol = TOY_TOLERANCE
-            @test stock_mw(solved, TOY_CHEAP) ≈ expected[k].alta atol = TOY_TOLERANCE
-            @test stock_price(solved) ≈ expected[k].price atol = TOY_TOLERANCE
-        end
-    end
-    ramp_slack = only(values(PSI.read_realized_variables(sim.results, ["UnitRampDownSlack__EnergyReservoirStorage"])))
+    @test sim.objectives ≈ [e.objective for e in expected] atol = TOY_TOLERANCE
+    @test [[stock_mw(s, TOY_BATTERY), stock_mw(s, TOY_CHEAP), stock_price(s)] for s in sim.solved] ≈
+        [[e.battery, e.alta, e.price] for e in expected] atol = TOY_TOLERANCE
+    ramp_slack = only(values(PSI.read_realized_variables(sim.results, ["NEMUnitSlack__EnergyReservoirStorage__unit_ramp|down"])))
     @test all(v -> abs(v) <= TOY_TOLERANCE, ramp_slack.value)
 end
 
 # Area 2 adds Solitude ($50) and an 80 MW load; the interchange is an MNSP whose forward link
-# offers 30 MW at $10 and 100 MW at $40 (MAXAVAIL 200) in step 1, 100 MW at $5 (MAXAVAIL 60) in step 2.
-function mnsp_sentinel_system()
+# offers 30 MW at $10 and 100 MW at $40 (MAXAVAIL 200) in step 1, 60 MW at $10 and 40 MW at $40 (MAXAVAIL 60)
+# in step 2; the band prices are constant over the day.
+function mnsp_sentinel_system(; mutate! = nothing)
     units = [
         TOY_CHEAP => toy_unit(300.0, [(300.0, 20.0)]; initial = 100.0, ramp_up = 100.0),
         "Solitude" => toy_unit(200.0, [(200.0, 50.0)]; initial = 50.0, ramp_up = 100.0),
     ]
-    forward = [(200.0, [(30.0, 10.0), (100.0, 40.0)]), (60.0, [(100.0, 5.0)])]
+    forward = [(200.0, [(30.0, 10.0), (100.0, 40.0)]), (60.0, [(60.0, 10.0), (40.0, 40.0)])]
     reverse_link = (100.0, [(100.0, 10.0)])
     return nem_toy_system(
         units, 50.0; horizon = TOY_RESOLUTION,
         interchange = toy_interchange(; load_mw = 80.0, breakpoints = [-1000.0, 1000.0], mnsp = (forward, reverse_link)),
+        mutate!,
     )
 end
 stock_area_price(solved, area) = only(filter(:REGIONID => ==(area), solved.prices).ROP)
 stock_flow(solved) = only(solved.interconnectors.MWFLOW)
 stock_loss(solved) = only(solved.interconnectors.MWLOSSES)
+const STOCK_MNSP_SIM = stock_simulate(mnsp_sentinel_system())
+# Flow, loss, Alta's MW and the two area prices of each step, against the `expected` rows.
+stock_loss_values(solved) = [stock_flow(solved), stock_loss(solved), stock_mw(solved, TOY_CHEAP), stock_area_price(solved, "1"), stock_area_price(solved, "2")]
+stock_loss_expected(expected) = [[e.flow, e.loss, e.alta, e.price1, e.price2] for e in expected]
 
-@testset "MNSP band widths, prices and MAXAVAIL change between steps: simulation equals standalone solves" begin
+@testset "MNSP band widths and MAXAVAIL change between steps" begin
     expected = [
         (flow = 30.0, solitude = 50.0, alta = 80.0, price2 = 50.0, objective = 4400 / 12),
-        (flow = 60.0, solitude = 20.0, alta = 110.0, price2 = 50.0, objective = 3500 / 12),
+        (flow = 60.0, solitude = 20.0, alta = 110.0, price2 = 50.0, objective = 3800 / 12),
     ]
-    sim = stock_simulate(mnsp_sentinel_system())
+    sim = STOCK_MNSP_SIM
     @test PSI.is_milp(PSI.get_optimization_container(sim.model))
-    for (k, t) in enumerate(STOCK_STEPS)
-        ref = stock_standalone(mnsp_sentinel_system(), t)
-        for (objective, solved) in ((sim.objectives[k], sim.solved[k]), (ref.objective, ref.solved))
-            @test objective ≈ expected[k].objective atol = TOY_TOLERANCE
-            @test stock_flow(solved) ≈ expected[k].flow atol = TOY_TOLERANCE
-            @test stock_mw(solved, "Solitude") ≈ expected[k].solitude atol = TOY_TOLERANCE
-            @test stock_mw(solved, TOY_CHEAP) ≈ expected[k].alta atol = TOY_TOLERANCE
-            @test stock_area_price(solved, "1") ≈ 20.0 atol = TOY_TOLERANCE
-            @test stock_area_price(solved, "2") ≈ expected[k].price2 atol = TOY_TOLERANCE
-        end
-    end
+    @test !PSI.get_objective_expression(PSI.get_optimization_container(sim.model)).has_variant_contributors
+    @test sim.objectives ≈ [e.objective for e in expected] atol = TOY_TOLERANCE
+    @test [[stock_flow(s), stock_mw(s, "Solitude"), stock_mw(s, TOY_CHEAP), stock_area_price(s, "1"), stock_area_price(s, "2")] for s in sim.solved] ≈
+        [[e.flow, e.solitude, e.alta, 20.0, e.price2] for e in expected] atol = TOY_TOLERANCE
     bands = only(values(PSI.read_realized_variables(sim.results, ["MNSPLinkBandVariable__AreaInterchange__forward"])))
     band_mw(t, label) = only(filter(r -> r.DateTime == t && r.name2 == label, bands).value)
     @test [band_mw(STOCK_STEPS[1], "1"), band_mw(STOCK_STEPS[1], "2")] ≈ [30.0, 0.0] atol = TOY_TOLERANCE
@@ -354,7 +340,7 @@ function mnsp_loss_sentinel_system()
     )
 end
 
-@testset "non-unit loss constant and flow coefficient: the demand term changes between steps, simulation equals standalone solves" begin
+@testset "non-unit loss constant and flow coefficient: the demand term changes between steps" begin
     # Flow equals area 2's load; loss = (0.1 + K) x flow; Alta = 50 + flow + loss; price 20 x (1 + 0.1 + K) in area 2.
     expected = [
         (flow = 50.0, loss = 7.5, alta = 107.5, price1 = 20.0, price2 = 23.0, objective = 2150 / 12),
@@ -362,27 +348,18 @@ end
     ]
     sys = loss_curve_sentinel_system()
     ic = PSY.get_component(PSY.AreaInterchange, sys, TOY_INTERCHANGE)
-    @test PSY.get_time_series_values(PSY.SingleTimeSeries, ic, "loss_demand_coefficient") ≈ [0.05, 0.1]
+    @test PSY.get_time_series_values(PSY.SingleTimeSeries, ic, "loss_demand_coefficient") ≈ [0.05, 0.1, 0.1]
     sim = stock_simulate(sys)
     container = PSI.get_optimization_container(sim.model)
     @test PSI.built_for_recurrent_solves(container) && PSI.is_milp(container)
-    definition = PSI.get_constraint(container, AEMS.InterconnectorLossDefinitionConstraint(), PSY.AreaInterchange)[TOY_INTERCHANGE, 1]
+    definition = PSI.get_constraint(container, AEMS.InterconnectorLossConstraint(), PSY.AreaInterchange, "loss_definition")[TOY_INTERCHANGE, 1]
     flow_var = PSI.get_variable(container, PSI.FlowActivePowerVariable(), PSY.AreaInterchange)[TOY_INTERCHANGE, 1]
     @test PSI.JuMP.normalized_coefficient(definition, flow_var) ≈ -0.1
-    for (k, t) in enumerate(STOCK_STEPS)
-        ref = stock_standalone(loss_curve_sentinel_system(), t)
-        for (objective, solved) in ((sim.objectives[k], sim.solved[k]), (ref.objective, ref.solved))
-            @test objective ≈ expected[k].objective atol = TOY_TOLERANCE
-            @test stock_flow(solved) ≈ expected[k].flow atol = TOY_TOLERANCE
-            @test stock_loss(solved) ≈ expected[k].loss atol = TOY_TOLERANCE
-            @test stock_mw(solved, TOY_CHEAP) ≈ expected[k].alta atol = TOY_TOLERANCE
-            @test stock_area_price(solved, "1") ≈ expected[k].price1 atol = TOY_TOLERANCE
-            @test stock_area_price(solved, "2") ≈ expected[k].price2 atol = TOY_TOLERANCE
-        end
-    end
+    @test sim.objectives ≈ [e.objective for e in expected] atol = TOY_TOLERANCE
+    @test stock_loss_values.(sim.solved) ≈ stock_loss_expected(expected) atol = TOY_TOLERANCE
 end
 
-@testset "MNSP link with a loss factor and a changing demand term: simulation equals standalone solves" begin
+@testset "MNSP link with a loss factor and a changing demand term" begin
     # Import f = area 2 load; link losses = (0.1 + K) f, sent from area 1 at 1.1 x (f + loss) of Alta.
     # Price in area 2 = $10 band price + 20 x 1.1 x (1 + 0.1 + K).
     expected = [
@@ -391,17 +368,8 @@ end
     ]
     sim = stock_simulate(mnsp_loss_sentinel_system())
     @test PSI.is_milp(PSI.get_optimization_container(sim.model))
-    for (k, t) in enumerate(STOCK_STEPS)
-        ref = stock_standalone(mnsp_loss_sentinel_system(), t)
-        for (objective, solved) in ((sim.objectives[k], sim.solved[k]), (ref.objective, ref.solved))
-            @test objective ≈ expected[k].objective atol = TOY_TOLERANCE
-            @test stock_flow(solved) ≈ expected[k].flow atol = TOY_TOLERANCE
-            @test stock_loss(solved) ≈ expected[k].loss atol = TOY_TOLERANCE
-            @test stock_mw(solved, TOY_CHEAP) ≈ expected[k].alta atol = TOY_TOLERANCE
-            @test stock_area_price(solved, "1") ≈ expected[k].price1 atol = TOY_TOLERANCE
-            @test stock_area_price(solved, "2") ≈ expected[k].price2 atol = TOY_TOLERANCE
-        end
-    end
+    @test sim.objectives ≈ [e.objective for e in expected] atol = TOY_TOLERANCE
+    @test stock_loss_values.(sim.solved) ≈ stock_loss_expected(expected) atol = TOY_TOLERANCE
 end
 
 # FCAS solved values of one interval: each capacity variable cell by `"<meta> <device>"`, in MW (100 MW base).
@@ -418,52 +386,54 @@ function stock_fcas_capacities(results, t)
 end
 # FCAS prices of one interval by `(REGIONID, BIDTYPE)`, in $/MWh.
 stock_fcas_prices(results, sys, t) = Dict(
-    (r.REGIONID, r.BIDTYPE) => r.ROP for r in eachrow(ReplayResults.compute_fcas_prices(results, sys; resolution = DISPATCH_INTERVAL)) if r.SETTLEMENTDATE == t
+    (r.REGIONID, r.BIDTYPE) => r.ROP for r in eachrow(read_fcas_prices(results, sys; resolution = DISPATCH_INTERVAL)) if r.SETTLEMENTDATE == t
 )
 function stock_fcas_standalone(sys, t)
-    template = replication_template(sys)
-    model = AEMS.replication_decision_model(template, sys, t; optimizer = STOCK_OPTIMIZER, name = "standalone")
+    template = problem_template(sys)
+    model = PSI.DecisionModel(
+        AEMS.NEMDispatchProblem, template, sys; optimizer = STOCK_OPTIMIZER, initial_time = t, name = "standalone",
+    )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     results = PSI.OptimizationProblemResults(model)
     return (;
         objective = PSI.JuMP.objective_value(PSI.get_jump_model(model)),
-        solved = stock_at(ReplayResults._solved_tables(results, sys, REPLICATION_PARTS), t),
+        solved = stock_at(read_solved_interval(results, sys), t),
         capacities = stock_fcas_capacities(results, t),
         prices = stock_fcas_prices(results, sys, t),
     )
 end
 # Step 2 changes Alta's RAISEREG MaxAvail (15 -> 8 MW), turns its AGC off (RAISEREG disabled),
 # strands Park City below its RAISE6SEC EnablementMin and moves the battery from 5 MW to -15 MW net.
-const FCAS_CHANGES = (alta_reg_avail = [15.0, 8.0], alta_agc = [1, 0], park_initial = [40.0, 2.0], batt_initial = [5.0, -15.0])
+# The step-2 RAISEREG requirement (18 MW) stays below the battery's 20 MW, so its price is unique.
+const FCAS_CHANGES = (
+    alta_reg_avail = [15.0, 8.0], alta_agc = [1, 0], park_initial = [40.0, 2.0], batt_initial = [5.0, -15.0],
+    reg_req = [20.0, 18.0],
+)
+
+const STOCK_FCAS_SIM = stock_simulate(fcas_toy_system(; FCAS_CHANGES...))
 
 @testset "FCAS trapezium, enablement and AGC status change between steps: simulation equals standalone solves" begin
-    sim = stock_simulate(fcas_toy_system(; FCAS_CHANGES...))
+    sim = STOCK_FCAS_SIM
     @test PSI.has_container_key(PSI.get_optimization_container(sim.model), FCASSideCapacityVariable, FCASService, "1_RAISEREG_gen")
+    # Every cost of the full problem template is an invariant term.
+    @test !PSI.get_objective_expression(PSI.get_optimization_container(sim.model)).has_variant_contributors
     capacities = [stock_fcas_capacities(sim.results, t) for t in STOCK_STEPS]
     prices = [stock_fcas_prices(sim.results, fcas_toy_system(; FCAS_CHANGES...), t) for t in STOCK_STEPS]
     for (k, t) in enumerate(STOCK_STEPS)
         ref = stock_fcas_standalone(fcas_toy_system(; FCAS_CHANGES...), t)
         @test sim.objectives[k] ≈ ref.objective atol = TOY_TOLERANCE
         @test stock_price(sim.solved[k]) ≈ stock_price(ref.solved) atol = TOY_TOLERANCE
-        for duid in ref.solved.dispatch.DUID
-            @test stock_mw(sim.solved[k], duid) ≈ stock_mw(ref.solved, duid) atol = TOY_TOLERANCE
-        end
-        @test keys(capacities[k]) == keys(ref.capacities)
-        for (cell, mw) in ref.capacities
-            @test capacities[k][cell] ≈ mw atol = TOY_TOLERANCE
-        end
-        @test keys(prices[k]) == keys(ref.prices)
-        for (market, rop) in ref.prices
-            @test prices[k][market] ≈ rop atol = TOY_TOLERANCE
-        end
+        @test stock_close(stock_dispatch(sim.solved[k]), stock_dispatch(ref.solved))
+        @test stock_close(capacities[k], ref.capacities)
+        @test stock_close(prices[k], ref.prices)
     end
     # Step 2 reads step-2 data: Alta's RAISEREG is disabled and Park City's RAISE6SEC stranded.
     @test capacities[1]["1_RAISEREG $TOY_CHEAP"] > 1.0
     @test capacities[2]["1_RAISEREG $TOY_CHEAP"] ≈ 0.0 atol = TOY_TOLERANCE
     @test capacities[1]["1_RAISE6SEC $TOY_EXPENSIVE"] > 1.0
     @test capacities[2]["1_RAISE6SEC $TOY_EXPENSIVE"] ≈ 0.0 atol = TOY_TOLERANCE
-    @test capacities[2]["1_RAISEREG_gen $TOY_BATTERY"] + capacities[2]["1_RAISEREG_load $TOY_BATTERY"] ≈ 20.0 atol = TOY_TOLERANCE
+    @test capacities[2]["1_RAISEREG_gen $TOY_BATTERY"] + capacities[2]["1_RAISEREG_load $TOY_BATTERY"] ≈ 18.0 atol = TOY_TOLERANCE
 
 end
 
@@ -480,27 +450,16 @@ function tie_sentinel_system(; park_price = [10.0, 10.0])
     return nem_toy_system(units, [150.0, 120.0]; horizon = TOY_RESOLUTION)
 end
 
-@testset "tie-break widths change between steps, one band empty in step 2: simulation equals standalone solves" begin
+@testset "tie-break widths change between steps, one band empty in step 2" begin
     sim = stock_simulate(tie_sentinel_system())
     expected = [
         (cheap = 90.0 * 100.0 / 230.0, park = 90.0 * 50.0 / 230.0, third = 90.0 * 80.0 / 230.0, objective = 100.0),
         (cheap = 60.0 * 40.0 / 90.0, park = 60.0 * 50.0 / 90.0, third = 0.0, objective = 75.0),
     ]
-    for (k, t) in enumerate(STOCK_STEPS)
-        ref = stock_standalone(tie_sentinel_system(), t)
-        @test sim.objectives[k] ≈ ref.objective atol = TOY_TOLERANCE
-        @test stock_price(sim.solved[k]) ≈ stock_price(ref.solved) atol = TOY_TOLERANCE
-        for duid in ref.solved.dispatch.DUID
-            @test stock_mw(sim.solved[k], duid) ≈ stock_mw(ref.solved, duid) atol = 1.0e-5
-        end
-        e = expected[k]
-        @test stock_mw(sim.solved[k], TOY_CHEAP) ≈ e.cheap atol = 1.0e-5
-        @test stock_mw(sim.solved[k], TOY_EXPENSIVE) ≈ e.park atol = 1.0e-5
-        @test stock_mw(sim.solved[k], TIE_THIRD) ≈ e.third atol = 1.0e-5
-        @test stock_mw(sim.solved[k], BINDING_MID) ≈ 60.0 atol = 1.0e-5
-        @test stock_price(sim.solved[k]) ≈ 10.0 atol = TOY_TOLERANCE
-        @test sim.objectives[k] ≈ e.objective atol = 1.0e-4
-    end
+    @test [[stock_mw(s, d) for d in (TOY_CHEAP, TOY_EXPENSIVE, TIE_THIRD, BINDING_MID)] for s in sim.solved] ≈
+        [[e.cheap, e.park, e.third, 60.0] for e in expected] atol = 1.0e-5
+    @test stock_price.(sim.solved) ≈ [10.0, 10.0] atol = TOY_TOLERANCE
+    @test sim.objectives ≈ [e.objective for e in expected] atol = 1.0e-4
     scales = only(values(PSI.read_realized_parameters(sim.results, ["TieBreakScaleParameter__ThermalStandard__1"])))
     scale(name) = sort(filter(:name => ==(name), scales), :DateTime).value
     @test scale(TOY_CHEAP) ≈ [1.0, 0.8]
@@ -509,14 +468,6 @@ end
 
 end
 
-@testset "the tie-break pre-flight check" begin
-    moved = tie_sentinel_system(; park_price = [10.0, 12.0])
-    @test_throws ArgumentError check_tie_break_pairs(moved, STOCK_STEPS)
-    @test_throws ArgumentError ReplaySimulation.run_replication(moved, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
-    @test isnothing(check_tie_break_pairs(tie_sentinel_system(), STOCK_STEPS))
-    # Prices change between steps, but no band is ever tied.
-    @test isnothing(check_tie_break_pairs(sentinel_system(), STOCK_STEPS))
-end
 
 # Alta ($20, 100 MW) and Park City ($80, 100 MW) offer RAISEREG on rectangles: Alta 25 MW at $5, Park City 20 MW at $10.
 # Alta's AGC ramp rate is `alta_ramp` MW/h (360 MW/h is 30 MW per interval); `F_REG` requires `reg_req` MW.
@@ -529,8 +480,8 @@ function reg_ramp_system(;
     ]
     return nem_toy_system(
         units, load_mw; horizon = TOY_RESOLUTION, mutate! = (sys, stamps) -> begin
-            alta = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
-            park = PSY.get_component(PSY.ThermalStandard, sys, TOY_EXPENSIVE)
+            alta = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
+            park = PSY.get_component(ThermalStandard, sys, TOY_EXPENSIVE)
             add_toy_fcas_offer!(sys, alta, stamps, BidType.RAISEREG, fill((0.0, 0.0, 100.0, 100.0, 25.0), 2), fill([(25.0, 5.0)], 2))
             add_toy_fcas_offer!(sys, park, stamps, BidType.RAISEREG, fill((0.0, 0.0, 100.0, 100.0, 20.0), 2), fill([(20.0, 10.0)], 2))
             add_toy_series!(sys, alta, stamps, "fcas_agc_ramp_rate_RAISEREG", alta_ramp)
@@ -558,8 +509,8 @@ function bdu_reg_system(;
     ]
     return nem_toy_system(
         units, 50.0; batteries, horizon = TOY_RESOLUTION, mutate! = (sys, stamps) -> begin
-            park = PSY.get_component(PSY.ThermalStandard, sys, TOY_EXPENSIVE)
-            bat = PSY.get_component(PSY.EnergyReservoirStorage, sys, TOY_BATTERY)
+            park = PSY.get_component(ThermalStandard, sys, TOY_EXPENSIVE)
+            bat = PSY.get_component(EnergyReservoirStorage, sys, TOY_BATTERY)
             add_toy_fcas_offer!(sys, park, stamps, BidType.RAISEREG, fill((0.0, 0.0, 100.0, 100.0, 20.0), 2), fill([(20.0, 10.0)], 2))
             add_toy_fcas_offer!(sys, bat, stamps, BidType.RAISEREG, gen_trap, fill([(10.0, 3.0)], 2))
             add_toy_fcas_offer!(sys, bat, stamps, BidType.RAISEREG, load_trap, fill([(10.0, 4.0)], 2); decremental = true)
@@ -587,7 +538,7 @@ function stock_realized(results, key, name; field = nothing, scale = 100.0, para
     return sort(df, :DateTime).value .* scale
 end
 
-# Checks `build()` run as a two-step simulation and as two standalone solves against `expected[k]` in each step.
+# Checks `build()` run as a two-step simulation against `expected[k]` in each step.
 # Fields: `objective` ($ per interval), `price`, `mw` (DUID => MW), `cap` (capacity cell => MW), `fcas` (RAISEREG price).
 function stock_fcas_case(build, expected)
     sys = build()
@@ -595,27 +546,17 @@ function stock_fcas_case(build, expected)
     @test PSI.built_for_recurrent_solves(PSI.get_optimization_container(sim.model))
     for (k, t) in enumerate(STOCK_STEPS)
         e = expected[k]
-        ref = stock_fcas_standalone(build(), t)
-        run_sim = (;
-            objective = sim.objectives[k], solved = sim.solved[k],
-            capacities = stock_fcas_capacities(sim.results, t), prices = stock_fcas_prices(sim.results, sys, t),
-        )
-        for run in (run_sim, ref)
-            @test run.objective ≈ e.objective atol = TOY_TOLERANCE
-            @test stock_price(run.solved) ≈ e.price atol = TOY_TOLERANCE
-            for (duid, mw) in e.mw
-                @test stock_mw(run.solved, duid) ≈ mw atol = TOY_TOLERANCE
-            end
-            for (cell, mw) in e.cap
-                @test run.capacities[cell] ≈ mw atol = TOY_TOLERANCE
-            end
-            @test run.prices[("1", BidType.RAISEREG)] ≈ e.fcas atol = TOY_TOLERANCE
-        end
+        capacities = stock_fcas_capacities(sim.results, t)
+        @test sim.objectives[k] ≈ e.objective atol = TOY_TOLERANCE
+        @test stock_price(sim.solved[k]) ≈ e.price atol = TOY_TOLERANCE
+        @test all(((duid, mw),) -> isapprox(stock_mw(sim.solved[k], duid), mw; atol = TOY_TOLERANCE), e.mw)
+        @test all(((cell, mw),) -> isapprox(capacities[cell], mw; atol = TOY_TOLERANCE), e.cap)
+        @test stock_fcas_prices(sim.results, sys, t)[("1", BidType.RAISEREG)] ≈ e.fcas atol = TOY_TOLERANCE
     end
     return sim, sys
 end
 
-@testset "FCAS joint ramping (§6.1) binds in step 2 only: simulation equals standalone solves" begin
+@testset "FCAS joint ramping (§6.1) binds in step 2 only" begin
     # Joint ramping RHS = InitialMW + 30 MW: 60 + 30 = 90 in step 1, 40 + 30 = 70 in step 2.
     expected = [
         (
@@ -633,16 +574,11 @@ end
     # Energy + RaiseReg is 70 MW in both steps: slack in step 1, at the RHS in step 2.
     @test rhs[1] - (50.0 + 20.0) ≈ 20.0 atol = TOY_TOLERANCE
     @test rhs[2] - (60.0 + 10.0) ≈ 0.0 atol = TOY_TOLERANCE
-    slack = stock_realized(sim.results, "FCASJointRampingSlack__FCASService__1_RAISEREG", TOY_CHEAP; parameter = false)
+    slack = stock_realized(sim.results, "FCASSlack__FCASService__joint_ramping|1_RAISEREG", TOY_CHEAP; parameter = false)
     @test all(abs.(slack) .<= TOY_TOLERANCE)
-    # Step 2 with step 1's InitialMW (a stale RHS of 90 MW) gives Alta all 20 MW at $5.
-    stale = stock_fcas_standalone(reg_ramp_system(; alta_initial = [60.0, 60.0]), STOCK_STEPS[2])
-    @test stale.objective ≈ 1300 / 12 atol = TOY_TOLERANCE
-    @test stale.prices[("1", BidType.RAISEREG)] ≈ 5.0 atol = TOY_TOLERANCE
-    @test stock_price(stale.solved) ≈ 20.0 atol = TOY_TOLERANCE
 end
 
-@testset "BDU SCADA ramping (§6.4) binds in step 2 only: simulation equals standalone solves" begin
+@testset "BDU SCADA ramping (§6.4) binds in step 2 only" begin
     # AGC ramp 360 then 180 MW/h: BDU RHS 30 then 15 MW; each side's MaxAvail stays 10 MW.
     expected = [
         (
@@ -660,14 +596,9 @@ end
     @test stock_realized(sim.results, key, TOY_BATTERY; field = "bdu_ramping") ≈ [30.0, 15.0] atol = TOY_TOLERANCE
     # §6.1 for the battery: InitialMW 10 + 30, then 10 + 15; never binding (net energy 0).
     @test stock_realized(sim.results, key, TOY_BATTERY; field = "joint_ramping") ≈ [40.0, 25.0] atol = TOY_TOLERANCE
-    for name in ("FCASBDURampingSlack__FCASService__1_RAISEREG", "FCASJointRampingSlack__FCASService__1_RAISEREG")
+    for name in ("FCASSlack__FCASService__bdu_ramping|1_RAISEREG", "FCASSlack__FCASService__joint_ramping|1_RAISEREG")
         @test all(abs.(stock_realized(sim.results, name, TOY_BATTERY; parameter = false)) .<= TOY_TOLERANCE)
     end
-    # Step 2 with step 1's 30 MW BDU RHS repeats step 1's dispatch.
-    stale = stock_fcas_standalone(bdu_reg_system(; batt_ramp = [360.0, 360.0]), STOCK_STEPS[2])
-    @test stale.objective ≈ 1062 / 12 atol = TOY_TOLERANCE
-    @test stale.prices[("1", BidType.RAISEREG)] ≈ 4.0 atol = TOY_TOLERANCE
-    @test stale.capacities["1_RAISEREG_load $TOY_BATTERY"] ≈ 8.0 atol = TOY_TOLERANCE
 end
 
 @testset "a both-sided battery loses its load side in step 2: the lower slope enters as -LowerSlopeCoeff" begin
@@ -699,15 +630,6 @@ end
     for (k, cap) in enumerate((5.0, 8.0))
         @test 5.0 - gen_slope[k] * cap ≈ 0.0 atol = TOY_TOLERANCE
     end
-    # Stale step-2 inputs: step 1's slope 1 caps the generation side at 5 MW; step 1's enablement
-    # keeps the load side, trapped at -10 MW, so the battery charges 10 MW.
-    slope_stale = stock_fcas_standalone(bdu_stranded_system(; gen_low = [10.0, 10.0]), STOCK_STEPS[2])
-    @test slope_stale.objective ≈ 1035 / 12 atol = TOY_TOLERANCE
-    @test slope_stale.capacities["1_RAISEREG $TOY_EXPENSIVE"] ≈ 7.0 atol = TOY_TOLERANCE
-    enable_stale = stock_fcas_standalone(bdu_stranded_system(; load_avail = [50.0, 50.0]), STOCK_STEPS[2])
-    @test enable_stale.objective ≈ 1190 / 12 atol = TOY_TOLERANCE
-    @test enable_stale.prices[("1", BidType.RAISEREG)] ≈ 4.0 atol = TOY_TOLERANCE
-    @test stock_mw(enable_stale.solved, TOY_BATTERY) ≈ -5.0 atol = TOY_TOLERANCE
 end
 
 @testset "an FCAS requirement short in step 2 only is priced at its CVP and reported in step 2 only" begin
@@ -725,24 +647,20 @@ end
     ]
     sim, sys = stock_fcas_case(build, expected)
     # The stored generic constraint slack is already in MW.
-    slack = stock_realized(sim.results, "GenericConstraintSlackDown__GenericConstraint__F_REG", "F_REG"; parameter = false, scale = 1.0)
+    slack = stock_realized(sim.results, "GenericConstraintSlackDown__GenericConstraint", "F_REG"; parameter = false, scale = 1.0)
     @test slack ≈ [0.0, 15.0] atol = TOY_TOLERANCE
-    v = ReplayResults._constraint_violations(sim.results, sys)
+    v = read_constraint_violations(sim.results, sys)
     @test nrow(v) == 1
     row = only(eachrow(v))
     @test (row.family, row.name, row.DateTime, row.direction) == ("generic_constraint", "F_REG", STOCK_STEPS[2], "down")
     @test row.MW ≈ 15.0 atol = TOY_TOLERANCE
     # The unit FCAS slacks (CVP 70 to 155) stay at zero.
     @test !any(startswith("fcas_"), v.family)
-    # Step 2 with step 1's 20 MW requirement has no violation and repeats step 1.
-    stale = stock_fcas_standalone(reg_ramp_system(; alta_initial = [50.0, 50.0], load_mw = [50.0, 50.0], weight = 10.0), STOCK_STEPS[2])
-    @test stale.objective ≈ 1100 / 12 atol = TOY_TOLERANCE
-    @test stale.prices[("1", BidType.RAISEREG)] ≈ 5.0 atol = TOY_TOLERANCE
 end
 
 # Thirty generic constraints on one unit: even ones are slack-free; odd ones require 150 MW of a 100 MW
 # unit (GE), so their down slack carries the violation in both steps.
-@testset "the batched slack read covers every slack key of a result with many" begin
+@testset "the batched slack read covers every constraint of the shared slack containers" begin
     n = 30
     add_constraint!(sys, stamps, i) = isodd(i) ?
         add_toy_generic_constraint!(sys, stamps, TOY_CHEAP, 150.0; sense = ConstraintSense.GE, name = "N_MANY_$i") :
@@ -755,107 +673,246 @@ end
         [100.0, 120.0]; horizon = TOY_RESOLUTION,
         mutate! = (sys, stamps) -> foreach(i -> add_constraint!(sys, stamps, i), 1:n),
     )
-    out = ReplaySimulation.run_replication(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
-    slack_families = Dict(ReplayResults._VIOLATION_FAMILIES)
+    out = run_problem(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
+    slack_families = Dict(AEMS._VIOLATION_FAMILIES)
     keys = [k for k in PSI.list_variable_keys(out.results) if haskey(slack_families, PSI.IS.Optimization.get_entry_type(k))]
-    @test length(keys) >= n
-    batched = ReplayResults._read_variable_frames(out.results, keys)
+    # One up and one down generic constraint slack container hold the thirty constraints.
+    generic = [k for k in keys if PSI.IS.Optimization.get_entry_type(k) in (AEMS.GenericConstraintSlackUp, AEMS.GenericConstraintSlackDown)]
+    @test length(generic) == 2
+    batched = AEMS._read_variable_frames(out.results, keys)
     @test Set(Base.keys(batched)) == Set(keys)
-    violated = [k for k in keys if any(>(ReplayResults._VIOLATION_TOLERANCE_MW), batched[k].value)]
+    @test length(unique(reduce(vcat, [batched[k].name for k in generic]))) == n
+    violated = unique(reduce(vcat, [batched[k].name[batched[k].value .> AEMS._VIOLATION_TOLERANCE_MW] for k in generic]))
     @test length(violated) == n ÷ 2
-    @test isempty(ReplayResults._read_variable_frames(out.results, PSI.OptimizationContainerKey[]))
+    @test isempty(AEMS._read_variable_frames(out.results, PSI.OptimizationContainerKey[]))
 end
 
-@testset "replication_template follows parts and exclude_constraints" begin
+@testset "problem template follows the template and exclude_constraints" begin
     sys = fcas_toy_system()
-    full = replication_template(sys)
-    @test haskey(PSI.get_device_models(full), :EnergyReservoirStorage)
-    # Without :fcas the FCAS requirements need an unmodeled market and are reported, not built.
+    full = problem_template(sys)
+    @test Set(PSI.get_component_type(m) for m in values(PSI.get_device_models(full))) ==
+        Set([AEMS.NEM_DISPATCH_DEVICE_TYPES..., PSY.PowerLoad])
+    # A dispatch participant without a device model fails the template check.
+    no_storage = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
+    for T in (ThermalStandard, HydroDispatch, RenewableDispatch, InterruptiblePowerLoad)
+        PSI.set_device_model!(no_storage, T, AEMS.NEMDispatch)
+    end
+    PSI.set_device_model!(no_storage, PSY.PowerLoad, PSI.StaticPowerLoad)
+    @test_throws r"no device model in template for dispatch participant types .*EnergyReservoirStorage" AEMS.check_template_against_sys(
+        no_storage, fcas_toy_system(),
+    )
+    # Without FCAS service models the FCAS requirements need an unmodeled market and are reported, not built.
     skipped = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
-    no_fcas = replication_template(sys; parts = (:batteries, :generic_constraints), skipped = skipped)
-    @test isempty(AEMS._modeled_fcas_services(no_fcas))
+    no_fcas = problem_template(sys; template = with_generic_constraints!(energy_template()), skipped = skipped)
+    @test isempty(AEMS._modeled_fcas_services(no_fcas, sys))
     @test Set(r.constraint for r in skipped) == Set(["F_REG", "F_R6", "F_L6"])
     @test all(r -> r.reason == :unmodeled_fcas_service, skipped)
-    @test !any(((name, _),) -> name == TIE_BREAK_SERVICE_NAME, keys(PSI.get_service_models(no_fcas)))
-    # Without :batteries no storage model is set.
-    no_batteries = replication_template(sentinel_system(); parts = (:generic_constraints,))
-    @test !haskey(PSI.get_device_models(no_batteries), :EnergyReservoirStorage)
-    # exclude_constraints leaves a constraint out with its reason, and rejects an unknown name.
-    skipped = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
-    excluded = replication_template(sentinel_system(); skipped, exclude_constraints = Dict("N_TOY_LIMIT" => :never_invoked))
-    @test only(skipped) == (constraint = "N_TOY_LIMIT", reason = :never_invoked, n_missing = 0)
-    @test !any(((name, _),) -> name == "N_TOY_LIMIT", keys(PSI.get_service_models(excluded)))
-    @test_throws r"exclude_constraints names N_ABSENT" replication_template(sentinel_system(); exclude_constraints = Dict("N_ABSENT" => :x))
-    @test_throws r"unknown parts" replication_template(sentinel_system(); parts = (:batteries, :nonsense))
-end
-
-@testset "tie-breaks without batteries fail when a battery carries tie-break scales" begin
-    # Alta and the battery offer generation at the same $30, so their bands are tied.
-    units = [TOY_CHEAP => toy_unit(100.0, [(100.0, 30.0)]; initial = 30.0, ramp_up = 100.0)]
-    batteries = [TOY_BATTERY => toy_battery(50.0, 30.0, 50.0, 1.0; initial = 0.0, ramp_up = 100.0)]
-    sys = nem_toy_system(units, 60.0; batteries, horizon = TOY_RESOLUTION)
-    @test_throws r"carry tie-break scales; add :batteries" replication_template(sys; parts = (:tie_breaks,))
-    @test !any(((name, _),) -> name == TIE_BREAK_SERVICE_NAME, keys(PSI.get_service_models(replication_template(sys; parts = ()))))
-    @test any(((name, _),) -> name == TIE_BREAK_SERVICE_NAME, keys(PSI.get_service_models(replication_template(sys; parts = (:batteries, :tie_breaks)))))
-end
-
-@testset "named errors of the replay core" begin
-    # A constraint on a unit absent from the system blocks a partial template; a left-out family does not.
-    ghost = nem_toy_system(
-        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0;
-        horizon = TOY_RESOLUTION, mutate! = (sys, stamps) -> begin
-            gc = GenericConstraint(;
-                name = "N_GHOST", sense = ConstraintSense.LE, rhs = 1.0, terms = ConstraintTerm[UnitTerm("GHOST", BidType.ENERGY, 1.0)],
-            )
-            PSY.add_service!(sys, gc, [PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)])
-            add_toy_series!(sys, gc, stamps, "rhs", [100.0, 100.0])
-            add_toy_series!(sys, gc, stamps, "invoked", [1.0, 1.0]; scale = 1.0)
-        end,
+    # exclude_constraints rejects an unknown name.
+    @test_throws r"exclude_constraints names N_ABSENT" problem_template(
+        sentinel_system(); template = template_nemde(; exclude_constraints = Dict("N_ABSENT" => :x)),
     )
-    @test_throws r"cannot model: N_GHOST \(missing_component\)" replication_template(ghost; parts = (:generic_constraints,))
+end
+
+@testset "named errors of the run core" begin
     # Losses modeled but no interchange variable in the results.
     sys = loss_curve_sentinel_system()
-    uncoupled = stock_standalone(sys, TOY_START; parts = ())
-    @test_throws r"Losses are modeled" ReplayResults._solved_tables(uncoupled.results, sys, REPLICATION_PARTS)
-    @test nrow(ReplayResults._solved_tables(uncoupled.results, sys, ()).interconnectors) == 0
-    @test_throws r"non-finite regional price" ReplayResults._check_prices_finite(
+    uncoupled = stock_standalone(sys, TOY_START; template = problem_template(sys; template = energy_template()))
+    @test nrow(read_solved_interval(uncoupled.results, sys).interconnectors) == 0
+    @test_throws r"non-finite regional price" AEMS._check_prices_finite(
         DataFrame(SETTLEMENTDATE = [TOY_START], REGIONID = ["1"], ROP = [NaN]),
     )
 end
 
 @testset "MNSP metered ramp and fixed-loading inputs update between simulation steps" begin
-    sys = mnsp_sentinel_system()
-    ic = only(collect(PSY.get_components(PSY.AreaInterchange, sys)))
+    names = AustralianElectricityMarkets.NEM_MNSP_SERIES
+    derived = AustralianElectricityMarkets.NEM_MNSP_FIXED_LOAD_SERIES
+    # The bid's fixed loading is NaN where AEMO publishes NULL, so the first step is not invoked.
     inputs = (
-        "mnsp_initial_flow" => [0.0, 50.0],
-        "mnsp_forward_ramp_rate" => [2.0, 1.0],
-        "mnsp_reverse_ramp_rate" => [1000.0, 6.0],
-        "mnsp_forward_fixed_load" => [0.0, 20.0],
-        "mnsp_forward_fixed_load_invoked" => [0.0, 1.0],
+        names.initial_flow => [0.0, 50.0],
+        names.forward_ramp_rate => [2.0, 1.0],
+        names.reverse_ramp_rate => [1000.0, 6.0],
+        names.forward_fixed_load => [NaN, 20.0],
     )
-    for (name, values) in inputs
-        PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, ic, name)
-        AustralianElectricityMarkets.replace_single_series!(sys, ic, PSY.SingleTimeSeries(; name, data = PSY.TimeSeries.TimeArray(collect(STOCK_STEPS), values)))
+    expected = (
+        names.initial_flow => [0.0, 50.0],
+        names.forward_ramp_rate => [2.0, 1.0],
+        names.reverse_ramp_rate => [1000.0, 6.0],
+        derived.forward_value => [0.0, 20.0],
+        derived.forward_invoked => [0.0, 1.0],
+    )
+    # The raw inputs are edited before the NEMDE inputs are written, which derive the fixed loading from them.
+    function set_raw_inputs!(sys, _stamps)
+        ic = only(collect(PSY.get_components(PSY.AreaInterchange, sys)))
+        for (name, values) in inputs
+            AustralianElectricityMarkets.replace_single_series!(sys, ic, PSY.SingleTimeSeries(; name, data = PSY.TimeSeries.TimeArray(collect(STOCK_STEPS), values)))
+        end
     end
-    PSY.transform_single_time_series!(sys, TOY_RESOLUTION, TOY_RESOLUTION)
+    sys = mnsp_sentinel_system(; mutate! = set_raw_inputs!)
+    ic = only(collect(PSY.get_components(PSY.AreaInterchange, sys)))
     sim = stock_simulate(sys)
     @test stock_flow.(sim.solved) ≈ [10.0, 20.0] atol = TOY_TOLERANCE
-    for (name, expected) in inputs
-        P = first(only(filter(pair -> last(pair) == name, AEMS._MNSP_OPERATING_SERIES)))
-        key = "$(nameof(P))__AreaInterchange"
-        @test stock_realized(sim.results, key, PSY.get_name(ic); scale = 1.0) ≈ expected atol = TOY_TOLERANCE
+    for (name, values) in expected
+        meta = first(only(filter(pair -> last(pair) == name, AEMS._MNSP_OPERATING_SERIES)))
+        key = "MNSPOperatingParameter__AreaInterchange__$meta"
+        @test stock_realized(sim.results, key, PSY.get_name(ic); scale = 1.0) ≈ values atol = TOY_TOLERANCE
     end
     container = PSI.get_optimization_container(sim.model)
     objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
-    for (V, factor, meta) in (
-            (AEMS.MNSPRampUpSlack, 1155.0, ""),
-            (AEMS.MNSPOfferSlack, 1135.0, "forward"),
-            (AEMS.MNSPMaxAvailSlack, 365.0, "reverse"),
-            (AEMS.MNSPFixedLoadDeficitSlack, 380.0, "forward"),
+    for (factor, meta) in (
+            (1155.0, "ramp|up"),
+            (1135.0, "offer|forward"),
+            (365.0, "max_avail|reverse"),
+            (380.0, "fixed_load|deficit|forward"),
         )
-        slack = PSI.get_variable(container, V(), PSY.AreaInterchange, meta)
+        slack = PSI.get_variable(container, AEMS.MNSPSlack(), PSY.AreaInterchange, meta)
         @test PSI.JuMP.coefficient(objective, slack[PSY.get_name(ic), 1]) ≈ factor * 17500 * 100 / 12
     end
-    # The Market Price Cap is fixed per simulation: a range across 1 July is refused before build.
-    @test_throws ArgumentError AEMS.check_single_financial_year(DateTime(2025, 6, 30, 23, 55):Minute(5):DateTime(2025, 7, 1, 0, 5))
+end
+
+# Alta ($20) ramps 10 MW per interval from an observed 50 MW; the observed start of step 2 jumps to 100 MW.
+# Park City ($80) covers the rest of 60 then 120 MW of load.
+function closed_loop_system(; alta_initial = [50.0, 100.0])
+    units = [
+        TOY_CHEAP => toy_unit(150.0, [(150.0, 20.0)]; initial = alta_initial, ramp_up = 2.0),
+        TOY_EXPENSIVE => toy_unit(150.0, [(150.0, 80.0)]; initial = [0.0, 0.0], ramp_up = 100.0),
+    ]
+    return nem_toy_system(units, [60.0, 120.0]; horizon = TOY_RESOLUTION)
+end
+
+@testset "closed loop: step 1 from the observed state, step 2 from the step-1 solve" begin
+    open_loop = stock_simulate(closed_loop_system())
+    closed = stock_simulate(closed_loop_system(); problem = NEMClosedLoopDispatchProblem)
+    container = PSI.get_optimization_container(closed.model)
+    @test PSI.has_container_key(container, NEMInitialPower, ThermalStandard)
+    @test !PSI.has_container_key(container, AEMS.InitialPowerTimeSeriesParameter, ThermalStandard)
+    @test closed.objectives[1] ≈ open_loop.objectives[1] atol = TOY_TOLERANCE
+    @test stock_mw(closed.solved[1], TOY_CHEAP) ≈ 60.0 atol = TOY_TOLERANCE
+    @test stock_mw(open_loop.solved[1], TOY_CHEAP) ≈ 60.0 atol = TOY_TOLERANCE
+    # Open loop restarts step 2 from the observed 100 MW; closed loop from the solved 60 MW, so Alta tops out at 70 MW.
+    @test stock_mw(open_loop.solved[2], TOY_CHEAP) ≈ 110.0 atol = TOY_TOLERANCE
+    @test stock_mw(closed.solved[2], TOY_CHEAP) ≈ 70.0 atol = TOY_TOLERANCE
+    @test stock_mw(closed.solved[2], TOY_EXPENSIVE) ≈ 50.0 atol = TOY_TOLERANCE
+    @test stock_price(closed.solved[2]) ≈ 80.0 atol = TOY_TOLERANCE
+    ic = only(i for i in PSI.get_initial_condition(container, NEMInitialPower(), ThermalStandard) if PSY.get_name(PSI.get_component(i)) == TOY_CHEAP)
+    @test PSI.JuMP.fix_value(PSI.get_value(ic)) ≈ 0.6
+end
+
+@testset "closed loop: a battery's ramp rates follow its solved starting output" begin
+    closed = stock_simulate(battery_sentinel_system(); problem = NEMClosedLoopDispatchProblem)
+    @test closed.objectives[1] ≈ first(BATTERY_SENTINEL_EXPECTED).objective atol = TOY_TOLERANCE
+    @test stock_mw(closed.solved[1], TOY_BATTERY) ≈ first(BATTERY_SENTINEL_EXPECTED).battery atol = TOY_TOLERANCE
+    # Step 2 ramps from the step-1 solve (15 MW) rather than the observed 0 MW.
+    battery_2 = stock_mw(closed.solved[2], TOY_BATTERY)
+    @test battery_2 >= 15.0 - 5.0 - TOY_TOLERANCE
+end
+
+const CLOSED_FCAS_SYSTEM = fcas_toy_system(; FCAS_CHANGES...)
+const CLOSED_FCAS = stock_simulate(CLOSED_FCAS_SYSTEM; problem = NEMClosedLoopDispatchProblem)
+
+@testset "closed loop: MNSP and FCAS sentinels build and execute, starting as open loop" begin
+    closed_mnsp = stock_simulate(mnsp_sentinel_system(); problem = NEMClosedLoopDispatchProblem)
+    @test PSI.has_container_key(PSI.get_optimization_container(closed_mnsp.model), NEMInitialFlow, PSY.AreaInterchange)
+    @test [closed_mnsp.objectives; CLOSED_FCAS.objectives][[1, 3]] ≈ [STOCK_MNSP_SIM.objectives[1], STOCK_FCAS_SIM.objectives[1]] atol = TOY_TOLERANCE
+    @test length(closed_mnsp.objectives) == length(CLOSED_FCAS.objectives) == 2
+end
+
+@testset "closed loop: step 2's FCAS ramping limits are AEM's closed-loop inputs at the step-1 solve" begin
+    sys = CLOSED_FCAS_SYSTEM
+    closed = CLOSED_FCAS
+    container = PSI.get_optimization_container(closed.model)
+    t2 = last(STOCK_STEPS)
+    base = PSY.get_base_power(sys)
+    checked = 0
+    for T in (ThermalStandard, EnergyReservoirStorage), bid_type in (BidType.RAISEREG, BidType.LOWERREG)
+        PSI.has_container_key(container, AEMS.FCASRampingLimitParameter, T, string(bid_type)) || continue
+        key = PSI.ParameterKey(AEMS.FCASRampingLimitParameter, T, string(bid_type))
+        param = PSI.get_parameter(container, key)
+        array = PSI.get_parameter_array(param)
+        attributes = PSI.get_attributes(param)
+        series = PSI.get_time_series_name(attributes)
+        for (name, uuid) in attributes.component_name_to_ts_uuid
+            device = PSY.get_component(T, sys, name)
+            expected = AustralianElectricityMarkets.closed_loop_input(device, series, t2, stock_mw(closed.solved[1], name), base)
+            isnothing(expected) && continue
+            actual = [PSI.JuMP.fix_value(array[uuid, field, 1]) for field in ("joint_ramping", "bdu_ramping")]
+            @test actual ≈ collect(expected) atol = 1.0e-9
+            checked += 1
+        end
+    end
+    @test checked > 0
+end
+
+# Two batteries outside every FCAS market, so a rebuilt model can leave one of them out.
+const REBUILD_BATTERY_FIRST = "RebuildBatteryFirst"
+const REBUILD_BATTERY_SECOND = "RebuildBatterySecond"
+
+function rebuild_battery_system()
+    units = [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 30.0, ramp_up = 100.0)]
+    batteries = [
+        REBUILD_BATTERY_FIRST => toy_battery(100.0, 5.0, 100.0, 1.0; initial = [20.0, 0.0], ramp_up = 100.0, ramp_down = 1.0, gen_avail = 10.0),
+        REBUILD_BATTERY_SECOND => toy_battery(100.0, 5.0, 100.0, 1.0; initial = [10.0, 0.0], ramp_up = 100.0, ramp_down = 1.0, gen_avail = 10.0),
+    ]
+    return nem_toy_system(units, 40.0; batteries = batteries, horizon = TOY_RESOLUTION)
+end
+
+# A closed-loop simulation of `model` over the stock steps, built by the simulation and run by `execute!`.
+function closed_rebuild_simulation(model)
+    models = PSI.SimulationModels(; decision_models = [model])
+    sequence = PSI.SimulationSequence(; models, ini_cond_chronology = PSI.InterProblemChronology())
+    return PSI.Simulation(;
+        name = "closed_rebuild", steps = length(STOCK_STEPS), models, sequence,
+        simulation_folder = mktempdir(), initial_time = TOY_START,
+    )
+end
+
+@testset "closed loop: a rebuilt model drops the previous build's entries and writes its devices into their own columns" begin
+    sys = rebuild_battery_system()
+    model = PSI.DecisionModel(
+        NEMClosedLoopDispatchProblem, problem_template(sys), sys; optimizer = STOCK_OPTIMIZER, initial_time = TOY_START,
+        name = "closed_rebuild",
+    )
+    first_sim = closed_rebuild_simulation(model)
+    @test PSI.build!(first_sim; store_systems_in_results = false) == PSI.SimulationBuildStatus.BUILT
+    @test PSI.execute!(first_sim) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    old_container = PSI.get_optimization_container(model)
+    @test haskey(AEMS._build_scratch(old_container), :closed_loop_entries)
+
+    # The first battery leaves the device model's set, so the ramp parameter's columns change for the second.
+    PSI.set_device_model!(
+        PSI.get_template(model),
+        PSI.DeviceModel(
+            EnergyReservoirStorage, NEMDispatch;
+            attributes = Dict{String, Any}("filter_function" => d -> PSY.get_name(d) != REBUILD_BATTERY_FIRST),
+        ),
+    )
+    rebuilt = closed_rebuild_simulation(model)
+    @test PSI.build!(rebuilt; store_systems_in_results = false) == PSI.SimulationBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    @test container !== old_container
+    @test !haskey(AEMS._build_scratch(container), :closed_loop_entries)
+    @test PSI.execute!(rebuilt) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    @test haskey(AEMS._build_scratch(container), :closed_loop_entries)
+
+    key = PSI.ParameterKey(RampRateTimeSeriesParameter, EnergyReservoirStorage, "up")
+    param = PSI.get_parameter(container, key)
+    array = PSI.get_parameter_array(param)
+    attributes = PSI.get_attributes(param)
+    series = PSI.get_time_series_name(attributes)
+    names = Set(keys(attributes.component_name_to_ts_uuid))
+    @test names == Set([REBUILD_BATTERY_SECOND])
+
+    results = PSI.get_decision_problem_results(PSI.SimulationResults(rebuilt), "closed_rebuild")
+    solved_1 = stock_at(read_solved_interval(results, sys), TOY_START)
+    t2 = last(STOCK_STEPS)
+    base = PSY.get_base_power(sys)
+    checked = 0
+    for name in names
+        device = PSY.get_component(EnergyReservoirStorage, sys, name)
+        expected = AustralianElectricityMarkets.closed_loop_input(device, series, t2, stock_mw(solved_1, name), base)
+        isnothing(expected) && continue
+        actual = PSI.JuMP.fix_value(array[attributes.component_name_to_ts_uuid[name], 1])
+        @test actual ≈ expected atol = 1.0e-9
+        checked += 1
+    end
+    @test checked == 1
 end

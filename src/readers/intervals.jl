@@ -9,7 +9,9 @@ query per table.
 - `db`: an `AEMDB` connection.
 - `settlement_date`: the `SETTLEMENTDATE` of the interval (`DateTime`).
 - `steps`: the `SETTLEMENTDATE`s of consecutive intervals, stepping by 5 minutes.
-- `intervention`: 0 for the pricing run, 1 for the physical run.
+- `intervention`: `0` for the pricing run. `1` for the physical run where the interval has one, else
+  the pricing run. Dispatch and interconnector flows follow this run; prices always come from the
+  pricing run (run 0), since AEMO sets prices there.
 
 # Returns
 A `NamedTuple` of `DataFrame`s: `dispatch` (`DUID`, `TOTALCLEARED`), `interconnectors`
@@ -35,9 +37,10 @@ function read_published_interval(db, steps::StepRange{DateTime}; intervention::I
     return (;
         dispatch = published(:DISPATCHLOAD, "DUID", ("TOTALCLEARED",)),
         interconnectors = published(:DISPATCHINTERCONNECTORRES, "INTERCONNECTORID", ("MWFLOW", "MWLOSSES")),
-        prices = select(read_prices(db, interval; intervention), :SETTLEMENTDATE, :REGIONID, :RRP, :ROP),
+        # Prices stay on the pricing run (run 0) whatever the intervention run.
+        prices = select(read_prices(db, interval), :SETTLEMENTDATE, :REGIONID, :RRP, :ROP),
         fcas_prices = select(
-            read_fcas_prices(db, interval; intervention), :SETTLEMENTDATE, :REGIONID, :BIDTYPE, :RRP, :ROP,
+            read_fcas_prices(db, interval), :SETTLEMENTDATE, :REGIONID, :BIDTYPE, :RRP, :ROP,
         ),
     )
 end

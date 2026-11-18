@@ -1,28 +1,21 @@
-# 0085. Market Price Cap penalties fixed at build, one financial year per simulation
+# 0085 Market Price Cap penalties fixed at build, one financial year per simulation
 
 ## Status
 
-Accepted. Supersedes [0070](0070-per-slack-market-price-cap-parameters.md) and
-[0065](0065-market-price-cap-repricing.md): penalties are no longer re-priced at each step.
+Accepted. Replaces per-step re-pricing of the penalties (removed ADRs 0065 and 0070).
 
-## Context
+## What
 
-Penalty slacks priced at the Market Price Cap were registered as a per-slack
-`MarketPriceCapPenaltyParameter` and re-priced at each simulation step, so a model built once followed
-the cap across 1 July. PowerSimulations now prices time-series values natively through cost targets ([0084](0084-native-sienna-recurrent-updates.md)),
-and the replay chunks already split at 00:05 on 1 July.
+- Each Market Price Cap (MPC) penalty is a constant of the invariant objective: CVP factor times the cap times the interval length, per MW of slack. The cap is the one dated by the container's initial time, or the `market_price_cap` override of `DecisionModel{M}`.
+- A run never crosses a financial year: `nem_system` refuses a `date_range` whose dispatch intervals span two financial years, and `dispatch_chunks` splits chunks at 00:05 on 1 July.
+- The financial year of an interval ending at `t` is that of `t - 5 minutes`, so the interval ending 00:00 on 1 July belongs to the earlier year.
+- Penalty factors are unchanged: AEMO *Schedule of Constraint Violation Penalty Factors* v8.0.
 
-## Decision
+## How
 
-Each Market Price Cap penalty is a constant of the invariant objective, priced at the Market Price Cap of
-the container's initial interval. The pre-flight check `check_single_financial_year` refuses a simulation
-whose first and last intervals fall in different financial years, so that one cap holds throughout.
-Penalty factors and caps are unchanged. The financial year of an interval ending at `t` is the year of
-`t - 5 minutes`, so the interval ending 00:00 on 1 July belongs to the earlier year.
+- `_add_mpc_penalty!` adds the slack terms using `_container_market_price_cap`, which reads `ext["market_price_cap"]` (set at every build from the initial time, or the override) and falls back to `_financial_year_mpc`.
+- Generic-constraint slack costs follow the same rule ([0103](0103-aggregated-generic-constraint-containers.md), [0101](0101-aem-writes-aemsim-reads.md)).
 
-## Consequences
+## Why
 
-- A range across 1 July is refused before build; callers split it at 00:05 on 1 July.
-- Generic-constraint slack costs use native cost targets scaled by the build-time cap; the Market Price
-  Cap penalties of the other slacks are invariant constants.
-- The `MarketPriceCapPenaltyParameter` type is removed.
+- A model is built once per chunk, so a single cap holds throughout and no per-step penalty parameter is needed. The earlier `MarketPriceCapPenaltyParameter` is gone.

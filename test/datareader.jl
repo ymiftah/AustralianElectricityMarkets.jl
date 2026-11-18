@@ -1,9 +1,5 @@
 let
-    hive_dir = AEM_TEST_HIVE_DIR
-    @test isdir(hive_dir)
-
-    config = HiveConfiguration(hive_location = hive_dir, filesystem = "file")
-    db = aem_connect(config)
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
 
     @testset "_table_is_cached" begin
         # A glob matching zero files is a legitimate false, not an error - confirmed directly
@@ -17,14 +13,6 @@ let
         mapped = AustralianElectricityMarkets.RegionModel._map_unit_technology(read_units(db))
         @test only(mapped.TECHNOLOGY[mapped.DUID .== "BW01"]) == PrimeMovers.BA
         @test only(mapped.FUELTYPE[mapped.DUID .== "BW01"]) == ThermalFuels.OTHER
-    end
-
-    @testset "read_bids" begin
-        # Use 2025 to match mock data
-        date_range = DateTime(2025, 1, 1, 0, 0):Dates.Minute(5):DateTime(2025, 1, 1, 1, 0)
-        df = read_bids(db, date_range)
-        @test "PRICEBANDARRAY" in names(df) && "BANDAVAILARRAY" in names(df)
-        @test !("piecewise_step_data" in names(df))
     end
 
     @testset "Bounded demand preserves complete aggregation bins" begin
