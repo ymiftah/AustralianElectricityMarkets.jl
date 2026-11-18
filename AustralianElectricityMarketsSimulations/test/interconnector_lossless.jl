@@ -25,6 +25,12 @@ function _lossless_template()
     return template
 end
 
+# Whether both flow slacks of `res` are zero at every interval.
+_lossless_flow_slacks_zero(res) = all(
+    all(abs.(PSI.read_variable(res, PSI.VariableKey(AEMS.InterconnectorFlowSlack, PSY.AreaInterchange, meta)).value) .< TOY_TOLERANCE)
+        for meta in ("surplus", "deficit")
+)
+
 @testset "lossless interchange: flow equals area 2 load, no loss terms, area prices equal" begin
     sys = _lossless_sentinel_system()
     model = PSI.DecisionModel(AEMS.NEMDispatchProblem, _lossless_template(), sys; optimizer = HiGHS.Optimizer, initial_time = TOY_START)
@@ -52,10 +58,7 @@ end
     @test all(ismissing, tables.interconnectors.MWLOSSES)
     @test nrow(AEMS.read_interconnector_loss_gaps(res, sys)) == 0
 
-    for meta in ("surplus", "deficit")
-        slack = PSI.read_variable(res, PSI.VariableKey(AEMS.InterconnectorFlowSlack, PSY.AreaInterchange, meta))
-        @test all(abs.(slack.value) .< TOY_TOLERANCE)
-    end
+    @test _lossless_flow_slacks_zero(res)
 end
 
 @testset "lossless interchange rejects network models other than AreaBalancePowerModel" begin
@@ -110,22 +113,16 @@ _lossless_value(frame, name::AbstractString) = only(frame[(frame.name .== name) 
         res = _lossless_solve(_lossless_limited_system(; series))
         flow = PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange")
         @test _lossless_value(flow, TOY_INTERCHANGE) ≈ 30.0 atol = TOY_TOLERANCE
-        for meta in ("surplus", "deficit")
-            slack = PSI.read_variable(res, PSI.VariableKey(AEMS.InterconnectorFlowSlack, PSY.AreaInterchange, meta))
-            @test all(abs.(slack.value) .< TOY_TOLERANCE)
-        end
-        shortfall = PSI.read_variable(res, "SystemBalanceSlackUp__Area")
-        @test _lossless_value(shortfall, "2") ≈ 20.0 atol = TOY_TOLERANCE
-
-        # Without area-balance slacks the flow surplus slack is the only relief: the flow runs at 50 MW, 20 MW above the limit.
-        res = _lossless_solve(_lossless_limited_system(; series); use_slacks = false)
-        flow = PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange")
-        @test _lossless_value(flow, TOY_INTERCHANGE) ≈ 50.0 atol = TOY_TOLERANCE
-        surplus = PSI.read_variable(res, PSI.VariableKey(AEMS.InterconnectorFlowSlack, PSY.AreaInterchange, "surplus"))
-        @test _lossless_value(surplus, TOY_INTERCHANGE) ≈ 20.0 atol = TOY_TOLERANCE
-        deficit = PSI.read_variable(res, PSI.VariableKey(AEMS.InterconnectorFlowSlack, PSY.AreaInterchange, "deficit"))
-        @test all(abs.(deficit.value) .< TOY_TOLERANCE)
+        @test _lossless_flow_slacks_zero(res)
+        @test _lossless_value(PSI.read_variable(res, "SystemBalanceSlackUp__Area"), "2") ≈ 20.0 atol = TOY_TOLERANCE
     end
+    # Without area-balance slacks the flow surplus slack is the only relief: the flow runs at 50 MW, 20 MW above the limit.
+    res = _lossless_solve(_lossless_limited_system(; series = false); use_slacks = false)
+    @test _lossless_value(PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange"), TOY_INTERCHANGE) ≈ 50.0 atol = TOY_TOLERANCE
+    surplus = PSI.read_variable(res, PSI.VariableKey(AEMS.InterconnectorFlowSlack, PSY.AreaInterchange, "surplus"))
+    @test _lossless_value(surplus, TOY_INTERCHANGE) ≈ 20.0 atol = TOY_TOLERANCE
+    deficit = PSI.read_variable(res, PSI.VariableKey(AEMS.InterconnectorFlowSlack, PSY.AreaInterchange, "deficit"))
+    @test all(abs.(deficit.value) .< TOY_TOLERANCE)
 end
 
 @testset "lossless MNSP is a regulated flow within its limits, with no offers or direction" begin

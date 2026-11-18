@@ -152,18 +152,17 @@ end
     base = get_base_power(sys)
     n = length(_ramps_raw(get_component(ThermalStandard, sys, "ER01"), NEM_TELEMETRY_SERIES.ramp_up_limit))
     written = Dict(:swapped => 0, :plain => 0)
+    mismatched = String[]
     for device in AEM.nem_dispatch_devices(sys)
         branch = device isa PowerSystems.ControllableLoad ? :swapped : :plain
         for (service, values) in zip((BidType.RAISEREG, BidType.LOWERREG), _ramps_expected_agc(device, n, base))
             name = fcas_series_name("fcas_agc_ramp_rate", service)
-            if isnothing(values)
-                @test !has_time_series(device, SingleTimeSeries, name)
-            else
-                @test isapprox(_ramps_raw(device, name), values; nans = true)
-                written[branch] += 1
-            end
+            ok = isnothing(values) ? !has_time_series(device, SingleTimeSeries, name) : isapprox(_ramps_raw(device, name), values; nans = true)
+            ok || push!(mismatched, "$(get_name(device)) $service")
+            isnothing(values) || (written[branch] += 1)
         end
     end
+    @test isempty(mismatched)
     # Both branches of the swap are exercised: the controllable loads and the other dispatch units.
     @test written[:swapped] > 0
     @test written[:plain] > 0

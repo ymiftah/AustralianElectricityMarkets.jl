@@ -78,11 +78,9 @@ end
         (mode = 3, time = 12.0, t2 = 8.0, t4 = 8.0, m = 50.0, bounds = (50.0, Inf)),
         (mode = 4, time = 10.0, t2 = 6.0, t4 = 20.0, m = 60.0, bounds = (30.0, Inf)),
     )
-    for u in units
-        envelope = _FS.fast_start_envelope(_fs_end(u.mode, u.time), _fs_profile(1, u.t2, 1, u.t4), u.m)
-        @test (envelope.lower, envelope.upper) == u.bounds
-        @test envelope.ramp == (u.mode <= 2 ? :none : :standard)
-    end
+    envelopes = [_FS.fast_start_envelope(_fs_end(u.mode, u.time), _fs_profile(1, u.t2, 1, u.t4), u.m) for u in units]
+    @test [(e.lower, e.upper) for e in envelopes] == [u.bounds for u in units]
+    @test [e.ramp for e in envelopes] == [:none, :none, :none, :standard, :standard]
 end
 
 @testset "fast_start_envelope guards zero T2 and T4" begin
@@ -117,10 +115,8 @@ end
 end
 
 @testset "fast_start_ramp_exempt: fast-start units starting in modes 0 to 2" begin
-    for mode in 0:4
-        @test _FS.fast_start_ramp_exempt(_FS.NEMUnitState(0.0, mode), true) == (mode <= 2)
-        @test !_FS.fast_start_ramp_exempt(_FS.NEMUnitState(0.0, mode), false)
-    end
+    @test [_FS.fast_start_ramp_exempt(_FS.NEMUnitState(0.0, mode), true) for mode in 0:4] == [true, true, true, false, false]
+    @test !any(_FS.fast_start_ramp_exempt(_FS.NEMUnitState(0.0, mode), false) for mode in 0:4)
     @test _FS.FAST_START_CVP_FACTOR == 1130.0
 end
 
@@ -145,12 +141,9 @@ end
     @test [i.start_mode for i in inputs] == [0, 0, 4]
     @test [i.time_in_mode for i in inputs] == [0.0, 0.0, 0.0]
     @test all(i -> i.profile == _fs_profile(10, 0, 0, 0) && i.side == _FS.OfferSide.GEN, inputs)
-    for name in ("BW01", "BW02")
-        device = get_component(Device, sys, name)
-        @test !_FS.has_fast_start_profile(device)
-        @test !has_time_series(device, SingleTimeSeries, _FS.NEM_FAST_START_SERIES.start_mode)
-        @test_throws ArgumentError _FS.fast_start_unit_inputs(device, first(interval), 1)
-    end
+    others = [get_component(Device, sys, name) for name in ("BW01", "BW02")]
+    @test !any(d -> _FS.has_fast_start_profile(d) || has_time_series(d, SingleTimeSeries, _FS.NEM_FAST_START_SERIES.start_mode), others)
+    @test_throws ArgumentError _FS.fast_start_unit_inputs(first(others), first(interval), 1)
 end
 
 

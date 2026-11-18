@@ -743,9 +743,7 @@ end
     )
     objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
     slack = PSI.get_variable(container, AEMS.NEMUnitSlack(), ThermalStandard, "unit_ramp|up")
-    for t in axes(slack)[2]
-        @test PSI.JuMP.coefficient(objective, slack[TOY_CHEAP, t]) ≈ expected
-    end
+    @test [PSI.JuMP.coefficient(objective, slack[TOY_CHEAP, t]) for t in axes(slack)[2]] ≈ fill(expected, length(axes(slack)[2]))
 end
 
 @testset "typed storage fixed-loading rows preserve net injection and invocation" begin

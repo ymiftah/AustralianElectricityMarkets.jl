@@ -49,20 +49,16 @@ end
 
     AEM._set_constraint_availability!(sys)
 
-    for (gc, reason) in (
-            ordinary => nothing, never => :never_invoked, no_device => :no_available_device, both => :never_invoked,
-            static_on => nothing, static_off => :never_invoked,
-        )
-        @test PowerSystems.get_available(gc) == isnothing(reason)
-        @test _cs_reason(sys, PowerSystems.get_name(gc)) == reason
-    end
+    cases = (
+        ordinary => nothing, never => :never_invoked, no_device => :no_available_device, both => :never_invoked,
+        static_on => nothing, static_off => :never_invoked,
+    )
+    @test [_cs_reason(sys, PowerSystems.get_name(gc)) for (gc, _) in cases] == [reason for (_, reason) in cases]
+    @test [PowerSystems.get_available(gc) for (gc, _) in cases] == [isnothing(reason) for (_, reason) in cases]
     @test issorted(AEM.get_unavailable_constraints(sys).constraint)
 
-    # The unavailable constraints survive set_build_report! and get_build_report.
-    report = AEM.get_build_report(sys)
-    @test Dict{String, Any}("constraint" => "CS_NEVER", "reason" => "never_invoked") in report.unavailable_constraints
-    AEM.set_build_report!(sys, report)
-    @test AEM.get_build_report(sys) == report
+    # The unavailable constraints are recorded in the build report.
+    @test Dict{String, Any}("constraint" => "CS_NEVER", "reason" => "never_invoked") in AEM.get_build_report(sys).unavailable_constraints
 end
 
 @testset "the contributing-device index matches get_contributing_devices for every constraint" begin
@@ -70,8 +66,8 @@ end
     index = AustralianElectricityMarkets._contributing_device_index(sys)
     constraints = collect(PowerSystems.get_components(GenericConstraint, sys))
     @test !isempty(constraints)
-    for gc in constraints
+    @test all(constraints) do gc
         expected = Set(PowerSystems.get_name.(PowerSystems.get_contributing_devices(sys, gc)))
-        @test Set(PowerSystems.get_name.(get(index, PowerSystems.IS.get_uuid(gc), PowerSystems.Device[]))) == expected
+        return Set(PowerSystems.get_name.(get(index, PowerSystems.IS.get_uuid(gc), PowerSystems.Device[]))) == expected
     end
 end

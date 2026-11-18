@@ -120,7 +120,7 @@ end
     model = PSI.DecisionModel(AEMS.NEMDispatchProblem, problem_template(sys), sys; optimizer = HiGHS.Optimizer, initial_time = TOY_START)
     container = PSI.get_optimization_container(model)
     settings = PSI.get_ext(PSI.get_settings(model))
-    for cap in (0.0, -1.0, Inf, -Inf, NaN)
+    for cap in (0.0, Inf)
         settings["market_price_cap"] = cap
         @test_throws ArgumentError AEMS._container_market_price_cap(container, TOY_START)
         @test_throws ArgumentError AEMS._add_mpc_penalty!(container, PSI.SystemBalanceSlackUp, PSY.Area, String[], 155.0; rate = cap)

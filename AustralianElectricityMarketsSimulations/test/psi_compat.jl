@@ -10,9 +10,7 @@ end
     # An open-loop run keeps PowerSimulations' own per-step updates; only a closed-loop model recomputes state inputs,
     # and only the fast-start parameters reset the fast-start rows.
     # The shared generic constraint parameter containers have their own container update.
-    for f in (PSI.update_container_parameter_values!, PSI._update_parameter_values!)
-        @test all(m -> parentmodule(m) !== AEMS || occursin("GenericConstraint", string(m.sig)), methods(f))
-    end
+    @test all(m -> parentmodule(m) !== AEMS || occursin("GenericConstraint", string(m.sig)), methods(PSI.update_container_parameter_values!))
     @test !any(m -> parentmodule(m) === AEMS, methods(PSI._update_parameter_values!))
     ours = [m for m in methods(PSI.update_parameter_values!) if parentmodule(m) === AEMS]
     @test !isempty(ours)

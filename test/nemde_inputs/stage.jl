@@ -21,10 +21,9 @@ end
     @test isnothing(AEM_._check_nemde_availability(sys2))
     series_names(d) = sort([get_name(k) for k in get_time_series_keys(d) if get_time_series_type(k) === SingleTimeSeries])
     read(d) = [get_time_series_values(SingleTimeSeries, d, n; ignore_scaling_factors = true) for n in series_names(d)]
-    for device in get_components(StaticInjection, sys)
+    @test all(get_components(StaticInjection, sys)) do device
         back = get_component(typeof(device), sys2, get_name(device))
-        @test series_names(back) == series_names(device)
-        @test read(back) == read(device)
+        return series_names(back) == series_names(device) && read(back) == read(device)
     end
     tie_break(s) = sort!(get_name.(get_contributing_devices(s, only(get_components(AEM_.EnergyTieBreak, s)))))
     @test tie_break(sys2) == tie_break(sys)

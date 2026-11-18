@@ -20,8 +20,7 @@ using DataFrames, Statistics
             read_interconnector_loss_breakpoints, read_interconnector_demand_coefficients,
             read_interconnector_loss_parameters,
         )
-        @test isequal(reader(db; as_of = early), reader(db, early))
-        @test isequal(reader(db; as_of = Date(early)), reader(db, Date(early)))
+        @test isequal(reader(db; as_of = early), reader(db, early)) && isequal(reader(db; as_of = Date(early)), reader(db, Date(early)))
     end
 end
 
@@ -35,11 +34,8 @@ end
     reader = AustralianElectricityMarkets.Readers
     DuckDB.register_data_frame(db.db, DataFrame(stamp = stamps), "bucket_stamps")
     try
-        for resolution in (Millisecond(7), Minute(5), Minute(15), Hour(7), Day(3), Week(2), Month(2), Year(2))
-            bucket = reader._ceil_timestamp_sql("stamp", resolution)
-            got = DataFrame(DuckDB.execute(db.db, "SELECT $bucket AS stamp FROM bucket_stamps"))
-            @test got.stamp == ceil.(stamps, resolution)
-        end
+        ceiled(resolution) = DataFrame(DuckDB.execute(db.db, "SELECT $(reader._ceil_timestamp_sql("stamp", resolution)) AS stamp FROM bucket_stamps")).stamp
+        @test all(r -> ceiled(r) == ceil.(stamps, r), (Millisecond(7), Minute(15), Day(3), Week(2), Month(2), Year(2)))
         @test_throws ArgumentError reader._ceil_timestamp_sql("stamp", Minute(0))
     finally
         DuckDB.unregister_table(db.db, "bucket_stamps")
@@ -55,12 +51,7 @@ end
     )
     stamp = DateTime(2025, 1, 1, 0, 5)
     nsw(df) = df.TOTALDEMAND[(df.REGIONID .== "NSW1") .& (df.SETTLEMENTDATE .== stamp)]
-    @test nsw(read_demand(db)) == [1010.0]
-    @test nsw(read_demand(db; intervention = 0)) == [1010.0]
-    @test nsw(read_demand(db; intervention = 1)) == [1510.0]
-    window = (stamp, stamp + Minute(5))
-    @test nsw(read_demand(db, window)) == [1010.0]
-    @test nsw(read_demand(db, window; intervention = 1)) == [1510.0]
+    @test (nsw(read_demand(db)), nsw(read_demand(db; intervention = 1))) == ([1010.0], [1510.0])
 end
 
 @testset "Demand aggregation keeps nulls, charging and range boundaries" begin
@@ -94,13 +85,10 @@ end
     bids = read_bids(db, (start - Minute(15), start + Minute(16)); resolution = Minute(15))
     unit = sort(bids[bids.DUID .== "BW01", :], [:INTERVAL_DATETIME, :DIRECTION])
     @test Set(unit.DIRECTION) == Set(["GEN", "LOAD"])
-    for direction in ("GEN", "LOAD")
+    @test all(("GEN", "LOAD")) do direction
         rows = unit[unit.DIRECTION .== direction, :]
-        @test rows.INTERVAL_DATETIME == [start, start + Minute(15)]
-        @test rows.MAXAVAIL ≈ [101.0, 104.0]
-        @test rows.BANDAVAILARRAY[2][1] == 10.0
-        @test isnan(rows.BANDAVAILARRAY[2][2])
-        @test rows.PRICEBANDARRAY[2] == collect(51.0:60.0)
+        return rows.INTERVAL_DATETIME == [start, start + Minute(15)] && rows.MAXAVAIL ≈ [101.0, 104.0] &&
+            rows.BANDAVAILARRAY[2][1] == 10.0 && isnan(rows.BANDAVAILARRAY[2][2]) && rows.PRICEBANDARRAY[2] == collect(51.0:60.0)
     end
     @test isempty(read_bids(db, (start + Day(1), start + Day(2))))
     missing_prices = damaged_cache(

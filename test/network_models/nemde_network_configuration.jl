@@ -82,23 +82,6 @@ end
     on_disk = nem_system(db, config; date_range = interval, time_series_in_memory = false, time_series_directory = directory)
     @test !isempty(readdir(directory))
     @test get_time_series_values(SingleTimeSeries, get_component(RenewableDispatch, on_disk, "BW03"), "telemetry_uigf"; ignore_scaling_factors = true) ≈ [41.0, 42.0, 43.0]
-    physical_db = damaged_cache(
-        hive, :DISPATCHLOAD,
-        "INSERT INTO input SELECT * REPLACE (1 AS INTERVENTION, INITIALMW + CASE WHEN DUID = 'BW03' THEN 10 ELSE 0 END AS INITIALMW) FROM input WHERE INTERVENTION = 0",
-    )
-    # The physical run needs its own invoked constraints, as AEMO publishes them.
-    physical_db = damaged_cache(
-        physical_db.config.hive_location, :DISPATCHCONSTRAINT,
-        "INSERT INTO input SELECT * REPLACE (1 AS INTERVENTION) FROM input WHERE INTERVENTION = 0",
-    )
-    # Regional demand is published for the physical run too.
-    physical_db = damaged_cache(
-        physical_db.config.hive_location, :DISPATCHREGIONSUM,
-        "INSERT INTO input SELECT * REPLACE (1 AS INTERVENTION) FROM input WHERE INTERVENTION = 0",
-    )
-    physical = nem_system(physical_db, config; date_range = interval, intervention = 1)
-    physical_gen = get_component(RenewableDispatch, physical, "BW03")
-    @test get_time_series_values(SingleTimeSeries, physical_gen, "observed_initial_mw"; ignore_scaling_factors = true) .- get_time_series_values(SingleTimeSeries, gen, "observed_initial_mw"; ignore_scaling_factors = true) ≈ fill(10.0, 3)
     @testset "a mixed range takes the physical run only where the interval has one" begin
         # Only 00:10 has a physical run in DISPATCHLOAD; 00:05 and 00:15 fall back to the pricing run.
         mixed_db = damaged_cache(

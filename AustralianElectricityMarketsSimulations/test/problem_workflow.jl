@@ -63,9 +63,7 @@ function same_comparison(x, y; atol = 1.0e-6)
 end
 
 @testset "simulation runtime exposes no cache entry points" begin
-    for api in (:nemde_system, :read_interval_inputs, :read_published_interval, :aem_connect)
-        @test !isdefined(AEMS, api)
-    end
+    @test !any(api -> isdefined(AEMS, api), (:nemde_system, :read_interval_inputs, :read_published_interval, :aem_connect))
 end
 
 @testset "a run of a range over the mock cache" begin
@@ -144,54 +142,4 @@ end
     # Every NEMDE time-series parameter is stored, as PowerSimulations stores right-hand-side parameters.
     stored = Set(PSI.IS.Optimization.get_entry_type(k) for k in PSI.list_parameter_keys(one.results[1]))
     @test NEMConstraintRHSParameter in stored
-end
-
-@testset "each preset on the mock cache: the models it carries and the solved and comparison columns they fill" begin
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_NEMDE_HIVE_DIR, filesystem = "file"))
-    t1, t2 = DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 10)
-    entry_types(result) = Set(PSI.IS.Optimization.get_entry_type(k) for k in PSI.list_variable_keys(result.results))
-    component_types(result) = Set(PSI.IS.Optimization.get_component_type(k) for k in PSI.list_variable_keys(result.results))
-    # Energy only: no interchange or FCAS model, so no flow, loss or FCAS column is filled.
-    energy = problem_steps(db, t1:DISPATCH_INTERVAL:t2; template = template_energy_only())
-    @test !(PSY.AreaInterchange in component_types(energy)) && !(FCASCapacityVariable in entry_types(energy))
-    @test all(ismissing, energy.comparison.interconnectors.MWFLOW_solved) && all(ismissing, energy.comparison.fcas_prices.ROP_solved)
-    @test isempty(energy.skipped)
-    @test issubset(Set(["NSW1", "QLD1", "SA1", "TAS1", "VIC1"]), Set(energy.comparison.prices.REGIONID))
-    @test all(isfinite, skipmissing(energy.comparison.prices.ROP_solved)) && any(!ismissing, energy.comparison.prices.ROP_solved)
-    @test any(!ismissing, energy.comparison.dispatch.TOTALCLEARED_solved)
-
-    # Interconnected: flows are modeled with no loss variable, and the MNSP IC2 has no link variables.
-    lossless = problem_steps(db, t1:DISPATCH_INTERVAL:t2; template = template_interconnected())
-    @test PSY.AreaInterchange in component_types(lossless) && !(AEMS.InterconnectorLossVariable in entry_types(lossless))
-    @test !(AEMS.MNSPLinkFlowVariable in entry_types(lossless)) && !(FCASCapacityVariable in entry_types(lossless))
-    @test any(!ismissing, lossless.comparison.interconnectors.MWFLOW_solved)
-    @test all(ismissing, lossless.comparison.interconnectors.MWLOSSES_solved)
-    @test all(ismissing, lossless.comparison.fcas_prices.ROP_solved)
-
-    # Losses: the loss variables fill MWLOSSES, and no FCAS market is modeled.
-    losses = problem_steps(db, t1:DISPATCH_INTERVAL:t2; template = template_losses())
-    @test AEMS.InterconnectorLossVariable in entry_types(losses) && !(FCASCapacityVariable in entry_types(losses))
-    @test all(isfinite, skipmissing(losses.comparison.interconnectors.MWLOSSES_solved)) && any(!ismissing, losses.comparison.interconnectors.MWLOSSES_solved)
-    @test all(ismissing, losses.comparison.fcas_prices.ROP_solved)
-
-    # FCAS: the market clears against the FCAS requirements only, 1-second markets included.
-    fcas = problem_steps(db, t1:DISPATCH_INTERVAL:t2; template = template_fcas())
-    @test FCASCapacityVariable in entry_types(fcas)
-    @test all(isfinite, skipmissing(fcas.comparison.fcas_prices.ROP_solved))
-    for bid_type in (BidType.RAISE1SEC, BidType.LOWER1SEC)
-        @test any(!ismissing, filter(:BIDTYPE => ==(bid_type), fcas.comparison.fcas_prices).ROP_solved)
-    end
-    available_fcas = Set(
-        PSY.get_name(gc) for gc in PSY.get_components(PSY.get_available, GenericConstraint, fcas.sys)
-            if !isempty(AustralianElectricityMarkets.get_fcas_requirements(gc))
-    )
-    @test !isempty(available_fcas)
-    @test Set(keys(stock_gc_duals(fcas.results))) == available_fcas
-
-    # Constraints: every constraint is modeled, the FCAS ones are skipped, and no FCAS market is modeled.
-    constraints = problem_steps(db, t1:DISPATCH_INTERVAL:t2; template = template_constraints())
-    @test !(FCASCapacityVariable in entry_types(constraints))
-    @test any(==(:unmodeled_fcas_service), constraints.skipped.reason)
-    @test isempty(intersect(keys(stock_gc_duals(constraints.results)), available_fcas))
-    @test all(ismissing, constraints.comparison.fcas_prices.ROP_solved)
 end

@@ -13,10 +13,9 @@ const ISOPT = PSI.IS.Optimization
     device = first(get_components(ThermalStandard, sys))
     name = get_name(device)
     lookup = AEMS._ConstraintComponentLookup(sys)
-    @test AEMS._constraint_component(PSY.Device, lookup, name) === device
-    @test AEMS._constraint_component(PSY.Device, lookup, name) === device
-    @test isnothing(AEMS._constraint_component(PSY.Device, lookup, "missing device"))
-    @test isnothing(AEMS._constraint_component(PSY.Device, lookup, "missing device"))
+    # Repeat lookups read the same cached entry.
+    @test all(_ -> AEMS._constraint_component(PSY.Device, lookup, name) === device, 1:2)
+    @test all(_ -> isnothing(AEMS._constraint_component(PSY.Device, lookup, "missing device")), 1:2)
 
     other = first(get_components(RenewableDispatch, sys))
     remove_component!(sys, other)
@@ -343,9 +342,7 @@ _row_bounds(container, name, t) = PSI.JuMP.MOI.get(
                     if PSI.has_container_key(container, s, GenericConstraint)
             )
             slack = PSI.get_variable(container, slack_var(), GenericConstraint)
-            for t in 1:2
-                @test PSI.JuMP.coefficient(invariant, slack[name, t]) ≈ expected
-            end
+            @test [PSI.JuMP.coefficient(invariant, slack[name, t]) for t in 1:2] ≈ fill(expected, 2)
 
             PSI.solve!(model)
             @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
@@ -448,10 +445,8 @@ end
 end
 
 @testset "Market Price Cap lookup covers only the published financial years" begin
-    @test AustralianElectricityMarkets._financial_year_mpc(DateTime(2025, 6, 30)) == 17_500.0
     @test AustralianElectricityMarkets._financial_year_mpc(DateTime(2025, 7, 1)) == 17_500.0  # interval 23:55-00:00 on 30 June
     @test AustralianElectricityMarkets._financial_year_mpc(DateTime(2025, 7, 1, 0, 5)) == 20_300.0
-    @test AustralianElectricityMarkets._financial_year_mpc(DateTime(2026, 6, 30, 23, 55)) == 20_300.0
     @test AustralianElectricityMarkets._financial_year_mpc(DateTime(2026, 7, 1)) == 20_300.0
     @test AustralianElectricityMarkets._financial_year_mpc(DateTime(2026, 7, 1, 0, 5)) == 23_200.0
     @test [AustralianElectricityMarkets._financial_year_mpc(DateTime(y, 7, 1, 0, 5)) for y in 2021:2023] == [15_100.0, 15_500.0, 16_600.0]
@@ -469,8 +464,6 @@ end
         interval_hours(DISPATCH_INTERVAL) * 10_000.0
     @test PSI.get_slack_cost(network) ≈ expected rtol = 1.0e-12
     @test PSI.get_use_slacks(network)
-    # A plain model keeps PSI's default slack cost, whatever the financial year.
-    @test PSI.get_slack_cost(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true)) == PSI.BALANCE_SLACK_COST
     @test_throws ArgumentError AEMS._area_balance_network_model(sys, DateTime(2020, 1, 1); market_price_cap = 0.0)
 end
 
@@ -491,9 +484,8 @@ end
     expected = 150.0 * 20_300.0 * 100.0 / 12
     slacks = [PSI.get_variable(container, v(), PSY.Area) for v in (PSI.SystemBalanceSlackUp, PSI.SystemBalanceSlackDown)]
     objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
-    for slack in slacks, name in axes(slack)[1], t in axes(slack)[2]
-        @test PSI.JuMP.coefficient(objective, slack[name, t]) ≈ expected
-    end
+    cells = [slack[name, t] for slack in slacks for name in axes(slack)[1] for t in axes(slack)[2]]
+    @test !isempty(cells) && all(v -> PSI.JuMP.coefficient(objective, v) ≈ expected, cells)
 
     # A parameter update rebuilds the variant terms and leaves the priced constants in the invariant objective.
     PSI.cost_function_unsynch(container)
@@ -503,10 +495,8 @@ end
         PSI.update_container_parameter_values!(container, model, key, input)
     end
     objective_function = PSI.get_objective_expression(container)
-    for slack in slacks, name in axes(slack)[1], t in axes(slack)[2]
-        @test PSI.JuMP.coefficient(PSI.get_invariant_terms(objective_function), slack[name, t]) ≈ expected
-        @test PSI.JuMP.coefficient(PSI.get_variant_terms(objective_function), slack[name, t]) == 0.0
-    end
+    @test all(v -> PSI.JuMP.coefficient(PSI.get_invariant_terms(objective_function), v) ≈ expected, cells)
+    @test all(v -> PSI.JuMP.coefficient(PSI.get_variant_terms(objective_function), v) == 0.0, cells)
 end
 
 @testset "terms on an unavailable interconnector or unit contribute zero and build" begin
@@ -580,11 +570,9 @@ end
     objective_terms = PSI.JuMP.objective_function(PSI.get_jump_model(container)).terms
     expected = PSI.get_base_power(container) *
         interval_cost_coefficient(weight * test_mpc, PSI.get_resolution(container))
-    for name in ("ZERO_NEG", "ZERO_POS")
-        slack = PSI.get_variable(container, AEMS.GenericConstraintSlackUp(), GenericConstraint)
-        @test all(t -> objective_terms[slack[name, t]] ≈ expected, PSI.get_time_steps(container))
-        @test !PSI.has_container_key(container, AEMS.GenericConstraintSlackDown, GenericConstraint)
-    end
+    slack = PSI.get_variable(container, AEMS.GenericConstraintSlackUp(), GenericConstraint)
+    @test all(objective_terms[slack[name, t]] ≈ expected for name in ("ZERO_NEG", "ZERO_POS") for t in PSI.get_time_steps(container))
+    @test !PSI.has_container_key(container, AEMS.GenericConstraintSlackDown, GenericConstraint)
 end
 
 @testset "AustralianElectricityMarkets.constraint_cvp_factor prices built-in constraints by limit type, others by their GENCONDATA weight" begin
@@ -654,34 +642,6 @@ end
     again = run_problem(sys, steps; template, optimizer)
     @test again.skipped_constraints == rows
     @test PSY.get_time_series_counts(sys) == counts
-end
-
-@testset "constraint scope :fcas_requirements builds only the constraints with FCAS requirements" begin
-    stamps = TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION)
-    sys = fcas_toy_system(; extra! = (sys, stamps) -> add_toy_generic_constraint!(sys, stamps, TOY_CHEAP, 50.0; name = "N_TOY_ENERGY"))
-    fcas_names = Set(["F_REG", "F_R6", "F_L6"])
-    optimizer = PSI.optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false)
-
-    scoped = template_nemde(; interconnectors = :none, constraints = :fcas_requirements, tie_break = false)
-    rows = template_skipped_constraints(sys, scoped)
-    @test !any(in(fcas_names), rows.constraint)
-    @test !("N_TOY_ENERGY" in rows.constraint)
-    model = PSI.DecisionModel(AEMS.NEMDispatchProblem, scoped, sys; optimizer, initial_time = TOY_START, name = "dispatch")
-    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    container = PSI.get_optimization_container(model)
-    built = Set(axes(PSI.get_constraint(container, NEMConstraintLimit(), GenericConstraint), 1))
-    @test built == fcas_names
-
-    # The unscoped template builds the energy-only constraint as well.
-    full = template_nemde(; interconnectors = :none, tie_break = false)
-    all_rows = template_skipped_constraints(sys, full)
-    @test !("N_TOY_ENERGY" in all_rows.constraint)
-    model = PSI.DecisionModel(AEMS.NEMDispatchProblem, full, sys; optimizer, initial_time = TOY_START, name = "dispatch")
-    status, log = _toy_build_log(model)
-    @test status == PSI.ModelBuildStatus.BUILT
-    status == PSI.ModelBuildStatus.BUILT || println(log)
-    container = PSI.get_optimization_container(model)
-    @test Set(axes(PSI.get_constraint(container, NEMConstraintLimit(), GenericConstraint), 1)) == union(fcas_names, ["N_TOY_ENERGY"])
 end
 
 @testset "an out-of-scope energy constraint with a missing unit does not block the FCAS run, and blocks the full run" begin

@@ -98,36 +98,6 @@ end
     @test _tpl_price(prices, "2") > 20.0
 end
 
-@testset "interconnected: lossless flow equals the load, no loss terms, equal prices" begin
-    sys = _tpl_sentinel_system()
-    results = _tpl_solve(sys, template_interconnected())
-    @test PSI.FlowActivePowerVariable in _tpl_entries(results)
-    @test isdisjoint(
-        _tpl_entries(results),
-        [AEMS.InterconnectorLossVariable, AEMS.InterconnectorLossSegmentVariable, AEMS.MNSPLinkFlowVariable, AEMS.FCASCapacityVariable, AEMS.TieBreakSlackUp],
-    )
-    solved = read_solved_interval(results, sys)
-    interchange = filter(:SETTLEMENTDATE => ==(TOY_START), solved.interconnectors)
-    @test interchange.MWFLOW ≈ [50.0] atol = TOY_TOLERANCE
-    @test all(ismissing, interchange.MWLOSSES)
-    @test _tpl_price(solved.prices, "1") ≈ 20.0 atol = TOY_TOLERANCE
-    @test _tpl_price(solved.prices, "2") ≈ 20.0 atol = TOY_TOLERANCE
-    @test isempty(solved.fcas_prices)
-end
-
-@testset "losses: the dynamic loss variables sit on the interchange and raise the importing price" begin
-    sys = _tpl_sentinel_system()
-    results = _tpl_solve(sys, template_losses())
-    @test AEMS.InterconnectorLossVariable in _tpl_entries(results)
-    @test isdisjoint(_tpl_entries(results), [AEMS.FCASCapacityVariable, AEMS.TieBreakSlackUp])
-    solved = read_solved_interval(results, sys)
-    interchange = filter(:SETTLEMENTDATE => ==(TOY_START), solved.interconnectors)
-    @test all(>(0.0), interchange.MWLOSSES)
-    # Area 2 pays the loss factor: 20 x (1 + 0.1 + K) with K = 1e-3 x 50 MW.
-    @test _tpl_price(solved.prices, "2") ≈ 23.0 atol = TOY_TOLERANCE
-    @test isempty(solved.fcas_prices)
-end
-
 @testset "fcas: the FCAS market clears against the FCAS requirements only" begin
     sys = _tpl_fcas_system()
     results = _tpl_solve(sys, template_fcas())

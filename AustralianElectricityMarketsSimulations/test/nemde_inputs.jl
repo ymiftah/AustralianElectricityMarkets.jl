@@ -91,14 +91,7 @@ end
     skipped = [Dict{String, Any}("constraint" => constraint, "reason" => "vacuous_unknown_duid", "missing" => ["GONE_DUID"])]
     sys = System(100.0; time_series_in_memory = true)
     set_build_report!(sys, NEMBuildReport(; skipped_constraints = skipped, dropped_terms = [term(true)]))
-    err = try
-        AEMS._check_nemde_constraint_inputs(sys)
-        nothing
-    catch e
-        e
-    end
-    @test err isa ArgumentError
-    @test occursin(constraint, err.msg) && occursin("GONE_DUID", err.msg)
+    @test_throws r"N_VACUOUS@2025-01-01#1.*GONE_DUID"s AEMS._check_nemde_constraint_inputs(sys)
     set_build_report!(sys, NEMBuildReport(; skipped_constraints = skipped, dropped_terms = [term(false)]))
     @test isnothing(AEMS._check_nemde_constraint_inputs(sys))
 end

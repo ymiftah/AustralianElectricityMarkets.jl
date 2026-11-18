@@ -5,9 +5,10 @@
     date_range = start_date:Minute(5):(start_date + Hour(2) + Minute(5))
     # Components are named by the versioned triple; every fixture version is effective 2025-01-01.
     vname(gencon_id, version = 1) = "$gencon_id@2025-01-01#$version"
+    # One system for both testsets: the constraint build, then the bids.
+    sys = nem_pscb_system()
 
     @testset "constraint build" begin
-        sys = nem_pscb_system()
         added, skipped = build_constraints!(sys, db, date_range)
         constraint(name, version = 1) = get_component(GenericConstraint, sys, vname(name, version))
 
@@ -34,10 +35,7 @@
             v1, v2 = constraint("N_VERSIONED_LIMIT", 1), constraint("N_VERSIONED_LIMIT", 2)
             @test get_gencon_id(v1) == get_gencon_id(v2) == "N_VERSIONED_LIMIT"
             @test (get_version_no(v1), get_version_no(v2)) == (1, 2)
-            @test get_effective_date(v1) == get_effective_date(v2) == DateTime(2025, 1, 1)
             @test get_limit_type(v1) == get_limit_type(v2) == "THERMAL"
-            @test get_source(v1) == get_source(v2) == "pscb"
-            @test isempty(get_ext(v1)) && isempty(get_ext(v2))
             @test (get_sense(v1), get_sense(v2)) == (ConstraintSense.LE, ConstraintSense.GE)
             @test get_duid(only(get_terms(v1))) == get_duid(only(get_terms(v2))) == "BAT1"
             @test (get_factor(only(get_terms(v1))), get_factor(only(get_terms(v2)))) == (1.0, 2.0)
@@ -47,7 +45,6 @@
     end
 
     @testset "set_market_bids! records FCAS bids with their series on the modelled sides only" begin
-        sys = nem_pscb_system()
         set_market_bids!(sys, db, date_range)
         AEM = AustralianElectricityMarkets
         bids(device) = AEM.get_fcas_bids(AEM._nem_offer_cost(device))

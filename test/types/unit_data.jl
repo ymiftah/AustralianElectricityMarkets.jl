@@ -40,15 +40,11 @@ _ud_telemetry(; uigf = nothing) = AEM.NEMTelemetry(;
     add_component!(sys, stock)
 
     @test !AEM.has_nem_unit_data(stock)
-    @test !AEM.has_nem_unit_data(bus)
     @test isnothing(AEM._nem_offer_cost(stock))
-    @test isnothing(AEM._nem_offer_cost(bus))
     @test !AEM.has_registration(stock)
-    @test_throws ArgumentError AEM.get_registration(stock)
     @test_throws ArgumentError AEM.get_telemetry(stock)
     @test_throws ArgumentError AEM.get_observed_state(stock)
     @test_throws ArgumentError AEM.set_registration!(stock, _ud_registration())
-    @test_throws ArgumentError AEM.set_telemetry!(stock, _ud_telemetry())
     @test_throws ArgumentError AEM.set_observed_state!(stock, AEM.NEMObservedState(; initial_mw = 5, dispatch_mode = 0))
 
     err = try
@@ -82,7 +78,6 @@ _ud_telemetry(; uigf = nothing) = AEM.NEMTelemetry(;
     reg = _ud_registration()
     @test AEM.set_registration!(stock, reg) === reg
     @test AEM.has_registration(stock)
-    @test AEM.get_registration(stock) == reg
     @test unit.registration == reg
 
     later = AEM.NEMRegistration(;

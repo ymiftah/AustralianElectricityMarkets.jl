@@ -33,9 +33,11 @@
         return expected, left_out
     end
 
+    # One system: the first testset records the bids, the second calls add_fcas_services! again.
+    sys = nem_pscb_system()
+    (; added, excluded) = set_market_bids!(sys, db, date_range)
+
     @testset "add_fcas_services! builds one service per bid (region, bid_type), modeled bids only" begin
-        sys = nem_pscb_system()
-        (; added, excluded) = set_market_bids!(sys, db, date_range)
         expected, left_out = _expected_services(sys)
         @test !isempty(expected)
 
@@ -54,10 +56,7 @@
     end
 
     @testset "a second call adds nothing and keeps the existing services" begin
-        sys = nem_pscb_system()
-        first_added = set_market_bids!(sys, db, date_range).added
-        added, _ = add_fcas_services!(sys)
-        @test isempty(added)
-        @test Set(get_name.(get_components(FCASService, sys))) == Set(first_added)
+        @test isempty(first(add_fcas_services!(sys)))
+        @test Set(get_name.(get_components(FCASService, sys))) == Set(added)
     end
 end

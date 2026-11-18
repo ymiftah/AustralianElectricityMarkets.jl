@@ -74,17 +74,16 @@ end
     sys = _LD_SYS
     modelled = _ld_modelled(sys)
     @test !isempty(modelled)
-    for ic in PowerSystems.get_components(PowerSystems.AreaInterchange, sys)
-        has = PowerSystems.has_time_series(ic, PowerSystems.SingleTimeSeries, AEM.NEM_SERIES.loss_demand_coefficient)
-        @test has == (ic in modelled)
-    end
-    for ic in modelled
+    @test all(
+        PowerSystems.has_time_series(ic, PowerSystems.SingleTimeSeries, AEM.NEM_SERIES.loss_demand_coefficient) == (ic in modelled)
+            for ic in PowerSystems.get_components(PowerSystems.AreaInterchange, sys)
+    )
+    load_stamps = PowerSystems.get_time_series_timestamps(PowerSystems.SingleTimeSeries, first(PowerSystems.get_components(PowerSystems.PowerLoad, sys)), "loss_demand")
+    @test all(modelled) do ic
         model = only(PowerSystems.get_supplemental_attributes(AEM.InterconnectorLossModel, ic))
         coefficient = PowerSystems.get_time_series_values(PowerSystems.SingleTimeSeries, ic, AEM.NEM_SERIES.loss_demand_coefficient)
-        @test coefficient ≈ _ld_expected(sys, model)
-        @test any(!iszero, coefficient)
-        @test PowerSystems.get_time_series_timestamps(PowerSystems.SingleTimeSeries, ic, AEM.NEM_SERIES.loss_demand_coefficient) ==
-            PowerSystems.get_time_series_timestamps(PowerSystems.SingleTimeSeries, first(PowerSystems.get_components(PowerSystems.PowerLoad, sys)), "loss_demand")
+        return coefficient ≈ _ld_expected(sys, model) && any(!iszero, coefficient) &&
+            PowerSystems.get_time_series_timestamps(PowerSystems.SingleTimeSeries, ic, AEM.NEM_SERIES.loss_demand_coefficient) == load_stamps
     end
 end
 
@@ -122,9 +121,10 @@ end
         PowerSystems.remove_supplemental_attribute!(sys, ic, only(PowerSystems.get_supplemental_attributes(AEM.InterconnectorLossModel, ic)))
     end
     AEM._set_loss_demand_coefficients!(sys)
-    for ic in PowerSystems.get_components(PowerSystems.AreaInterchange, sys)
-        @test !PowerSystems.has_time_series(ic, PowerSystems.SingleTimeSeries, AEM.NEM_SERIES.loss_demand_coefficient)
-    end
+    @test !any(
+        PowerSystems.has_time_series(ic, PowerSystems.SingleTimeSeries, AEM.NEM_SERIES.loss_demand_coefficient)
+            for ic in PowerSystems.get_components(PowerSystems.AreaInterchange, sys)
+    )
 end
 
 # Moves the "loss_demand" series of `load` five minutes later, off the common timestamps.

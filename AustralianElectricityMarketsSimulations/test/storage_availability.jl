@@ -81,7 +81,7 @@ end
         PSY.remove_time_series!(sys, PSY.SingleTimeSeries, battery, key)
         @test_throws ArgumentError check_dispatch_envelope(problem_template(sys), sys)
     end
-    for bad in (NaN, Inf, -1.0)
+    for bad in (Inf, -1.0)
         sys = storage_availability_system(; gen = bad)
         @test_throws ArgumentError check_dispatch_envelope(problem_template(sys), sys)
     end

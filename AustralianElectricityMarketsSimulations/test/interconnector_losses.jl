@@ -187,9 +187,10 @@ end
 
     container = PSI.get_optimization_container(model)
     @test !PSI.has_container_key(container, AEMS.InterconnectorLossSegmentFullVariable, PSY.AreaInterchange)
-    for meta in ("surplus", "deficit")
-        @test all(abs.(PSI.read_variable(res, PSI.VariableKey(AEMS.InterconnectorFlowSlack, PSY.AreaInterchange, meta)).value) .< 1.0e-6)
-    end
+    @test all(
+        all(abs.(PSI.read_variable(res, PSI.VariableKey(AEMS.InterconnectorFlowSlack, PSY.AreaInterchange, meta)).value) .< 1.0e-6)
+            for meta in ("surplus", "deficit")
+    )
 
     @testset "loss split balances the from-area: generation = load + flow + share * loss" begin
         # Every generator is on area 1 (Solitude/SOLAR1, area 2's own generation, are disabled),
@@ -226,14 +227,14 @@ end
         select(loss_df, :DateTime, :name, :value => :loss);
         on = [:DateTime, :name], validate = (true, true),
     )
-    for row in eachrow(comparison)
-        breakpoints = [-100.0, -25.0, 0.0, 25.0, 100.0]
-        segment = clamp(searchsortedlast(breakpoints, row.flow), 1, 4)
+    breakpoints = [-100.0, -25.0, 0.0, 25.0, 100.0]
+    # Chord of 0.05 * flow + 0.0001 * flow^2 between the breakpoints around the flow, in natural MW.
+    function chord(flow)
+        segment = clamp(searchsortedlast(breakpoints, flow), 1, 4)
         lo, hi = breakpoints[segment:(segment + 1)]
-        # Chord of 0.05 * flow + 0.0001 * flow^2 between lo and hi, in natural MW.
-        expected = 0.05 * row.flow + 0.0001 * ((lo + hi) * row.flow - lo * hi)
-        @test row.loss ≈ expected atol = 1.0e-6
+        return 0.05 * flow + 0.0001 * ((lo + hi) * flow - lo * hi)
     end
+    @test !isempty(comparison.loss) && isapprox(comparison.loss, chord.(comparison.flow); atol = 1.0e-6)
     seg_df = PSI.read_variable(res, "InterconnectorLossSegmentVariable__AreaInterchange")
     t1 = minimum(seg_df.DateTime)
     widths = [75.0, 25.0, 25.0, 75.0]  # breakpoints [-100,-25,0,25,100], segment widths in order
@@ -243,9 +244,7 @@ end
     # Cheapest-first (contiguous fill from segment 1): every fully-used segment precedes any
     # partially- or un-used one - no segment is used while a strictly cheaper one sits idle.
     first_not_full = findfirst(i -> !isapprox(segment_values[i], widths[i]; atol = 1.0e-6), 1:4)
-    if !isnothing(first_not_full)
-        @test all(isapprox(segment_values[i], 0.0; atol = 1.0e-6) for i in (first_not_full + 1):4)
-    end
+    @test !isnothing(first_not_full) && all(isapprox(segment_values[i], 0.0; atol = 1.0e-6) for i in (first_not_full + 1):4)
 end
 
 @testset "negative weighted price cannot burn energy on out-of-order segments" begin
@@ -262,9 +261,7 @@ end
     prices = PSI.read_dual(res, PSI.CopperPlateBalanceConstraint, PSY.Area)
     price = Dict((r.name, r.DateTime) => r.value for r in eachrow(prices))
     share = 0.4
-    for stamp in unique(prices.DateTime)
-        @test share * price[("1", stamp)] + (1 - share) * price[("2", stamp)] < 0.0
-    end
+    @test all(share * price[("1", stamp)] + (1 - share) * price[("2", stamp)] < 0.0 for stamp in unique(prices.DateTime))
     @test PSI.is_milp(PSI.get_optimization_container(model))
 end
 
@@ -400,11 +397,8 @@ end
     area2_loads(sys) = collect(
         PSY.get_components(l -> PSY.get_name(PSY.get_area(PSY.get_bus(l))) == "2", PSY.PowerLoad, sys),
     )
-    for (multiplier, disable_load) in ((1.0, false), (1.0, true))
+    for disable_load in (false, true)
         function mutate!(sys)
-            for load in area2_loads(sys)
-                PSY.set_max_active_power!(load, multiplier * PSY.get_max_active_power(load))
-            end
             disable_load && PSY.set_available!(first(area2_loads(sys)), false)
             return
         end
@@ -426,15 +420,14 @@ end
         definitions = PSI.get_constraint(container, AEMS.InterconnectorLossConstraint(), PSY.AreaInterchange, "loss_definition")
         segments = PSI.get_variable(container, AEMS.InterconnectorLossSegmentVariable(), PSY.AreaInterchange)
         flows = PSI.get_variable(container, PSI.FlowActivePowerVariable(), PSY.AreaInterchange)
-        for (t, stamp) in enumerate(sort(unique(flow_df.DateTime)))
-            # Segment slopes are those at zero demand; the demand term multiplies the flow.
-            @test PSI.JuMP.normalized_coefficient(definitions["IC1", t], segments["IC1", "1", t]) ≈ -0.05
-            @test PSI.JuMP.normalized_coefficient(definitions["IC1", t], flows["IC1", t]) ≈ -k
-            flow = only(subset(flow_df, :DateTime => ByRow(==(stamp)), :name => ByRow(==("IC1")))).value
-            loss = only(subset(loss_df, :DateTime => ByRow(==(stamp)), :name => ByRow(==("IC1")))).value
-            @test flow ≈ expected_demand / (1.0 - 0.6 * slope) atol = 1.0e-6
-            @test loss ≈ slope * flow atol = 1.0e-6
-        end
+        stamps = sort(unique(flow_df.DateTime))
+        # Segment slopes are those at zero demand; the demand term multiplies the flow.
+        @test [PSI.JuMP.normalized_coefficient(definitions["IC1", t], segments["IC1", "1", t]) for t in eachindex(stamps)] ≈ fill(-0.05, length(stamps))
+        @test [PSI.JuMP.normalized_coefficient(definitions["IC1", t], flows["IC1", t]) for t in eachindex(stamps)] ≈ fill(-k, length(stamps))
+        at(df) = [only(subset(df, :DateTime => ByRow(==(stamp)), :name => ByRow(==("IC1")))).value for stamp in stamps]
+        flow, loss = at(flow_df), at(loss_df)
+        @test flow ≈ fill(expected_demand / (1.0 - 0.6 * slope), length(stamps)) atol = 1.0e-6
+        @test loss ≈ slope .* flow atol = 1.0e-6
     end
 end
 
@@ -456,9 +449,7 @@ end
     container = PSI.get_optimization_container(model)
     definitions = PSI.get_constraint(container, AEMS.InterconnectorLossConstraint(), PSY.AreaInterchange, "loss_definition")
     flows = PSI.get_variable(container, PSI.FlowActivePowerVariable(), PSY.AreaInterchange)
-    for t in 1:2
-        @test PSI.JuMP.normalized_coefficient(definitions["IC1", t], flows["IC1", t]) ≈ -k
-    end
+    @test [PSI.JuMP.normalized_coefficient(definitions["IC1", t], flows["IC1", t]) for t in 1:2] ≈ [-k, -k]
 end
 
 @testset "NEMInterconnectorLoss rejects network models other than AreaBalancePowerModel" begin
@@ -821,9 +812,7 @@ end
     # The coefficients differ between the skipped and the kept stamps, so the check can tell them apart.
     @test curve(full, all_stamps[3]) != curve(full, all_stamps[4])
     @test gapped.DateTime == kept
-    for stamp in kept
-        @test curve(gapped, stamp) ≈ curve(full, stamp)
-    end
+    @test curve.(Ref(gapped), kept) ≈ curve.(Ref(full), kept)
 end
 
 include("mnsp_limits.jl")

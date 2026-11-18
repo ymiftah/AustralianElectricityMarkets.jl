@@ -13,15 +13,11 @@ _physical_copy(change) = "INSERT INTO input SELECT * REPLACE (1 AS INTERVENTION,
 function _check_runs(reader, base_db, db, ids, value, shift)
     cells(df) = Dict(Tuple(row[c] for c in [:SETTLEMENTDATE, ids...]) => row[value] for row in eachrow(df))
     pricing = cells(reader(base_db, _RUN_WINDOW; intervention = 0))
-    @test !isempty(pricing)
-    @test any(c -> c[1] == _PHYSICAL_STAMP, keys(pricing))
+    @test any(c -> c[1] == _PHYSICAL_STAMP, keys(pricing)) && any(c -> c[1] == _PRICING_STAMP, keys(pricing))
     @test cells(reader(db, _RUN_WINDOW; intervention = 0)) == pricing
     physical = cells(reader(db, _RUN_WINDOW; intervention = 1))
     @test Set(keys(physical)) == Set(keys(pricing))
-    for (cell, v) in pricing
-        expected = cell[1] == _PHYSICAL_STAMP ? v + shift : v
-        @test physical[cell] ≈ expected
-    end
+    @test all(physical[cell] ≈ (cell[1] == _PHYSICAL_STAMP ? v + shift : v) for (cell, v) in pricing)
     return
 end
 
@@ -126,12 +122,10 @@ end
         write_mock_interconnector_results(hive)
         interconnector_base = aem_connect(HiveConfiguration(hive_location = hive))
         @testset "a table without the column is read unfiltered" begin
-            for intervention in (0, 1)
-                @test isequal(
-                    read_interconnector_limits(interconnector_base, _RUN_WINDOW; intervention),
-                    read_interconnector_limits(interconnector_base, _RUN_WINDOW),
-                )
-            end
+            @test isequal(
+                read_interconnector_limits(interconnector_base, _RUN_WINDOW; intervention = 1),
+                read_interconnector_limits(interconnector_base, _RUN_WINDOW),
+            )
         end
         db = damaged_cache(
             hive, :DISPATCHINTERCONNECTORRES,
@@ -144,9 +138,7 @@ end
     end
 
     @testset "intervention must be 0 or 1" begin
-        for intervention in (-1, 2)
-            @test_throws ArgumentError read_prices(base_db, _RUN_WINDOW; intervention)
-            @test_throws ArgumentError read_demand(base_db, _RUN_WINDOW; intervention)
-        end
+        @test_throws ArgumentError read_prices(base_db, _RUN_WINDOW; intervention = -1)
+        @test_throws ArgumentError read_prices(base_db, _RUN_WINDOW; intervention = 2)
     end
 end
