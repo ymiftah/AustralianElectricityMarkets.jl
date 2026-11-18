@@ -44,15 +44,15 @@ function _run_rows(table, schema, intervention::Integer, time_col::AbstractStrin
     _check_intervention(intervention)
     params = Any[bound_params...]
     if !("INTERVENTION" in schema)
-        sql = "(SELECT * FROM $table WHERE $bounds)"
+        sql = "(SELECT * FROM $table WHERE ($bounds))"
     elseif intervention == 0
         push!(params, 0)
-        sql = "(SELECT * FROM $table WHERE $bounds AND COALESCE(INTERVENTION, 0) = ?)"
+        sql = "(SELECT * FROM $table WHERE ($bounds) AND COALESCE(INTERVENTION, 0) = ?)"
     else
         sql = """
         (SELECT * EXCLUDE (RUN_MAX) FROM (
             SELECT *, max(COALESCE(INTERVENTION, 0)) OVER (PARTITION BY $time_col) AS RUN_MAX
-            FROM $table WHERE $bounds
+            FROM $table WHERE ($bounds)
         ) WHERE COALESCE(INTERVENTION, 0) = RUN_MAX)
         """
     end

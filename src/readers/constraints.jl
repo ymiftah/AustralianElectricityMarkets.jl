@@ -238,11 +238,12 @@ series across the cut rather than silently empty results for recent dates.
 
 Two columns have no successor and come back `NULL` for post-cut rows:
 `GENCONEFFECTIVEDATE`/`GENCONVERSIONNO`, so a constraint's `GENCONDATA` version can only be
-resolution with exact equality on the old side (see [`read_fcas_requirements`](@ref) for the
+resolved by exact equality on the old side (see [`read_fcas_requirements`](@ref) for the
 fallback).
 
-`intervention` applies to the old side only: `DISPATCH_FCAS_REQ_CONSTRAINT` has no `INTERVENTION`
-column and publishes one run per key, so its rows are read as published.
+`intervention` applies to the old side only. `DISPATCH_FCAS_REQ_CONSTRAINT` has no `INTERVENTION`
+column, but it carries `RUNNO` and `RUN_DATETIME`; its rows are read as published, whichever run
+they hold during an intervention, which is not verified.
 
 Either table may have no cached partition for the range; such a table contributes no rows, so a cache
 covering only one side of the cut still works. Throws an `ArgumentError` when neither has one.

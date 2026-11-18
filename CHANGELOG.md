@@ -993,7 +993,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The MNSP offer check of the NEMDE inputs runs only for an interchange under `NEMInterconnectorLoss`, since a lossless interchange carries no MNSP offers.
 
-- `intervention = 1` selects the physical run per interval, falling back to the pricing run where an interval has none, and `read_published_interval` reads prices from the pricing run.
+- `intervention = 1` selects the physical run per interval, falling back to the pricing run where an interval has none, and `read_published_interval` reads prices from the pricing run. Values other than 0 and 1 now throw an `ArgumentError` (previously they returned empty frames).
 
 ### Removed
 
