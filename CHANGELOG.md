@@ -538,6 +538,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- DuckDB.jl compat raised to 2 (DuckDB 1.5 to 2.0 engine). CSV.jl stays at 0.10 because the pinned PowerSimulations fork requires it.
+
 - `nem_system` throws an `ArgumentError` naming the interconnectors when one has no loss model, where it previously ran them lossless.
 - The NEMDE input check of a run with `constraints = :fcas_requirements` judges dropped unit terms and NULL constraint weights only for the constraints in scope, so an out-of-scope energy constraint no longer blocks `template_fcas`.
 - The error for an `AreaInterchange` without an `InterconnectorLossModel` suggests `NEMInterconnectorLossless` (`interconnectors = :lossless`) in place of a PSI formulation.
