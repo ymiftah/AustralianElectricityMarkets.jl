@@ -1,7 +1,10 @@
+# The NEM market price floor, in $/MWh at the regional reference node.
+const MARKET_PRICE_FLOOR = -1000.0
+
 """
     referred_price(price::Float64, loss_factor::Float64) -> Float64
 
-`price` referred to the reference node by `loss_factor`, AEMO's unit loss factor, and rounded to cents.
+`price` referred to the reference node by `loss_factor`, AEMO's unit loss factor, rounded to cents and no lower than the market price floor.
 
 # Arguments
 - `price`: the energy offer band price, in `\$/MWh`.
@@ -11,7 +14,7 @@
 A `Float64`.
 """
 function referred_price(price::Float64, loss_factor::Float64)::Float64
-    return round(price / loss_factor; digits = 2)
+    return max(round(price / loss_factor; digits = 2), MARKET_PRICE_FLOOR)
 end
 
 

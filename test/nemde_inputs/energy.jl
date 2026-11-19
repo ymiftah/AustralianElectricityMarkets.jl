@@ -1,6 +1,8 @@
-@testset "referred_price divides the price by the loss factor and rounds to cents" begin
+@testset "referred_price divides the price by the loss factor, rounds to cents and floors at the market price floor" begin
     @test AustralianElectricityMarkets.referred_price(100.0, 0.97) == 103.09
     @test AustralianElectricityMarkets.referred_price(-1000.0, 1.0312) == -969.74
+    @test AustralianElectricityMarkets.referred_price(-856.95, 0.8584 * 0.9983) == -1000.0
+    @test AustralianElectricityMarkets.referred_price(-839.34, 0.8584 * 0.9778) == -1000.0
 end
 
 # A NEM run System on the mock hive, with its NEMDE inputs written by `nem_system`.

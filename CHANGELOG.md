@@ -1336,6 +1336,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A sequence's fast-start dispatch run throws an `ArgumentError` when its commitment-target feedforward is missing, instead of committing no mode-0 unit; a standalone dispatch run still reads 0 MW targets.
 
+- Referred energy offer prices no longer fall below the -1000 $/MWh market price floor, so units bidding the floor tie and clear pro rata as in NEMDE.
+
 ## [0.1.3] - 2026-03-09
 
 ### Added
