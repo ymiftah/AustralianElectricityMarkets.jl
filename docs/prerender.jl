@@ -1,4 +1,4 @@
-## Render frozen how-to pages locally, against the full NEMWEB cache, into `docs/frozen/`.
+## Render Literate pages locally, against the full NEMWEB cache, into `docs/frozen/`.
 ## Usage: julia --project=docs docs/prerender.jl [page...]   (no pages renders all FROZEN_PAGES)
 
 using AustralianElectricityMarkets
@@ -10,9 +10,9 @@ using DocumenterVitepress
 using Literate
 using CairoMakie
 
-include(joinpath(@__DIR__, "literate", "shared", "inline_source.jl"))
 include(joinpath(@__DIR__, "frozen_pages.jl"))
 
+## Every page plots with CairoMakie in this process, so one theme set here, before any page runs, applies to all.
 set_theme!(theme_dark())
 CairoMakie.activate!(type = "image/png")
 
@@ -34,21 +34,16 @@ end
 
 pages = isempty(ARGS) ? FROZEN_PAGES : ARGS
 for name in pages
-    name in FROZEN_PAGES || error("$name is not a frozen page; choose from $(join(FROZEN_PAGES, ", "))")
+    name in FROZEN_PAGES || error("$name is not a Literate page; choose from $(join(FROZEN_PAGES, ", "))")
 end
 
 mkpath(FROZEN_DIR)
 examples = joinpath(@__DIR__, "src", "examples")
 mkpath(examples)
 for name in pages
-    Literate.markdown(
-        joinpath(@__DIR__, "literate", "howto", "$name.jl"),
-        examples;
-        execute = true,
-        credit = false,
-        preprocess = inline_toy_source,
-        postprocess = strip_log_blocks,
-    )
+    figures = literate_options(name)
+    options = merge(figures, (; postprocess = content -> strip_log_blocks(figures.postprocess(content))))
+    Literate.markdown(_page_source(name), examples; options...)
     content = read(joinpath(examples, "$name.md"), String)
     for f in readdir(FROZEN_DIR)
         _is_page_file(f, name) && rm(joinpath(FROZEN_DIR, f))

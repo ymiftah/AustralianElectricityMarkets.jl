@@ -4,11 +4,7 @@ using AustralianElectricityMarketsCache
 using AustralianElectricityMarketsSimulations
 using Documenter
 using DocumenterVitepress
-using Literate
-using CairoMakie
 
-include(joinpath(@__DIR__, "literate", "shared", "inline_source.jl"))
-include(joinpath(@__DIR__, "formulation_pages.jl"))
 include(joinpath(@__DIR__, "frozen_pages.jl"))
 
 DocMeta.setdocmeta!(
@@ -18,29 +14,6 @@ DocMeta.setdocmeta!(
     recursive = true,
 )
 
-## All example pages plot with CairoMakie in the same process (see the Literate loop
-## below); setting the theme once here, before any of them run, applies it to every chart.
-set_theme!(theme_dark())
-CairoMakie.activate!(type = "image/png")
-
-## Generate Literate examples
-for (group, names) in [
-            "formulation" => FORMULATION_PAGES,
-            "overview" => ["nem"],
-            "tutorials" => ["nemde_jump", "nemde_psi", "nemde_aem"],
-            "howto" => ["build_system", "economic_dispatch", "market_bids", "interchanges", "clearing-with-batteries"],
-        ], name in names
-    figure_options = name in FORMULATION_PAGES ? (; image_formats = [(MIME("image/png"), ".png")]) : (;)
-    Literate.markdown(
-        joinpath(@__DIR__, "literate", group, "$name.jl"),
-        joinpath(@__DIR__, "src", "examples");
-        figure_options...,
-        execute = true,
-        credit = false,
-        preprocess = inline_toy_source,
-        postprocess = content -> name in FORMULATION_PAGES ? formulation_figure_descriptions(content, name) : content,
-    )
-end
 foreach(name -> copy_frozen_page(name, joinpath(@__DIR__, "src", "examples")), FROZEN_PAGES)
 
 makedocs(;

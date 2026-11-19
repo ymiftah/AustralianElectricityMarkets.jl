@@ -3,23 +3,27 @@ on:
   push:
     branches:
       - main
+      - v0.2
     tags: ["*"]
     paths:
       - "src/**"
       - "docs/**"
       - "AustralianElectricityMarketsCache/**"
       - "AustralianElectricityMarketsData/**"
+      - "AustralianElectricityMarketsSimulations/**"
       - "data/**"
       - "*.toml"
       - ".github/workflows/Documentation.yml"
   pull_request:
     branches:
       - main
+      - v0.2
     paths:
       - "src/**"
       - "docs/**"
       - "AustralianElectricityMarketsCache/**"
       - "AustralianElectricityMarketsData/**"
+      - "AustralianElectricityMarketsSimulations/**"
       - "data/**"
       - "*.toml"
       - ".github/workflows/Documentation.yml"
@@ -46,16 +50,6 @@ jobs:
           version: "1"
       - name: Use Julia cache
         uses: julia-actions/cache@v2
-      - name: Populate market data
-        run: |
-          mkdir -p ~/.nemdb_cache
-          cp -r docs/data/* ~/.nemdb_cache/
-      - name: Fetch data
-        shell: julia --project=docs --color=yes {0}
-        run: |
-          using Pkg
-          Pkg.instantiate()
-          include(joinpath(pwd(), "test", "fetch_data.jl"))
       - name: Build and deploy docs
         uses: julia-actions/julia-docdeploy@v1
         env:
