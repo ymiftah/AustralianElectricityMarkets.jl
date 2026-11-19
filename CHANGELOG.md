@@ -39,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The five-minute forecast windows of a run are written by `nem_system` as its last step, so `prepare_problem!` no longer transforms the system. `dispatch_intervals(sys)` returns the dispatch interval stamps, the forecast initial times without the last one. `nem_system` requires at least three stamps in `date_range`, five minutes apart, and refuses a range whose dispatch intervals (all but the last two stamps) span two trading days or two financial years. `check_nemde_steps` and `check_single_financial_year` are removed: the range rule is checked by `nem_system`, and no later add of a time series is allowed.
 
-- Every generic constraint row is an interval row whose bounds follow the new `GenericConstraintInvocationParameter` (a `PSI.ConstraintBoundParameter` read from the `invoked` series): a non-invoked interval is a free row, exactly as a constraint absent from the dispatch. The slack of an elastic constraint is priced at a constant CVP factor times the Market Price Cap in every interval, so `GenericConstraintSlackCostParameter` is removed, the slack of a non-invoked interval is zero, and a recurrent build no longer needs `use_slacks = true`. Requires the PowerSimulations fork revision that adds `ConstraintBoundParameter`.
+- Every generic constraint row is an interval row whose bounds follow the new `GenericConstraintInvocationParameter` (a `NEMConstraintBoundParameter` read from the `invoked` series): a non-invoked interval is a free row, exactly as a constraint absent from the dispatch. The slack of an elastic constraint is priced at a constant CVP factor times the Market Price Cap in every interval, so `GenericConstraintSlackCostParameter` is removed, the slack of a non-invoked interval is zero, and a recurrent build no longer needs `use_slacks = true`. Requires the PowerSimulations fork revision for meta-keyed time-series parameters.
 
 - `fcas_bid_direction` answers from the bids as soon as `set_market_bids!` has run, rather than returning `NONE` until `set_effective_offers!` attaches the derived trapezium series.
 
@@ -88,6 +88,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The batch statistics report is a Julia script, `scripts/simulation_statistics.jl`, replacing `scripts/simulation_statistics.py` and its Python tests, so it runs in the scripts' Julia environment. Its outputs are those of the Python script, plus `category_errors.csv` and a report section of error distributions by category (FCAS by service, region and direction; energy prices by region and four-hour block; flows and losses by interconnector; and, with the new `--hive` option, dispatch by unit region, dispatch type and schedule type).
 
+- The area-balance slack of a NEM build is AEMSim's `AreaBalanceSlack` variable, keyed by `PSY.Area` with the metas `deficit` and `surplus`, priced at `AREA_BALANCE_CVP_FACTOR` (150; AEMO *Schedule of Constraint Violation Penalty Factors* v8.0, items 22 and 23) times the Market Price Cap. The result keys of an `AreaBalancePowerModel` build change from `SystemBalanceSlackUp__Area` and `SystemBalanceSlackDown__Area` to `AreaBalanceSlack__Area__deficit` and `AreaBalanceSlack__Area__surplus`; `read_constraint_violations` reports them under the `area_balance` family.
+
+- Stock-only templates (no AEMSim formulation) and network models other than `AreaBalancePowerModel` keep PowerSimulations' own balance slacks at PowerSimulations' default cost (`1e6`), no longer the CVP-priced cost of v0.2. A NEM template built with `area_balance_slacks = false` keeps them too.
+
 ### Documentation
 
 - Every Literate page is frozen: `docs/prerender.jl` renders each one into the committed `docs/frozen/`, and `docs/make.jl` copies that output instead of executing Literate code, so the docs build runs from `docs/frozen/` alone.
@@ -134,6 +138,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dispatch and price comparisons for the examples' stated scope.
 
 ### Added
+
+- `AreaBalanceSlack` is exported, and `DecisionModel{NEMDispatchProblem}` takes `area_balance_slacks::Bool = true`: `true` replaces the balance slacks of an `AreaBalancePowerModel` network model by `AreaBalanceSlack` priced at the Market Price Cap; `false` keeps PowerSimulations' own balance slacks.
 
 - `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` now covers FY2021-22 to FY2023-24 (\$15,100, \$15,500, \$16,600/MWh), so runs from the start of 5-minute settlement (October 2021) build without a `"market_price_cap"` override.
 
@@ -541,6 +547,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `template_skipped_constraints` leaves out available constraints outside the template's constraint scope (`constraints = :fcas_requirements`) by design: they are neither reported nor diagnosed.
 
 ### Changed
+
+- AEMSim owns the coefficient and bound parameter types it used from PowerSimulations: `NEMConstraintCoefficientParameter` and `NEMConstraintBoundParameter`, stored as `Float64` in every build mode. The five concrete parameter types keep their names, so result keys are unchanged. AEMSim no longer uses the fork's `ConstraintCoefficientParameter`, `ConstraintBoundParameter` or `NetworkModel` `slack_cost`.
 
 - DuckDB.jl compat raised to 2 (DuckDB 1.5 to 2.0 engine). CSV.jl stays at 0.10 because the pinned PowerSimulations fork requires it.
 
@@ -1094,6 +1102,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed the unused exports `closed_loop_unit_state`, `mnsp_ramp_envelope` and `fcas_joint_ramping_exempt` (callers use `fast_start_ramp_exempt`, which has the same body), the unused `NEM_SERIES.fixed_load` and `NEM_SERIES.fixed_load_invoked` names, and the unused `TransmissionInterface` services that `nem_system` added.
 
 ### Fixed
+
+- A replay no longer goes silently wrong after a dual (price) LP fails to solve. The pinned PowerSimulations fork now solves the fixed-integer dual LP without the warm-start primal starts, which made HiGHS skip presolve and abort, and restores the integer variables on every exit; a dual LP that still fails makes the solve fail instead of leaving every later interval solved as an LP with frozen dispatch.
 
 - A closed-loop model rebuilt for a new `Simulation`, for example after a change to its template, starts its state-dependent values afresh: it no longer fails with a `KeyError` on a device the new build leaves out, writes into the previous build's parameter columns, or reuses the previous run's FCAS values at the same interval.
 

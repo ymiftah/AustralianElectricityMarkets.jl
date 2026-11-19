@@ -159,7 +159,7 @@ side, the coefficient of its FCAS capacity in the upper [`FCASJointCapacityConst
 read from its `"fcas_effective_<BIDTYPE>[_decremental]"` series. Keyed by device type with meta
 `"<BIDTYPE>[_decremental]"`.
 """
-struct FCASUpperSlopeParameter <: PSI.ConstraintCoefficientParameter end
+struct FCASUpperSlopeParameter <: NEMConstraintCoefficientParameter end
 
 
 """
@@ -170,7 +170,7 @@ side, the negated coefficient of its FCAS capacity in the lower [`FCASJointCapac
 row, read from its `"fcas_effective_<BIDTYPE>[_decremental]"` series. Keyed by device type with meta
 `"<BIDTYPE>[_decremental]"`.
 """
-struct FCASLowerSlopeParameter <: PSI.ConstraintCoefficientParameter end
+struct FCASLowerSlopeParameter <: NEMConstraintCoefficientParameter end
 
 
 """
@@ -226,7 +226,7 @@ Constraint-bound parameter holding the invocation (`1.0`/`0.0`) of a [`GenericCo
 interval, read at each simulation step from the constraint's `invoked` series. The row of an
 invoked interval has its bounds and the row of a non-invoked interval is free (`-Inf`, `Inf`).
 """
-struct GenericConstraintInvocationParameter <: PSI.ConstraintBoundParameter end
+struct GenericConstraintInvocationParameter <: NEMConstraintBoundParameter end
 
 
 """

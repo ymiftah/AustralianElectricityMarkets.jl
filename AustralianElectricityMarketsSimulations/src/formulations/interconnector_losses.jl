@@ -420,7 +420,7 @@ function _add_loss_constraints!(
                     sum(segments[s].slope * seg_var[name, segment_labels[s], t] for s in 1:n) +
                     flow_var[name, t]
             )
-            PSI.add_coefficient_target!(container, coefficient_key, name, t, loss_def_con[name, t], flow_var[name, t], -1.0)
+            _add_coefficient_target!(container, coefficient_key, name, t, loss_def_con[name, t], flow_var[name, t], -1.0)
         end
     end
     return
@@ -524,6 +524,7 @@ function PSI.construct_device!(
         device_model::PSI.DeviceModel{PSY.AreaInterchange, NEMInterconnectorLoss},
         network_model::PSI.NetworkModel{U},
     ) where {U <: PSI.AreaBalancePowerModel}
+    _add_area_balance_slacks!(container, sys, network_model)
     devices = PSI.get_available_components(device_model, sys)
     isempty(devices) && return
     loss_models = _build_loss_models(devices, device_model)
@@ -600,6 +601,7 @@ function PSI.construct_device!(
         device_model::PSI.DeviceModel{PSY.AreaInterchange, NEMInterconnectorLossless},
         network_model::PSI.NetworkModel{U},
     ) where {U <: PSI.AreaBalancePowerModel}
+    _add_area_balance_slacks!(container, sys, network_model)
     devices = PSI.get_available_components(device_model, sys)
     isempty(devices) && return
     has_ts = _has_flow_limit_series.(devices)

@@ -13,7 +13,7 @@ of bands `a` and `b`, band `b`'s scale is the coefficient of `a`'s cleared MW an
 scale that of `b`'s. Keyed by device type with meta `"<k>[_decremental]"`, `k` being the segment
 index on the offer curve.
 """
-struct TieBreakScaleParameter <: PSI.ConstraintCoefficientParameter end
+struct TieBreakScaleParameter <: NEMConstraintCoefficientParameter end
 
 
 """

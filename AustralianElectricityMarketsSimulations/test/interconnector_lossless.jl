@@ -95,7 +95,9 @@ end
 function _lossless_solve(sys; use_slacks::Bool = true)
     template = _lossless_template()
     use_slacks || PSI.set_network_model!(template, PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = false))
-    model = PSI.DecisionModel(AEMS.NEMDispatchProblem, template, sys; optimizer = HiGHS.Optimizer, initial_time = TOY_START)
+    model = PSI.DecisionModel(
+        AEMS.NEMDispatchProblem, template, sys; optimizer = HiGHS.Optimizer, initial_time = TOY_START, area_balance_slacks = use_slacks,
+    )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     return PSI.OptimizationProblemResults(model)
@@ -111,7 +113,8 @@ _lossless_value(frame, name::AbstractString) = only(frame[(frame.name .== name) 
         flow = PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange")
         @test _lossless_value(flow, TOY_INTERCHANGE) ≈ 30.0 atol = TOY_TOLERANCE
         @test _lossless_flow_slacks_zero(res)
-        @test _lossless_value(PSI.read_variable(res, "SystemBalanceSlackUp__Area"), "2") ≈ 20.0 atol = TOY_TOLERANCE
+        balance = PSI.read_variable(res, PSI.VariableKey(AEMS.AreaBalanceSlack, PSY.Area, AEMS.AREA_BALANCE_DEFICIT))
+        @test _lossless_value(balance, "2") ≈ 20.0 atol = TOY_TOLERANCE
     end
     # Without area-balance slacks the flow surplus slack is the only relief: the flow runs at 50 MW, 20 MW above the limit.
     res = _lossless_solve(_lossless_limited_system(; series = false); use_slacks = false)

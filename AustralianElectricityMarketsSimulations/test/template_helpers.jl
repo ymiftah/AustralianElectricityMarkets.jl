@@ -36,12 +36,10 @@ function _update_step_parameters!(model)
     return
 end
 
-"Per-area balances via `AreaBalancePowerModel`, with balance slacks priced at `mpc`. Mirrors `docs/literate/howto/interchanges.jl`."
+"Per-area balances via `AreaBalancePowerModel`, with balance slacks added by the formulation. Mirrors `docs/literate/howto/interchanges.jl`."
 function _area_balance_template(
-        sys::PSY.System; mpc = _HELPER_MPC,
-        network_model = AEMS._area_balance_network_model(
-            sys, DateTime(2025, 1, 1); market_price_cap = mpc, duals = [PSI.CopperPlateBalanceConstraint],
-        ),
+        sys::PSY.System;
+        network_model = AEMS._area_balance_network_model(; duals = [PSI.CopperPlateBalanceConstraint]),
     )
     template = PSI.ProblemTemplate()
     PSI.set_device_model!(template, PSY.Line, PSI.StaticBranch)

@@ -64,6 +64,7 @@ function PSI.construct_device!(
         network_model::PSI.NetworkModel{<:PM.AbstractActivePowerModel},
     ) where {T <: PSY.Storage, D <: AbstractNEMDispatch}
     devices = PSI.get_available_components(model, sys)
+    _add_area_balance_slacks!(container, sys, network_model)
 
     PSI.add_variables!(container, PSI.ActivePowerOutVariable, devices, D())
     PSI.add_variables!(container, PSI.ActivePowerInVariable, devices, D())

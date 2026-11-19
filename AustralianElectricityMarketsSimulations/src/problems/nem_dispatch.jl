@@ -45,6 +45,9 @@ are one dispatch interval, and the `"closed_loop"` setting records whether `M` i
 - `market_price_cap`: a Market Price Cap in `\$/MWh` that replaces the one dated by the initial time, or `nothing`.
 - `fast_start_run`: `:commitment` or `:dispatch` for a run of NEMDE's two-run fast-start dispatch (see
   [`nem_dispatch_sequence`](@ref)), or `nothing` for a single run without fast-start rows.
+- `area_balance_slacks`: `true` replaces the network model's own balance slacks of an `AreaBalancePowerModel` by
+  [`AreaBalanceSlack`](@ref) at the Market Price Cap. With `false`, or with a network model other than
+  `AreaBalancePowerModel`, PowerSimulations' own balance slacks are kept at PowerSimulations' default cost.
 - `kwargs...`: keyword arguments of `PSI.Settings`. Passing `ext`, `horizon`, `interval` or `resolution` throws
   `ArgumentError`; use `market_price_cap` for the cap.
 
@@ -53,7 +56,8 @@ A `PSI.DecisionModel{M}`. An invalid `market_price_cap` or `fast_start_run` thro
 """
 function PSI.DecisionModel{M}(
         template::PSI.AbstractProblemTemplate, sys::PSY.System, jump_model::Union{Nothing, JuMP.Model} = nothing;
-        name = "dispatch", market_price_cap = nothing, fast_start_run::Union{Nothing, Symbol} = nothing, kwargs...,
+        name = "dispatch", market_price_cap = nothing, fast_start_run::Union{Nothing, Symbol} = nothing,
+        area_balance_slacks::Bool = true, kwargs...,
     ) where {M <: AbstractNEMDispatchProblem}
     haskey(kwargs, :ext) &&
         throw(ArgumentError("DecisionModel{$M}: pass the Market Price Cap with `market_price_cap`, not `ext`"))
@@ -62,7 +66,7 @@ function PSI.DecisionModel{M}(
             ArgumentError("DecisionModel{$M}: `$kw` is fixed at one dispatch interval and cannot be given"),
         )
     end
-    ext = Dict{String, Any}("closed_loop" => M === NEMClosedLoopDispatchProblem)
+    ext = Dict{String, Any}("closed_loop" => M === NEMClosedLoopDispatchProblem, "area_balance_slacks" => area_balance_slacks)
     isnothing(market_price_cap) || (ext["market_price_cap_override"] = _checked_market_price_cap(market_price_cap))
     if !isnothing(fast_start_run)
         run = String(fast_start_run)
@@ -80,8 +84,7 @@ end
     PSI.validate_template(model::PSI.DecisionModel{<:AbstractNEMDispatchProblem})
 
 Checks that the system carries forecasts and that the availability of its devices and services is the one its
-NEMDE inputs were derived for, sets the Market Price Cap and the network model's balance-slack
-cost of `model`, then checks that the constraints the template excludes are constraints of the system, and runs
+NEMDE inputs were derived for, sets the Market Price Cap of `model`, then checks that the constraints the template excludes are constraints of the system, and runs
 [`check_template_against_sys`](@ref) and [`check_fcas_services`](@ref). It throws when the template cannot model an
 available `GenericConstraint` it does not tolerate, deletes the per-name `GenericConstraint` models of the constraints
 the template leaves out (see [`template_skipped_constraints`](@ref)), runs [`check_dispatch_envelope`](@ref) over the
@@ -89,8 +92,9 @@ dispatch intervals of the system, then the default template validation, which pr
 available devices.
 The cap is the `"market_price_cap_override"` setting when set, else the one dated by the initial time, or by the
 system's forecast initial timestamp when the initial time is unset. The resolved cap is written to the
-`"market_price_cap"` setting on every call, so a rebuild at a later initial time re-dates it. The slack
-cost is set on the model's copy of the template, not on the caller's template.
+`"market_price_cap"` setting on every call, so a rebuild at a later initial time re-dates it. The build
+replaces PSI's own balance slacks by [`AreaBalanceSlack`](@ref) only when the template holds an AEMSim formulation
+that adds them, and only on the build's copy of the template; a template of stock PSI formulations keeps its `use_slacks`.
 
 # Arguments
 - `model`: the NEM dispatch `PSI.DecisionModel` being built.
@@ -115,7 +119,6 @@ function PSI.validate_template(model::PSI.DecisionModel{<:AbstractNEMDispatchPro
     cap = _resolved_market_price_cap(t, get(ext, "market_price_cap_override", nothing))
     ext["market_price_cap"] = cap
     lookup = _ConstraintComponentLookup(sys)
-    PSI.get_network_model(template).slack_cost = _area_balance_slack_cost(sys, cap)
     _check_excluded_constraints(sys, template)
     check_template_against_sys(template, sys)
     check_fcas_services(template, sys)

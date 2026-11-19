@@ -371,13 +371,13 @@ function _add_fcas_capacity_rows!(
     cons.upper[dname, t] = JuMP.@constraint(
         jm, upper_lhs + capacity - _fcas_slack_term(slacks.upper, dname, t) <= limit("enablement_max"),
     )
-    PSI.add_coefficient_target!(
+    _add_coefficient_target!(
         container, PSI.ParameterKey(FCASUpperSlopeParameter, typeof(device), meta), dname, t, cons.upper[dname, t], capacity, 1.0,
     )
     cons.lower[dname, t] = JuMP.@constraint(
         jm, lower_lhs - capacity + _fcas_slack_term(slacks.lower, dname, t) >= limit("enablement_min"),
     )
-    PSI.add_coefficient_target!(
+    _add_coefficient_target!(
         container, PSI.ParameterKey(FCASLowerSlopeParameter, typeof(device), meta), dname, t, cons.lower[dname, t], capacity, -1.0,
     )
     return
@@ -534,6 +534,7 @@ function PSI.construct_service!(
         incompatible_device_types::Set{<:DataType},
         network_model::PSI.NetworkModel,
     )
+    _add_area_balance_slacks!(container, sys, network_model)
     unsupported = filter(!in((FCASJointCapacityConstraint, FCASUnitConstraint)), PSI.get_duals(model))
     isempty(unsupported) || throw(
         ArgumentError(

@@ -12,7 +12,7 @@ const _VIOLATION_FAMILIES = (
 )
 
 # The slack types whose keys carry a variant meta, read by the `_violation_kind` methods.
-const _META_SLACK_TYPES = (NEMUnitSlack, MNSPSlack, InterconnectorFlowSlack, FCASSlack)
+const _META_SLACK_TYPES = (NEMUnitSlack, MNSPSlack, InterconnectorFlowSlack, FCASSlack, AreaBalanceSlack)
 
 # The family and default direction of each MNSP slack variant.
 _mnsp_violation_family(::MNSPMaxAvailVariant) = ("mnsp_max_avail", "up")
@@ -51,6 +51,8 @@ _violation_kind(::Dict, ::Type{MNSPSlack}, meta::AbstractString) = _mnsp_violati
 _violation_kind(::Dict, ::Type{FCASSlack}, meta::AbstractString) = _fcas_violation_family(_fcas_slack_variant(meta))
 _violation_kind(::Dict, ::Type{InterconnectorFlowSlack}, meta::AbstractString) =
     _interconnector_flow_family(_interconnector_flow_variant(meta))
+_violation_kind(::Dict, ::Type{AreaBalanceSlack}, meta::AbstractString) =
+    meta == AREA_BALANCE_DEFICIT ? ("area_balance", "up") : ("area_balance", "down")
 _violation_kind(kinds::Dict, type::Type, ::AbstractString) = kinds[type]
 
 function _violation_direction(::PSY.System, ::Type, ::AbstractString, ::AbstractString, default::AbstractString)

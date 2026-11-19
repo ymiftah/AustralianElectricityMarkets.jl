@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. The slack types are merged into `FCASSlack` by [0100](0100-one-key-type-per-family-and-role.md); MaxAvail and BDU SCADA rows were made elastic by [0037](0037-elastic-rows-remaining-families.md).
+Accepted. The slack types are merged into `FCASSlack` by [0100](0100-one-key-type-per-family-and-role.md); MaxAvail and BDU SCADA rows were made elastic by [0037](0037-elastic-rows-remaining-families.md). Superseded in part by [0109](0109-aemsim-owns-constraint-targets-and-area-balance-slack.md): the area-balance slack is now AEMSim's `AreaBalanceSlack`, not the network model's `slack_cost`.
 
 ## What
 

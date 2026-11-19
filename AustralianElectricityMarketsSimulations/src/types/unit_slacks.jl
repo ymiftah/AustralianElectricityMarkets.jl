@@ -17,6 +17,17 @@ Slacks are in system-base per-unit; results read in MW.
 """
 struct NEMUnitSlack <: PSI.VariableType end
 
+"""
+    AreaBalanceSlack
+
+Variable type of the regional demand-supply balance slacks, keyed by `PSY.Area` with meta `"deficit"` (demand left
+unserved, added to the balance as supply) or `"surplus"` (excess generation, removed from it). System-base per-unit.
+"""
+struct AreaBalanceSlack <: PSI.VariableType end
+
+const AREA_BALANCE_DEFICIT = "deficit"
+const AREA_BALANCE_SURPLUS = "surplus"
+
 # The family tags: each parses the metas of its own variants.
 struct EnergyOfferFamily end
 struct EnergyLimitFamily end

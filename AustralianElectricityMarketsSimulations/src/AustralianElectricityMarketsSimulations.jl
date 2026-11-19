@@ -42,6 +42,7 @@ include("time_basis.jl")
 
 include("offers/derivation.jl")
 
+include("types/parameter_targets.jl")
 include("types/unit_slacks.jl")
 include("types/unit_constraints.jl")
 include("types/constraint_formulations.jl")
@@ -57,6 +58,7 @@ include("types/state.jl")
 include("types/fast_start.jl")
 
 include("formulations/slacks.jl")
+include("formulations/parameter_targets.jl")
 include("formulations/generic_constraints.jl")
 include("formulations/penalty_costs.jl")
 include("checks/nem_constraints.jl")
@@ -99,7 +101,7 @@ export nem_dispatch_sequence, FAST_START_COMMITMENT_NAME, FastStartModeTimeSerie
 export EnergyOfferBandVariable, EnergyBandWidthParameter
 export EnergyLimitTimeSeriesParameter
 export FixedLoadTimeSeriesParameter, FixedLoadInvokedTimeSeriesParameter
-export NEMUnitSlack, NEMUnitConstraint
+export NEMUnitSlack, NEMUnitConstraint, AreaBalanceSlack
 export NEMConstraintLHS, NEMConstraintLimit,
     NEMConstraintRHSParameter, LinearFactorLimit, FCASMarket
 export GenericConstraintSlackUp, GenericConstraintSlackDown,

@@ -161,14 +161,14 @@ function PSI.update_parameter_values!(
     # The overwritten series applies the coefficient and bound targets once, after the overwrite.
     _stock_update!(P(), model, key, state, false)
     _update_state_dependent_parameter!(model, key, param_container, P(), T, family, series, state)
-    _apply_targets!(P(), param_container)
+    _apply_targets!(container, key)
     return
 end
 
 # PowerSimulations' update of `key`; `targets = false` skips applying the coefficient and bound targets of the
 # parameter, which the caller applies after overwriting the values.
 function _stock_update!(::P, model, key::PSI.ParameterKey{P, T}, state::PSI.SimulationState, targets::Bool) where {P, T}
-    if targets || !(P <: Union{PSI.ConstraintCoefficientParameter, PSI.ConstraintBoundParameter})
+    if targets || !(P <: NEMFloatTimeSeriesParameter)
         @invoke PSI.update_parameter_values!(model::PSI.OperationModel, key::PSI.ParameterKey{P, T}, state::PSI.SimulationState)
         return
     end
@@ -292,7 +292,3 @@ function _update_state_dependent_parameter!(model, key, param_container, param::
     end
     return
 end
-
-_apply_targets!(::PSI.ConstraintCoefficientParameter, param_container) = PSI._apply_coefficient_targets!(param_container)
-_apply_targets!(::PSI.ConstraintBoundParameter, param_container) = PSI._apply_bound_targets!(param_container)
-_apply_targets!(::PSI.ParameterType, _) = nothing

@@ -75,7 +75,7 @@ function _add_tie_break_parameter!(
     return
 end
 
-PSI.get_multiplier_value(::TieBreakScaleParameter, ::PSY.Component, ::PSI.AbstractDeviceFormulation) = 1.0
+PSI.get_multiplier_value(::TieBreakScaleParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
 
 
 # Whether `device` is left out of the build by the `"filter_function"` of its device model.
@@ -155,14 +155,15 @@ Argument stage for [`TieBreakMarket`](@ref): adds nothing, as the rows read the 
 `nothing`.
 """
 function PSI.construct_service!(
-        ::PSI.OptimizationContainer,
-        ::PSY.System,
+        container::PSI.OptimizationContainer,
+        sys::PSY.System,
         ::PSI.ArgumentConstructStage,
         model::PSI.ServiceModel{EnergyTieBreak, TieBreakMarket},
         ::Dict{Symbol, PSI.DeviceModel},
         ::Set{<:DataType},
-        ::PSI.NetworkModel,
+        network_model::PSI.NetworkModel,
     )
+    _add_area_balance_slacks!(container, sys, network_model)
     duals = PSI.get_duals(model)
     isempty(duals) || throw(
         ArgumentError(
@@ -243,8 +244,8 @@ function PSI.construct_service!(
         # Unit placeholder coefficients; the scale parameters set both.
         row = JuMP.@constraint(jm, a.var + b.var + up[label, pair, t] - down[label, pair, t] == 0.0)
         con[label, pair, t] = row
-        PSI.add_coefficient_target!(container, key(b, decremental), b.name, t, row, a.var, 1.0)
-        PSI.add_coefficient_target!(container, key(a, decremental), a.name, t, row, b.var, -1.0)
+        _add_coefficient_target!(container, key(b, decremental), b.name, t, row, a.var, 1.0)
+        _add_coefficient_target!(container, key(a, decremental), a.name, t, row, b.var, -1.0)
         JuMP.add_to_expression!(invariant, coefficient, up[label, pair, t])
         JuMP.add_to_expression!(invariant, coefficient, down[label, pair, t])
     end

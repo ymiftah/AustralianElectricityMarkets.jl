@@ -562,6 +562,7 @@ end
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
     @test !PSI.has_container_key(container, PSI.SystemBalanceSlackUp, PSY.Area)
+    @test !PSI.has_container_key(container, AEMS.AreaBalanceSlack, PSY.Area, AEMS.AREA_BALANCE_DEFICIT)
     # Each unit ramp slack's price: base power x interval coefficient of its CVP factor x the build-time cap.
     # The JuMP objective is read because building folds the invariant terms into the variant expression.
     expected = PSI.get_base_power(container) * AEMS.interval_cost_coefficient(

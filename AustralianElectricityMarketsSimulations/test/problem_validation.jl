@@ -156,9 +156,14 @@ const TOY_BALANCE_SLACK_COEFFICIENT = 2.1875e7
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
     objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
-    for var_type in (PSI.SystemBalanceSlackUp, PSI.SystemBalanceSlackDown)
-        slack = PSI.get_variable(container, var_type(), PSY.Area)
+    for meta in (AEMS.AREA_BALANCE_DEFICIT, AEMS.AREA_BALANCE_SURPLUS)
+        slack = PSI.get_variable(container, AEMS.AreaBalanceSlack(), PSY.Area, meta)
         @test all(v -> isapprox(PSI.JuMP.coefficient(objective, v), TOY_BALANCE_SLACK_COEFFICIENT; rtol = 1.0e-12), slack)
+    end
+    deficit = PSI.get_variable(container, AEMS.AreaBalanceSlack(), PSY.Area, AEMS.AREA_BALANCE_DEFICIT)
+    surplus = PSI.get_variable(container, AEMS.AreaBalanceSlack(), PSY.Area, AEMS.AREA_BALANCE_SURPLUS)
+    @test all(zip(surplus, deficit)) do (s, d)
+        isapprox(PSI.JuMP.coefficient(objective, s), PSI.JuMP.coefficient(objective, d); rtol = 1.0e-12)
     end
 
     undated = PSI.DecisionModel(
@@ -170,12 +175,36 @@ const TOY_BALANCE_SLACK_COEFFICIENT = 2.1875e7
     )
 end
 
-@testset "a plain AreaBalance model keeps PSI's slack cost when AEMSim is loaded" begin
+@testset "an area-balance NEM build carries AreaBalanceSlack per area and interval, unless opted out" begin
+    sys = nem_toy_system(
+        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0; horizon = TOY_RESOLUTION,
+    )
+    model = PSI.DecisionModel(AEMS.NEMDispatchProblem, problem_template(sys), sys; optimizer = HiGHS.Optimizer, initial_time = TOY_START)
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    @test !PSI.has_container_key(container, PSI.SystemBalanceSlackUp, PSY.Area)
+    areas = PSY.get_components(PSY.Area, sys)
+    for meta in (AEMS.AREA_BALANCE_DEFICIT, AEMS.AREA_BALANCE_SURPLUS)
+        slack = PSI.get_variable(container, AEMS.AreaBalanceSlack(), PSY.Area, meta)
+        @test size(slack) == (length(areas), length(PSI.get_time_steps(container)))
+    end
+
+    optout = PSI.DecisionModel(
+        AEMS.NEMDispatchProblem, problem_template(sys), sys; optimizer = HiGHS.Optimizer,
+        initial_time = TOY_START, area_balance_slacks = false,
+    )
+    @test PSI.build!(optout; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    optout_container = PSI.get_optimization_container(optout)
+    @test PSI.has_container_key(optout_container, PSI.SystemBalanceSlackUp, PSY.Area)
+    @test !PSI.has_container_key(optout_container, AEMS.AreaBalanceSlack, PSY.Area, AEMS.AREA_BALANCE_DEFICIT)
+end
+
+@testset "an area-balance model with PSI's own slacks keeps PSI's slack cost" begin
     sys = nem_toy_system(
         [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0; horizon = TOY_RESOLUTION,
     )
     template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
-    set_nem_dispatch_models!(template, sys)
+    PSI.set_device_model!(template, PSY.ThermalStandard, PSI.ThermalBasicDispatch)
     PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
     model = PSI.DecisionModel(
         template, sys; optimizer = HiGHS.Optimizer, horizon = TOY_RESOLUTION,
@@ -196,21 +225,19 @@ end
     )
     cap = 12_345.0
     template = problem_template(sys)
-    template_cost = PSI.get_slack_cost(PSI.get_network_model(template))
     model = PSI.DecisionModel(
         AEMS.NEMDispatchProblem, template, sys; market_price_cap = cap, optimizer = HiGHS.Optimizer, initial_time = TOY_START,
     )
     @test PSI.get_ext(PSI.get_settings(model))["market_price_cap_override"] == cap
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    # The model's network slack cost is priced at the override; the caller's template is not changed.
-    @test PSI.get_slack_cost(PSI.get_network_model(PSI.get_template(model))) == AEMS._area_balance_slack_cost(sys, cap)
-    @test PSI.get_slack_cost(PSI.get_network_model(template)) == template_cost
+    # The build replaces the balance slacks on its copy of the template; the caller's template is not changed.
+    @test PSI.get_use_slacks(PSI.get_network_model(template))
     container = PSI.get_optimization_container(model)
     objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
     base_power = PSY.get_base_power(sys)
     per_mpc = base_power * interval_hours(DISPATCH_INTERVAL) * cap
 
-    balance = PSI.get_variable(container, PSI.SystemBalanceSlackUp(), PSY.Area)
+    balance = PSI.get_variable(container, AEMS.AreaBalanceSlack(), PSY.Area, AEMS.AREA_BALANCE_DEFICIT)
     @test PSI.JuMP.coefficient(objective, balance[first(axes(balance)[1]), first(axes(balance)[2])]) ≈
         per_mpc * AustralianElectricityMarkets.AREA_BALANCE_CVP_FACTOR rtol = 1.0e-12
     ramp = PSI.get_variable(container, AEMS.NEMUnitSlack(), ThermalStandard, "unit_ramp|up")
@@ -242,7 +269,6 @@ end
         [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0; horizon = TOY_RESOLUTION,
     )
     template = problem_template(sys)
-    template_cost = PSI.get_slack_cost(PSI.get_network_model(template))
     model = PSI.DecisionModel(AEMS.NEMDispatchProblem, template, sys; optimizer = HiGHS.Optimizer)
     models = PSI.SimulationModels(; decision_models = [model])
     sequence = PSI.SimulationSequence(; models = models, ini_cond_chronology = PSI.InterProblemChronology())
@@ -256,6 +282,30 @@ end
     @test PSI.execute!(sim) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     cap = AEMS._resolved_market_price_cap(second_interval)
     @test PSI.get_ext(PSI.get_settings(model))["market_price_cap"] == cap
-    @test PSI.get_slack_cost(PSI.get_network_model(PSI.get_template(model))) == AEMS._area_balance_slack_cost(sys, cap)
-    @test PSI.get_slack_cost(PSI.get_network_model(template)) == template_cost
+    @test PSI.get_use_slacks(PSI.get_network_model(template))
+end
+
+@testset "the area-balance dual is the same with the AEMSim slack and with PSI's slack when neither binds" begin
+    sys = nem_toy_system(
+        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0; horizon = TOY_RESOLUTION,
+    )
+    function balance_duals(template; area_balance_slacks::Bool)
+        model = PSI.DecisionModel(
+            AEMS.NEMDispatchProblem, template, sys; optimizer = HiGHS.Optimizer, initial_time = TOY_START,
+            area_balance_slacks = area_balance_slacks,
+        )
+        @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+        @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+        return PSI.read_dual(PSI.OptimizationProblemResults(model), PSI.CopperPlateBalanceConstraint, PSY.Area)
+    end
+    aem = balance_duals(problem_template(sys); area_balance_slacks = true)
+    stock_template = problem_template(sys)
+    PSI.set_network_model!(
+        stock_template,
+        PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true, duals = [PSI.CopperPlateBalanceConstraint]),
+    )
+    stock = balance_duals(stock_template; area_balance_slacks = false)
+    @test !isempty(aem.value)
+    @test aem.name == stock.name
+    @test all(isapprox.(aem.value, stock.value; atol = 1.0e-6))
 end

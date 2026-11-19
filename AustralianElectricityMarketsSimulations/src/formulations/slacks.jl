@@ -4,6 +4,7 @@ const _NATURAL_UNIT_SLACKS = Union{
     GenericConstraintSlackUp, GenericConstraintSlackDown,
     InterconnectorFlowSlack,
     FCASSlack,
+    AreaBalanceSlack,
 }
 
 
@@ -72,6 +73,45 @@ function _add_cvp_slack!(
     slack = _add_slack_variables!(container, var_type, T, names, time_steps; meta = meta, label = label)
     _add_mpc_penalty!(container, var_type, T, names, cvp_factor; meta = meta, rate = rate)
     return slack
+end
+
+
+"""
+    _add_area_balance_slacks!(container, sys, network_model)
+
+Adds the [`AreaBalanceSlack`](@ref) deficit and surplus to each area's `ActivePowerBalance`, priced at
+[`AREA_BALANCE_CVP_FACTOR`](@ref) times the Market Price Cap. Called from the argument stage of every AEMSim
+formulation that writes to the area balance, so it runs before the balance row is built. For an
+`AreaBalancePowerModel` and unless the `"area_balance_slacks"` setting is `false`, it turns PSI's own balance
+slacks off on the build's network model and adds the slacks once per container. A template with no such
+formulation never calls it and keeps the caller's `use_slacks`.
+
+# Arguments
+- `container`: the `PSI.OptimizationContainer` being built.
+- `sys`: the system the build runs on.
+- `network_model`: the network model of the build; mutated to turn off its own balance slacks.
+
+# Returns
+`nothing`.
+"""
+function _add_area_balance_slacks!(container::PSI.OptimizationContainer, sys::PSY.System, network_model::PSI.NetworkModel)
+    network_model isa PSI.NetworkModel{PSI.AreaBalancePowerModel} || return
+    get(PSI.get_ext(PSI.get_settings(container)), "area_balance_slacks", true) || return
+    PSI.has_container_key(container, AreaBalanceSlack, PSY.Area, AREA_BALANCE_DEFICIT) && return
+    network_model.use_slacks = false
+    areas = PSY.get_name.(PSI.get_available_components(network_model, PSY.Area, sys))
+    time_steps = PSI.get_time_steps(container)
+    expression = PSI.get_expression(container, PSI.ActivePowerBalance(), PSY.Area)
+    for (meta, sign) in ((AREA_BALANCE_DEFICIT, 1.0), (AREA_BALANCE_SURPLUS, -1.0))
+        slack = _add_cvp_slack!(
+            container, AreaBalanceSlack, PSY.Area, areas, time_steps, AREA_BALANCE_CVP_FACTOR;
+            meta = meta, label = "AreaBalance_$meta",
+        )
+        for t in time_steps, area in areas
+            JuMP.add_to_expression!(expression[area, t], sign, slack[area, t])
+        end
+    end
+    return
 end
 
 

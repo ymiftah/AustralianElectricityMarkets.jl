@@ -9,8 +9,11 @@ end
 @testset "per-step update methods only for the closed-loop model and the fast-start runs" begin
     # An open-loop run keeps PowerSimulations' own per-step updates; only a closed-loop model recomputes state inputs,
     # and only the fast-start parameters reset the fast-start rows.
-    # The shared generic constraint parameter containers have their own container update.
-    @test all(m -> parentmodule(m) !== AEMS || occursin("GenericConstraint", string(m.sig)), methods(PSI.update_container_parameter_values!))
+    # The shared generic constraint containers and the coefficient/bound parameters have their own container update.
+    @test all(methods(PSI.update_container_parameter_values!)) do m
+        s = string(m.sig)
+        parentmodule(m) !== AEMS || occursin("GenericConstraint", s) || occursin("NEMFloatTimeSeriesParameter", s)
+    end
     @test !any(m -> parentmodule(m) === AEMS, methods(PSI._update_parameter_values!))
     ours = [m for m in methods(PSI.update_parameter_values!) if parentmodule(m) === AEMS]
     fast_start(m) = occursin("FastStartModeTimeSeriesParameter", string(m.sig)) || occursin("FixValueParameter", string(m.sig))
@@ -146,4 +149,33 @@ end
     status, log = _toy_build_log(toy_model(sys; template = _guard_template(sys)))
     @test status == PSI.ModelBuildStatus.FAILED
     @test occursin("$TOY_LOAD_SERVICE_ONLY: the device carries an unpriced GEN energy offer series", log)
+end
+
+@testset "coefficient targets are applied after a value update" begin
+    # Two tied first bands, so the tie-break scale parameter has rows for both units.
+    sys = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(100.0, [(60.0, 20.0), (0.0, 15_000.0)]; initial = 30.0, ramp_up = 100.0),
+            TOY_EXPENSIVE => toy_unit(100.0, [(40.0, 20.0), (0.0, 15_000.0)]; initial = 30.0, ramp_up = 100.0),
+        ],
+        50.0,
+    )
+    template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
+    set_nem_dispatch_models!(template, sys)
+    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+    model = toy_model(sys; template)
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    key = PSI.ParameterKey(TieBreakScaleParameter, ThermalStandard, AEMS._tie_break_meta(1, false))
+    param_container = PSI.get_parameter(container, key)
+    @test eltype(PSI.get_parameter_array(param_container)) == Float64
+    targets = AEMS._targets(TieBreakScaleParameter, container, key)
+    @test !isempty(targets)
+    tg = first(targets)
+    param = PSI.get_parameter_array_data(param_container)
+    mult = PSI.get_multiplier_array_data(param_container)
+    param[tg.param_row, tg.time_step] *= 2
+    AEMS._apply_targets!(container, key)
+    @test PSI.JuMP.normalized_coefficient(tg.constraint, tg.variable) ≈
+        tg.scale * param[tg.param_row, tg.time_step] * mult[tg.multiplier_row, tg.time_step]
 end

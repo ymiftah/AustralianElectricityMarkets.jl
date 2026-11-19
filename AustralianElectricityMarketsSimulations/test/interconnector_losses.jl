@@ -339,16 +339,17 @@ end
     model, res = _solve_loss(sys)
     @test all(abs.(PSI.read_variable(res, PSI.VariableKey(AEMS.InterconnectorFlowSlack, PSY.AreaInterchange, "surplus")).value) .< 1.0e-6)
     @test all(isapprox.(PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange").value, 5.0; atol = 1.0e-6))
-    unserved = PSI.read_variable(res, "SystemBalanceSlackUp__Area")
+    unserved = PSI.read_variable(res, PSI.VariableKey(AEMS.AreaBalanceSlack, PSY.Area, AEMS.AREA_BALANCE_DEFICIT))
     @test sum(unserved.value) > 0
 
     # The balance slack is priced at 150 x MPC and the flow slack at 1150 x MPC, so the balance slack is cheaper.
     container = PSI.get_optimization_container(model)
     mpc = AEMS._container_market_price_cap(container, PSI.get_initial_time(container))
     terms = PSI.JuMP.objective_function(PSI.get_jump_model(container)).terms
-    balance = PSI.get_variable(container, PSI.SystemBalanceSlackUp(), PSY.Area)["2", 1]
+    balance = PSI.get_variable(container, AEMS.AreaBalanceSlack(), PSY.Area, AEMS.AREA_BALANCE_DEFICIT)["2", 1]
     flow = PSI.get_variable(container, AEMS.InterconnectorFlowSlack(), PSY.AreaInterchange, "surplus")["IC1", 1]
-    @test terms[balance] ≈ AEMS._area_balance_slack_cost(sys, mpc)
+    @test terms[balance] ≈
+        PSY.get_base_power(sys) * AEMS.interval_cost_coefficient(AustralianElectricityMarkets.AREA_BALANCE_CVP_FACTOR, PSI.get_resolution(container)) * mpc
     @test terms[balance] < terms[flow]
 end
 

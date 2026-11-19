@@ -449,7 +449,7 @@ function battery_fcas_model(
     AustralianElectricityMarkets._set_fcas_effective_offers!(sys)
     PSY.transform_single_time_series!(sys, 2 * TOY_RESOLUTION, TOY_RESOLUTION)
 
-    template = _area_balance_template(sys; mpc = FCAS_TOY_MPC)
+    template = _area_balance_template(sys)
     PSI.set_device_model!(template, EnergyReservoirStorage, NEMDispatch)
     PSI.set_service_model!(
         template, service_name,

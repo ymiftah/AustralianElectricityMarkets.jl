@@ -207,6 +207,7 @@ function PSI.construct_device!(
         network_model::PSI.NetworkModel{<:PM.AbstractActivePowerModel},
     ) where {T <: PSY.StaticInjection, D <: AbstractNEMDispatch}
     devices = PSI.get_available_components(model, sys)
+    _add_area_balance_slacks!(container, sys, network_model)
 
     PSI.add_variables!(container, PSI.ActivePowerVariable, devices, D())
     # A non-scheduled load has no energy offer and is never dispatched for energy (it only offers

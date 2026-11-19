@@ -8,8 +8,8 @@ The keyword builder of the dispatch templates. The default builds the `PSI.Probl
 [`NEMDispatch`](@ref) for each type of [`NEM_DISPATCH_DEVICE_TYPES`](@ref), including the batteries,
 `PSI.StaticPowerLoad` demand, [`NEMInterconnectorLoss`](@ref) on each `PSY.AreaInterchange`, an [`FCASMarket`](@ref)
 per `FCASService`, a [`LinearFactorLimit`](@ref) per `GenericConstraint` and the [`TieBreakMarket`](@ref) service
-model, over `PSI.AreaBalancePowerModel` regions. The balance slacks carry PSI's default slack cost here; only
-[`NEMDispatchProblem`](@ref) prices them at the Market Price Cap.
+model, over `PSI.AreaBalancePowerModel` regions. The balance slacks are PSI's own here; the build replaces them by
+[`AreaBalanceSlack`](@ref), priced at the Market Price Cap, because this template holds AEMSim formulations.
 
 Each keyword removes or swaps one part. The presets [`template_energy_only`](@ref), [`template_interconnected`](@ref),
 [`template_losses`](@ref), [`template_fcas`](@ref) and [`template_constraints`](@ref) are calls to this builder with

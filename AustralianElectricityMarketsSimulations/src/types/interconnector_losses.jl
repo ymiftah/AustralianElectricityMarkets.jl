@@ -82,4 +82,4 @@ Coefficient of an interconnector's flow in its `"loss_definition"` [`Interconnec
 each interval: the demand term `Σ_r demand_coefficients[r] × demand[r]` of its loss factor, read
 from the `"loss_demand_coefficient"` series that [`nem_system`](@ref AustralianElectricityMarkets.nem_system) writes.
 """
-struct LossDemandCoefficientParameter <: PSI.ConstraintCoefficientParameter end
+struct LossDemandCoefficientParameter <: NEMConstraintCoefficientParameter end

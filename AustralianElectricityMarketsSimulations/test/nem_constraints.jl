@@ -168,8 +168,8 @@ function _prune_unbuildable_constraints!(sys)
     return
 end
 
-function _nem_service_template(sys; use_slacks::Bool = false, mpc = _HELPER_MPC)
-    template = _area_balance_template(sys; mpc = mpc)
+function _nem_service_template(sys; use_slacks::Bool = false)
+    template = _area_balance_template(sys)
     PSI.set_service_model!(
         template,
         PSI.ServiceModel(
@@ -306,7 +306,7 @@ _row_bounds(container, name, t) = PSI.JuMP.MOI.get(
     for use_slacks in (true, false)
         sys = _prepared_system(Dict("N_IC1_LIMIT" => unmeetable), Dict("N_IC1_LIMIT" => invoked_vec))
         _prune_unbuildable_constraints!(sys)
-        model = _decision_model(_nem_service_template(sys; use_slacks = use_slacks, mpc = 20_300.0), sys; mpc = 20_300.0, optimizer = HiGHS.Optimizer, horizon = Hour(2))
+        model = _decision_model(_nem_service_template(sys; use_slacks = use_slacks), sys; mpc = 20_300.0, optimizer = HiGHS.Optimizer, horizon = Hour(2))
         @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
         container = PSI.get_optimization_container(model)
         gc = _gc(sys, "N_IC1_LIMIT")
@@ -445,22 +445,18 @@ end
 end
 
 @testset "area-balance network model: unpublished year throws, a supplied cap prices the slack" begin
-    # _prepared_system() is dated 2020, outside AustralianElectricityMarkets.MARKET_PRICE_CAP_BY_FINANCIAL_YEAR.
-    sys = _prepared_system()
-    @test_throws r"No published Market Price Cap" AEMS._area_balance_network_model(sys, DateTime(2020, 1, 1))
-    network = AEMS._area_balance_network_model(sys, DateTime(2020, 1, 1); market_price_cap = 10_000.0)
-    expected = PSY.get_base_power(sys) * AustralianElectricityMarkets.AREA_BALANCE_CVP_FACTOR *
-        interval_hours(DISPATCH_INTERVAL) * 10_000.0
-    @test PSI.get_slack_cost(network) ≈ expected rtol = 1.0e-12
-    @test PSI.get_use_slacks(network)
-    @test_throws ArgumentError AEMS._area_balance_network_model(sys, DateTime(2020, 1, 1); market_price_cap = 0.0)
+    # 2020 is outside AustralianElectricityMarkets.MARKET_PRICE_CAP_BY_FINANCIAL_YEAR.
+    @test PSI.get_use_slacks(AEMS._area_balance_network_model())
+    @test_throws r"No published Market Price Cap" AEMS._resolved_market_price_cap(DateTime(2020, 1, 1))
+    @test AEMS._resolved_market_price_cap(DateTime(2020, 1, 1), 10_000.0) == 10_000.0
+    @test_throws ArgumentError AEMS._resolved_market_price_cap(DateTime(2020, 1, 1), 0.0)
 end
 
 @testset "Market Price Cap penalties are invariant constants of the initial interval's cap, unchanged by a parameter update" begin
     # 2026-01-06 falls in 2025-26, whose Market Price Cap is 20,300 $/MWh.
     start = DateTime(2026, 1, 6)
     sys = nem_toy_system([TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 0.0, ramp_up = 100.0)], 50.0; start = start)
-    template = PSI.ProblemTemplate(AEMS._area_balance_network_model(sys, start))
+    template = PSI.ProblemTemplate(AEMS._area_balance_network_model())
     set_nem_dispatch_models!(template, sys)
     PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
     model = PSI.DecisionModel(
@@ -471,7 +467,7 @@ end
     container = PSI.get_optimization_container(model)
     # 150 CVP x 20,300 $/MWh x 100 MW base x 5 minutes.
     expected = 150.0 * 20_300.0 * 100.0 / 12
-    slacks = [PSI.get_variable(container, v(), PSY.Area) for v in (PSI.SystemBalanceSlackUp, PSI.SystemBalanceSlackDown)]
+    slacks = [PSI.get_variable(container, AEMS.AreaBalanceSlack(), PSY.Area, meta) for meta in (AEMS.AREA_BALANCE_DEFICIT, AEMS.AREA_BALANCE_SURPLUS)]
     objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
     cells = [slack[name, t] for slack in slacks for name in axes(slack)[1] for t in axes(slack)[2]]
     @test !isempty(cells) && all(v -> PSI.JuMP.coefficient(objective, v) ≈ expected, cells)
@@ -543,7 +539,7 @@ end
 
     test_mpc = 20_300.0
     model = _decision_model(
-        _nem_service_template(sys; use_slacks = true, mpc = test_mpc), sys;
+        _nem_service_template(sys; use_slacks = true), sys;
         mpc = test_mpc, optimizer = HiGHS.Optimizer, horizon = Hour(2),
     )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
@@ -658,4 +654,30 @@ end
     full_rows = template_skipped_constraints(sys, full)
     @test only(full_rows[full_rows.constraint .== "N_GHOST", :reason]) == :missing_component
     @test_throws r"missing_component" problem_template(sys; template = full)
+end
+
+@testset "bound targets free and restore the invoked row when the invocation value changes" begin
+    n_raw = let p = _native_forecast_params(augmented_pscb_system())
+        p.count + Int(p.horizon / p.interval) - 1
+    end
+    invoked_vec = vcat([0.0], fill(1.0, n_raw - 1))
+    sys = _prepared_system(Dict("N_IC1_LIMIT" => 100.0), Dict("N_IC1_LIMIT" => invoked_vec))
+    _prune_unbuildable_constraints!(sys)
+    model = _decision_model(_nem_service_template(sys), sys; mpc = 20_300.0, optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    name = PSY.get_name(_gc(sys, "N_IC1_LIMIT"))
+    key = PSI.ParameterKey(AEMS.GenericConstraintInvocationParameter, GenericConstraint)
+    con = PSI.get_constraint(container, NEMConstraintLimit(), GenericConstraint)[name, 2]
+    target = only(tg for tg in AEMS._targets(AEMS.GenericConstraintInvocationParameter, container, key) if tg.constraint == con)
+    param = PSI.get_parameter_array_data(PSI.get_parameter(container, key))
+    original = param[target.param_row, target.time_step]
+    active = PSI.JuMP.MOI.Interval(target.active_lo, target.active_hi)
+    @test _row_bounds(container, name, 2) == active
+    param[target.param_row, target.time_step] = 0.0
+    AEMS._apply_targets!(container, key)
+    @test _row_bounds(container, name, 2) == PSI.JuMP.MOI.Interval(-Inf, Inf)
+    param[target.param_row, target.time_step] = original
+    AEMS._apply_targets!(container, key)
+    @test _row_bounds(container, name, 2) == active
 end

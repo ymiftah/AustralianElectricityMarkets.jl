@@ -99,10 +99,26 @@ end
 
 
 # The shared generic constraint containers (`formulations/generic_constraints.jl`) call these private PSI
-# internals: `_get_time_series_name`, `_to_is_interval`, `_time_series_parameter_eltype`,
-# `_set_parameter_at!`, `_set_multiplier_at!`, `_update_parameter_values!` and `_apply_bound_targets!`.
+# internals: `_get_time_series_name`, `_to_is_interval`, `_set_parameter_at!`, `_set_multiplier_at!` and
+# `_update_parameter_values!`. The float parameter containers call `_add_param_container!` (below), `_get_ts_uuid`,
+# `ParameterContainer` and `_assign_container!` (`formulations/parameter_targets.jl`).
 
 # The fast-start runs (`formulations/fast_start.jl`) call the private `_update_parameter_values!` to read the
 # commitment run's targets into the dispatch run's `FixValueParameter`, and override `update_parameter_values!` for
 # that parameter, whose stock update asserts that it fixes a variable. They also extend the interface method
 # `get_parameter_multiplier` for the `FixValueParameter` of a NEM dispatch device.
+
+# Float64 storage for the constraint-coefficient and constraint-bound parameters in every build mode. PSI's own
+# method takes `T <: TimeSeriesParameter` and stores JuMP parameter variables for recurrent solves; this one is more specific.
+function PSI._add_param_container!(
+        container::PSI.OptimizationContainer, key::PSI.ParameterKey{T, U}, attribute::PSI.TimeSeriesAttributes{V},
+        param_axs, multiplier_axs, additional_axs, time_steps::UnitRange{Int}; sparse = false,
+    ) where {T <: NEMFloatTimeSeriesParameter, U <: PSY.Component, V <: PSY.TimeSeriesData}
+    sparse && error("$T does not support sparse parameter containers")
+    param_array = JuMP.Containers.DenseAxisArray{Float64}(undef, param_axs, additional_axs..., time_steps)
+    multiplier_array = fill!(JuMP.Containers.DenseAxisArray{Float64}(undef, multiplier_axs, additional_axs..., time_steps), NaN)
+    param_container = PSI.ParameterContainer(attribute, param_array, multiplier_array)
+    PSI._assign_container!(container.parameters, key, param_container)
+    _clear_targets!(container, key)
+    return param_container
+end

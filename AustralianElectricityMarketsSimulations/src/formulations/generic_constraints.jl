@@ -438,7 +438,7 @@ function PSI.add_constraints!(
         rhs = rhs_refs[t] * rhs_mult[name, t] / base_power
         con[name, t] = JuMP.@constraint(jm, expr[name, t] - rhs in bounds)
         active = JuMP.MOI.get(jm, JuMP.MOI.ConstraintSet(), con[name, t])
-        PSI.add_bound_target!(container, invoked_key, name, t, con[name, t], (active.lower, active.upper))
+        _add_bound_target!(container, invoked_key, name, t, con[name, t], (active.lower, active.upper))
     end
     return
 end
@@ -469,7 +469,7 @@ function _stash_constraint_parameters!(
         ts_name = PSI._get_time_series_name(T(), gc, model)
         uuid = string(IS.get_time_series_uuid(ts_type, gc, ts_name; interval = PSI._to_is_interval(interval)))
         values = PSI.get_time_series_initial_values!(container, ts_type, gc, ts_name; interval = interval)
-        row = Matrix{PSI._time_series_parameter_eltype(container, T)}(undef, 1, length(time_steps))
+        row = Matrix{_parameter_eltype(container, T)}(undef, 1, length(time_steps))
         for t in time_steps
             PSI._set_parameter_at!(row, jm, values[t], 1, t)
         end
@@ -563,6 +563,7 @@ function PSI.construct_service!(
         incompatible_device_types::Set{<:DataType},
         network_model::PSI.NetworkModel,
     )
+    _add_area_balance_slacks!(container, sys, network_model)
     gc = PSY.get_component(GenericConstraint, sys, PSI.get_service_name(model))
     _stash_constraint_parameters!(container, gc, model)
     return
@@ -600,14 +601,12 @@ end
 
 # --- Per-step updates of the shared parameter containers ---
 
-const _CONSTRAINT_PARAMETERS = Union{NEMConstraintRHSParameter, GenericConstraintInvocationParameter}
-
 # PSI's service update reads one service named by the key's meta; these containers hold every constraint,
 # so each constraint's series is read in turn, and the invocation rows are reset once all are read.
-function PSI.update_container_parameter_values!(
+function _update_constraint_parameters!(
         container::PSI.OptimizationContainer, model::PSI.OperationModel,
         key::PSI.ParameterKey{T, GenericConstraint}, input::PSI.DatasetContainer{PSI.InMemoryDataset},
-    ) where {T <: _CONSTRAINT_PARAMETERS}
+    ) where {T}
     param_container = PSI.get_parameter(container, key)
     array = PSI.get_parameter_array(param_container)
     attributes = PSI.get_attributes(param_container)
@@ -617,7 +616,23 @@ function PSI.update_container_parameter_values!(
         isnothing(gc) && error("GenericConstraint \"$name\" is no longer in the system; cannot update parameter $key")
         PSI._update_parameter_values!(array, T(), attributes, gc, model, input)
     end
-    T <: PSI.ConstraintBoundParameter && PSI._apply_bound_targets!(param_container)
+    _apply_targets!(container, key)
+    return
+end
+
+function PSI.update_container_parameter_values!(
+        container::PSI.OptimizationContainer, model::PSI.OperationModel,
+        key::PSI.ParameterKey{NEMConstraintRHSParameter, GenericConstraint}, input::PSI.DatasetContainer{PSI.InMemoryDataset},
+    )
+    _update_constraint_parameters!(container, model, key, input)
+    return
+end
+
+function PSI.update_container_parameter_values!(
+        container::PSI.OptimizationContainer, model::PSI.OperationModel,
+        key::PSI.ParameterKey{GenericConstraintInvocationParameter, GenericConstraint}, input::PSI.DatasetContainer{PSI.InMemoryDataset},
+    )
+    _update_constraint_parameters!(container, model, key, input)
     return
 end
 
