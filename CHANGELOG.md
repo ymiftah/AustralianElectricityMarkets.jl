@@ -794,6 +794,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Per-interval dispatch readers (`read_prices`, `read_fcas_prices`, `read_fcas_dispatch`,
   `read_invoked_constraints`, `read_interconnector_limits`, `read_published_interval`) share one
   query and throw an `ArgumentError` naming the `populate` call when their table is not cached.
+- TagBot, CompatHelper and Dependabot cover each package in the repository, and a manual
+  `TestRegistered` workflow tests each package against the registered versions of its siblings.
 - Violation penalties (unit ramp, energy availability and UIGF, storage availability, total energy
   offer bands, FCAS, interconnector flow, area balance and generic constraints) are priced at build
   from the Market Price Cap of the simulation's initial interval. A range crossing 1 July is refused
