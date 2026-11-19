@@ -1,0 +1,64 @@
+name: Doc Preview Cleanup
+
+# Documenter pushes a full docs build to gh-pages/previews/PR<n> for every pull request
+# (`push_preview = true`) and never removes it, so gh-pages grows by ~10 MB per PR and every
+# deploy adds another commit to clone. This workflow deletes the preview when its PR closes and
+# squashes gh-pages to a single commit, so the deleted previews leave the history too.
+# Run it manually once to clear the previews of every PR that is no longer open.
+
+on:
+  pull_request:
+    types: [closed]
+  workflow_dispatch:
+
+concurrency:
+  # Share the gh-pages lock with other cleanups; never cancel one half-way through a force-push.
+  group: doc-preview-cleanup
+  cancel-in-progress: false
+
+jobs:
+  doc-preview-cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - name: Checkout gh-pages branch
+        uses: actions/checkout@v6
+        with:
+          ref: gh-pages
+
+      - name: List previews to delete
+        id: targets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.number }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            dirs="previews/PR${PR_NUMBER}"
+          else
+            open=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 1000 --json number --jq '.[].number')
+            dirs=""
+            for d in previews/PR*; do
+              [ -d "$d" ] || continue
+              n="${d#previews/PR}"
+              echo "$open" | grep -qx "$n" || dirs="$dirs $d"
+            done
+          fi
+          existing=""
+          for d in $dirs; do [ -d "$d" ] && existing="$existing $d"; done
+          echo "Previews to delete:${existing:- none}"
+          echo "dirs=${existing}" >> "$GITHUB_OUTPUT"
+
+      - name: Delete previews and squash history
+        if: steps.targets.outputs.dirs != ''
+        env:
+          DIRS: ${{ steps.targets.outputs.dirs }}
+        run: |
+          git config user.name "Documenter.jl"
+          git config user.email "documenter@juliadocs.github.io"
+          git rm -rf --quiet $DIRS
+          git commit --quiet -m "Delete doc previews:$DIRS"
+          git branch gh-pages-new "$(echo "Squash gh-pages history" | git commit-tree 'HEAD^{tree}')"
+          git push --force origin gh-pages-new:gh-pages
