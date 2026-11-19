@@ -348,25 +348,6 @@ end
     @test String(_fetch_with_retry("http://example.invalid/x"; http_get).body) == "body"
 end
 
-@testset "_extract_d_lines: month filtering keeps only in-window D lines, boundary included" begin
-    csv_path = make_nemweb_csv("DISPATCH_FCAS_REQ_CONSTRAINT", ["INTERVAL_DATETIME", "REGIONID"], MONTH_FILTER_ROWS)
-    zip_path = make_zip_with_csv(csv_path)
-    lo, hi = _month_filter_bounds(2026, 6)
-    try
-        d_path, available_cols = _extract_d_lines(zip_path; month_filter_column = "INTERVAL_DATETIME", lo, hi)
-        try
-            @test available_cols == ["INTERVAL_DATETIME", "REGIONID"]
-            regions = [split(l, ",")[end] for l in readlines(d_path)]
-            @test Set(regions) == Set(["FIRST", "LAST", "NEXT_BOUNDARY"])  # out-of-month lines never reach the file
-        finally
-            isfile(d_path) && rm(d_path)
-        end
-    finally
-        isfile(csv_path) && rm(csv_path)
-        isfile(zip_path) && rm(zip_path)
-    end
-end
-
 @testset "_csv_to_parquet: reads data rows, casts types, drops extra and absent columns" begin
     csv_path = make_nemweb_csv(
         "DISPATCHPRICE",
@@ -441,6 +422,8 @@ end
     try
         d_path, available_cols = _extract_d_lines(zip_path; month_filter_column = "INTERVAL_DATETIME", lo, hi)
         try
+            # Out-of-month lines never reach the extracted file.
+            @test Set(split(l, ",")[end] for l in readlines(d_path)) == Set(["FIRST", "LAST", "NEXT_BOUNDARY"])
             conn = DuckDB.DB()
             try
                 _csv_to_parquet(
@@ -502,27 +485,19 @@ end
     end
 end
 
-@testset "DataSource: local fields, partitions, path and filesystem" begin
+@testset "DataSource: partitions, path and filesystem, local or remote" begin
     tmpdir = mktempdir()
     config = HiveConfiguration(hive_location = tmpdir)
-    source = DataSource(
-        "DISPATCHPRICE", ["SETTLEMENTDATE", "REGIONID", "RRP"], config;
-        table_sort_by = ["SETTLEMENTDATE", "REGIONID"], month_filter_column = "SETTLEMENTDATE",
-    )
+    source = DataSource("T", ["C"], config)
     @test source.partitions == [ARCHIVE_MONTH_PARTITION]
-    @test source.path == joinpath(tmpdir, "DISPATCHPRICE")
     @test !isdir(source.path)  # construction is pure, the write path creates it lazily
-    @test AustralianElectricityMarketsData.get_filesystem(source) == "file"
-    @test AustralianElectricityMarketsData.islocal(source)
-    @test DataSource("T", ["C"], config).month_filter_column === nothing
-    @test DataSource("T", ["C"], config).row_filter === nothing
-end
-
-@testset "DataSource: remote path keeps the scheme" begin
-    source = DataSource("T", ["C"], HiveConfiguration(hive_location = "bucket/path", filesystem = "s3"))
-    @test source.path == "s3://bucket/path/T"
-    @test AustralianElectricityMarketsData.get_filesystem(source) == "s3"
-    @test !AustralianElectricityMarketsData.islocal(source)
+    @test source.month_filter_column === nothing && source.row_filter === nothing
+    for (location, filesystem, path) in ((tmpdir, "file", joinpath(tmpdir, "T")), ("bucket/path", "s3", "s3://bucket/path/T"))
+        remote = DataSource("T", ["C"], HiveConfiguration(; hive_location = location, filesystem))
+        @test remote.path == path
+        @test AustralianElectricityMarketsData.get_filesystem(remote) == filesystem
+        @test AustralianElectricityMarketsData.islocal(remote) == (filesystem == "file")
+    end
 end
 
 @testset "MNSP and fast-start table specs: every non-key text column is typed explicitly" begin
@@ -607,12 +582,8 @@ end
 @testset "get_table: throws ArgumentError with table name in message for unknown symbol" begin
     tmpdir = mktempdir()
     db = aem_connect(HiveConfiguration(hive_location = tmpdir))
-    err = try
-        get_table(db, :NONEXISTENT_TABLE)
-    catch e
-        e
-    end
-    @test err isa ArgumentError && occursin("NONEXISTENT_TABLE", err.msg)
+    err = (@test_throws ArgumentError get_table(db, :NONEXISTENT_TABLE)).value
+    @test occursin("NONEXISTENT_TABLE", err.msg)
 end
 
 @testset "populate: skips download when Hive partition already exists" begin
@@ -629,28 +600,17 @@ end
     @test isfile(stub)  # stub untouched, no download occurred
 end
 
-@testset "_clear_local_partition: removes an existing partition dir for a local source" begin
-    tmpdir = mktempdir()
-    source = DataSource("T", ["C"], HiveConfiguration(hive_location = tmpdir))
-    partition_dir = joinpath(tmpdir, "archive_month=2024-01-01")
-    mkpath(partition_dir)
-    write(joinpath(partition_dir, "data.parquet"), UInt8[])
-
-    AustralianElectricityMarketsData._clear_local_partition(source, partition_dir)
-    @test !isdir(partition_dir)
-end
-
-@testset "_clear_local_partition: leaves the directory untouched for a remote source" begin
-    # Only the source's scheme decides; its gs:// path is unrelated to `partition_dir`.
-    remote_source = DataSource("T", ["C"], HiveConfiguration(hive_location = "bucket/path", filesystem = "gs"))
-    tmpdir = mktempdir()
-    partition_dir = joinpath(tmpdir, "archive_month=2024-01-01")
-    mkpath(partition_dir)
-    sentinel = joinpath(partition_dir, "sentinel.parquet")
-    write(sentinel, UInt8[1, 2, 3])
-
-    AustralianElectricityMarketsData._clear_local_partition(remote_source, partition_dir)
-    @test isfile(sentinel)
+@testset "_clear_local_partition removes a local source's partition and leaves a remote one's" begin
+    # Only the source's scheme decides; the gs:// path is unrelated to `partition_dir`.
+    for filesystem in ("file", "gs")
+        tmpdir = mktempdir()
+        source = DataSource("T", ["C"], HiveConfiguration(; hive_location = filesystem == "file" ? tmpdir : "bucket/path", filesystem))
+        partition_dir = joinpath(tmpdir, "archive_month=2024-01-01")
+        mkpath(partition_dir)
+        write(joinpath(partition_dir, "data.parquet"), UInt8[1, 2, 3])
+        AustralianElectricityMarketsData._clear_local_partition(source, partition_dir)
+        @test isdir(partition_dir) == (filesystem == "gs")
+    end
 end
 
 @testset "_add_data: a failed fetch leaves the month's existing partition intact" begin

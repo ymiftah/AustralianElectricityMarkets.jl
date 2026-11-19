@@ -161,10 +161,6 @@ end
         to_json(sys, path; force = true)
         restored = System(path)
         @test AEM.get_build_report(restored) == report
-        @test AEM.get_skipped_constraints(restored).constraint == ["N_MISSING@2025-01-01#1"]
-        @test AEM.get_dropped_terms(restored).factor == [1.5]
-        @test AEM.get_missing_constraint_intervals(restored) == [DateTime(2025, 1, 1, 0, 5)]
-        @test AEM.get_defaulted_constraint_weights(restored) == ["N_NULL@2025-01-01#1"]
     end
 end
 

@@ -1,12 +1,7 @@
 # The effective FCAS offers and regulation ramping limits that nem_system writes, read back against the
 # raw bid, telemetry and observed series of the mock NEMDE hive. AEMSim is not loaded here.
 
-const _FW_SYS = let hive = mktempdir()
-    create_mock_data(hive; complete_inputs = true)
-    write_mock_interconnector_results(hive)
-    t = DateTime(2025, 1, 1, 0, 5)
-    nem_system(aem_connect(HiveConfiguration(hive_location = hive)), NEMDEConfiguration(); date_range = t:Minute(5):(t + Minute(30)))
-end
+const _FW_SYS = nemde_test_system(DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 35))
 
 # The raw FCAS bid of `device` for `service` on `side`.
 function _fw_bid(device, service::BidType, side::OfferSide)
@@ -179,13 +174,7 @@ end
             if d isa PowerSystems.ThermalStandard && fcas_bid_direction(d, BidType.RAISE6SEC) == FCASBidDirection.INCREMENTAL
     )
     window = AEM._fcas_window(generator, [DateTime(2025, 1, 1, 0, 5)], Minute(5), get_base_power(sys))
-    err = try
-        AEM._fcas_scaled_trapeziums(window, generator, BidType.RAISE6SEC, true)
-        nothing
-    catch e
-        e
-    end
-    @test err isa ArgumentError
+    err = (@test_throws ArgumentError AEM._fcas_scaled_trapeziums(window, generator, BidType.RAISE6SEC, true)).value
     @test occursin("has no FCAS bid for RAISE6SEC on LOAD", err.msg)
     @test occursin(get_name(generator), err.msg)
     @test_throws ArgumentError AEM._fcas_series_key(generator, 5.0, :trapezium)

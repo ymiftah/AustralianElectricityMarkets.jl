@@ -36,8 +36,7 @@ _lossless_flow_slacks_zero(res) = all(
     model = PSI.DecisionModel(AEMS.NEMDispatchProblem, _lossless_template(), sys; optimizer = HiGHS.Optimizer, initial_time = TOY_START)
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
-    @test !PSI.has_container_key(container, AEMS.InterconnectorLossVariable, PSY.AreaInterchange)
-    @test !PSI.has_container_key(container, AEMS.InterconnectorLossSegmentVariable, PSY.AreaInterchange)
+    @test !any(v -> PSI.has_container_key(container, v, PSY.AreaInterchange), (AEMS.InterconnectorLossVariable, AEMS.InterconnectorLossSegmentVariable))
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     res = PSI.OptimizationProblemResults(model)
 
@@ -50,12 +49,10 @@ _lossless_flow_slacks_zero(res) = all(
     scale = PSY.get_base_power(sys) * AEMS.interval_hours(AEMS.DISPATCH_INTERVAL)
     prices = PSI.read_dual(res, "CopperPlateBalanceConstraint__Area")
     price_at(area) = only(filter(r -> r.DateTime == t1 && r.name == area, prices)).value / scale
-    @test price_at("1") ≈ 20.0 atol = TOY_TOLERANCE
-    @test price_at("2") ≈ 20.0 atol = TOY_TOLERANCE
+    @test price_at.(["1", "2"]) ≈ [20.0, 20.0] atol = TOY_TOLERANCE
 
     tables = AEMS.read_solved_interval(res, sys)
-    @test nrow(tables.interconnectors) > 0
-    @test all(ismissing, tables.interconnectors.MWLOSSES)
+    @test nrow(tables.interconnectors) > 0 && all(ismissing, tables.interconnectors.MWLOSSES)
     @test nrow(AEMS.read_interconnector_loss_gaps(res, sys)) == 0
 
     @test _lossless_flow_slacks_zero(res)

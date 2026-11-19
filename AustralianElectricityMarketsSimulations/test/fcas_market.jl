@@ -307,16 +307,13 @@ end
     @test raisereg_cap(sloped, 45.0; agc_enablement_min = 60.0, agc_enablement_max = 40.0) ≈ 0.0 atol = FCAS_TOY_TOLERANCE
 end
 
-@testset "the LOWER6SEC trapezium binds as energy moves" begin
-    lower6sec_cap(energy_mw) = begin
-        sys = fcas_offer_sys(energy_mw, [(BidType.LOWER6SEC, (1.0, 5.0, 26.0, 27.0, 4.0), [(4.0, 10.0)])])
-        container = build_fcas(sys, ["TAS1_LOWER6SEC"])
+@testset "the LOWER6SEC trapezium caps the capacity at every energy level of its enablement span" begin
+    # (1, 5, 26, 27, 4): energy - 1.0 L >= EnablementMin 1, energy + 0.25 L <= EnablementMax 27, L <= MaxAvail 4.
+    container = build_fcas(fcas_offer_sys(26.5, [(BidType.LOWER6SEC, (1.0, 5.0, 26.0, 27.0, 4.0), [(4.0, 10.0)])]), ["TAS1_LOWER6SEC"])
+    for energy_mw in (1.0, 2.0, 3.5, 5.0, 5.5, 15.0, 26.0, 26.5)
         fix_energy!(container, TOY_CHEAP, energy_mw)
-        max_fcas_mw(container, "TAS1_LOWER6SEC", TOY_CHEAP)
+        @test max_fcas_mw(container, "TAS1_LOWER6SEC", TOY_CHEAP) ≈ min(4.0, energy_mw - 1.0, (27.0 - energy_mw) / 0.25) atol = FCAS_TOY_TOLERANCE
     end
-    # Rising edge: LOWER6SEC <= energy - EnablementMin; past LowBreakpoint, MaxAvail (4) binds.
-    @test lower6sec_cap(3.5) ≈ 2.5 atol = FCAS_TOY_TOLERANCE
-    @test lower6sec_cap(5.5) ≈ 4.0 atol = FCAS_TOY_TOLERANCE
 end
 
 @testset "regulation terms enter the contingency joint rows" begin
@@ -345,7 +342,6 @@ end
     # HighBreakpoint == EnablementMax: only the band cost and the 10 MW MaxAvail are in play.
     sys = fcas_offer_sys(2.0, [(BidType.RAISE6SEC, (0.0, 0.0, 100.0, 100.0, 10.0), [(2.0, 10.0), (2.0, 30.0)])])
     base_power = PSY.get_base_power(sys)
-    @test base_power != 1.0
     function objective_at(capacity_mw)
         container = build_fcas(sys, ["TAS1_RAISE6SEC"])
         fix_energy!(container, TOY_CHEAP, 2.0)

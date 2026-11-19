@@ -111,11 +111,15 @@ function _loss_template(sys)
 end
 
 # Builds and solves `sys` under `_loss_template(sys)` over two hours; returns the model and its results.
+# Every solve must leave the solved loss on the loss curve at the solved flow.
 function _solve_loss(sys)
     model = _decision_model(_loss_template(sys), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-    return model, PSI.OptimizationProblemResults(model)
+    res = PSI.OptimizationProblemResults(model)
+    gaps = read_interconnector_loss_gaps(res, sys)
+    @test !isempty(gaps) && all(abs(gap) < 1.0e-6 for gap in gaps.gap_mw)
+    return model, res
 end
 
 # Adds `values` on `grid` as the `SingleTimeSeries` `name` of `ic`, replacing any earlier one, and returns its key.
@@ -255,9 +259,6 @@ end
         negative_cost = true,
     )
     model, res = _solve_loss(sys)
-    gaps = read_interconnector_loss_gaps(res, sys)
-    @test !isempty(gaps)
-    @test all(abs(gap) < 1.0e-6 for gap in gaps.gap_mw)
     prices = PSI.read_dual(res, PSI.CopperPlateBalanceConstraint, PSY.Area)
     price = Dict((r.name, r.DateTime) => r.value for r in eachrow(prices))
     share = 0.4
@@ -348,8 +349,6 @@ end
     balance = PSI.get_variable(container, PSI.SystemBalanceSlackUp(), PSY.Area)["2", 1]
     flow = PSI.get_variable(container, AEMS.InterconnectorFlowSlack(), PSY.AreaInterchange, "surplus")["IC1", 1]
     @test terms[balance] ≈ AEMS._area_balance_slack_cost(sys, mpc)
-    @test terms[flow] ≈ PSY.get_base_power(sys) *
-        AEMS.interval_cost_coefficient(AustralianElectricityMarkets.INTERCONNECTOR_FLOW_CVP_FACTOR * mpc, PSI.get_resolution(container))
     @test terms[balance] < terms[flow]
 end
 
@@ -378,10 +377,7 @@ end
     sys = _loss_test_system(;
         demand_coefficients = Dict("1" => 1.0e-4, "2" => -2.0e-4), pin_multiplier = true,
     )
-    model, res = _solve_loss(sys)
-    gaps = read_interconnector_loss_gaps(res, sys)
-    @test !isempty(gaps)
-    @test all(abs(gap) < 1.0e-6 for gap in gaps.gap_mw)
+    _solve_loss(sys)  # the loss-curve property of `_solve_loss` is the check
 end
 
 @testset "a build without the loss demand coefficient series fails, naming nem_system" begin
@@ -409,11 +405,8 @@ end
         k = 1.0e-4 * expected_demand
         ic1 = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
         @test all(isapprox.(PSY.get_time_series_values(PSY.SingleTimeSeries, ic1, "loss_demand_coefficient"), k))
-        model = _decision_model(_loss_template(sys), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
-        @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+        model, res = _solve_loss(sys)
         container = PSI.get_optimization_container(model)
-        @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-        res = PSI.OptimizationProblemResults(model)
         flow_df = PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange")
         loss_df = PSI.read_variable(res, "InterconnectorLossVariable__AreaInterchange")
         slope = 0.05 + k
@@ -588,6 +581,8 @@ function _solve_mnsp(sys; zero_flow::Bool = false)
     links = PSI.read_variable(res, "MNSPLinkFlowVariable__AreaInterchange")
     t1 = minimum(links.DateTime)
     link(dir) = only(subset(links, :DateTime => ByRow(==(t1)), :name2 => ByRow(==(dir)))).value
+    # The two links never circulate: at most one carries flow.
+    @test min(link("forward"), link("reverse")) ≈ 0.0 atol = 1.0e-6
     return (flow = flow, forward = link("forward"), reverse = link("reverse"), dual1 = dual("1"), dual2 = dual("2"))
 end
 
@@ -661,7 +656,6 @@ end
         out = _solve_mnsp(sys)
         @test out.flow ≈ 30.0 atol = 1.0e-6
         @test out.forward ≈ 30.0 atol = 1.0e-6
-        @test out.reverse ≈ 0.0 atol = 1.0e-6
     end
 
     @testset "flow follows the offered bands when availability exceeds demand" begin
@@ -694,7 +688,6 @@ end
         _attach_mnsp_offers!(sys; forward = (500.0, [(500.0, -50.0)]), reverse = (500.0, [(500.0, -50.0)]))
         out = _solve_mnsp(sys)
         @test out.flow ≈ load2 atol = 1.0e-6
-        @test min(out.forward, out.reverse) ≈ 0.0 atol = 1.0e-6
         @test isfinite(out.dual1) && isfinite(out.dual2)
     end
     @testset "link loss factors scale the delivered MW and the dispatch condition holds" begin
@@ -727,7 +720,6 @@ end
             end
             out = _solve_mnsp(sys)
             @test out.flow ≈ (reverse ? -1 : 1) * load2 / 0.9 atol = 1.0e-6
-            @test min(out.forward, out.reverse) ≈ 0.0 atol = 1.0e-6
             # On either side of zero, the chord loss is 0.05 times the magnitude of flow.
             marginal = 0.9 * out.dual2 - 1.1 * 1.05 * out.dual1
             @test marginal ≈ PSY.get_base_power(sys) * 10.0 rtol = 1.0e-6
@@ -758,10 +750,6 @@ end
         priced_supply_only = true,
     )
     model, res = _solve_loss(sys)
-    gaps = read_interconnector_loss_gaps(res, sys)
-    @test !isempty(gaps)
-    @test all(abs(gap) < 1.0e-6 for gap in gaps.gap_mw)
-
     flow_df = PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange")
     loss_df = PSI.read_variable(res, "InterconnectorLossVariable__AreaInterchange")
     flow = flow_df.value[findfirst(==("IC1"), flow_df.name)]

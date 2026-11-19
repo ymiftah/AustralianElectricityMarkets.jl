@@ -4,11 +4,7 @@
 const _CS_START = DateTime(2025, 1, 1, 0, 5)
 
 # A NEM run System on the mock hive: a date range of four series points, three of them dispatch intervals.
-const _CS_SYS = let hive = mktempdir()
-    create_mock_data(hive; complete_inputs = true)
-    write_mock_interconnector_results(hive)
-    nem_system(aem_connect(HiveConfiguration(hive_location = hive)), NEMDEConfiguration(); date_range = _CS_START:Minute(5):(_CS_START + Minute(20)))
-end
+const _CS_SYS = nemde_test_system()
 
 # Adds the constraint `name` on `device`, its invoked series holding `invoked` at each series point.
 function _cs_add_constraint!(sys, name::AbstractString, device, invoked::Vector{Float64})

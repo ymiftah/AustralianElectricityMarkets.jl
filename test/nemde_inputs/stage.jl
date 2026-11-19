@@ -1,9 +1,5 @@
-const _ST_HIVE = mktempdir()
-create_mock_data(_ST_HIVE; complete_inputs = true)
-write_mock_interconnector_results(_ST_HIVE)
-const _ST_DB = aem_connect(HiveConfiguration(hive_location = _ST_HIVE))
 const _ST_START = DateTime(2025, 1, 1, 0, 5)
-const _ST_SYS = nem_system(_ST_DB, NEMDEConfiguration(); date_range = _ST_START:Minute(5):(_ST_START + Minute(20)))
+const _ST_SYS = nemde_test_system()
 
 @testset "dispatch interval stamps drop the two trailing stamps of the date range" begin
     @test AustralianElectricityMarkets._dispatch_interval_stamps(_ST_SYS) == collect(_ST_START:Minute(5):(_ST_START + Minute(10)))
@@ -43,18 +39,12 @@ end
     sys = deepcopy(_ST_SYS)
     device = first(AustralianElectricityMarkets.nem_dispatch_devices(sys))
     PowerSystems.set_available!(device, false)
-    err = try
-        AustralianElectricityMarkets._check_nemde_availability(sys)
-        nothing
-    catch e
-        e
-    end
-    @test err isa ArgumentError
+    err = (@test_throws ArgumentError AustralianElectricityMarkets._check_nemde_availability(sys)).value
     @test occursin("made unavailable: $(nameof(typeof(device))) $(PowerSystems.get_name(device))", err.msg)
     PowerSystems.set_available!(device, true)
     @test isnothing(AustralianElectricityMarkets._check_nemde_availability(sys))
     # A system without NEMDE inputs carries no recorded availability.
-    @test_throws ArgumentError AustralianElectricityMarkets._check_nemde_availability(nem_system(_ST_DB, RegionalNetworkConfiguration()))
+    @test_throws ArgumentError AustralianElectricityMarkets._check_nemde_availability(nem_system(nemde_test_db(), RegionalNetworkConfiguration()))
     # A build report written before unavailable_constraints throws instead of a KeyError.
     delete!(PowerSystems.get_ext(sys)["build_report"], "unavailable_constraints")
     @test_throws ArgumentError get_build_report(sys)
@@ -68,11 +58,6 @@ end
     PowerSystems.add_component!(sys, load)
     stamps = DateTime(2025, 1, 1):Hour(1):DateTime(2025, 1, 1, 3)
     PowerSystems.add_time_series!(sys, load, PowerSystems.SingleTimeSeries("max_active_power", PowerSystems.TimeSeries.TimeArray(collect(stamps), ones(4))))
-    err = try
-        AustralianElectricityMarkets._set_nemde_inputs!(sys)
-        nothing
-    catch e
-        e
-    end
-    @test err isa ArgumentError && occursin("dispatch intervals", err.msg) && occursin("1 hour", err.msg)
+    err = (@test_throws ArgumentError AustralianElectricityMarkets._set_nemde_inputs!(sys)).value
+    @test occursin("dispatch intervals", err.msg) && occursin("1 hour", err.msg)
 end

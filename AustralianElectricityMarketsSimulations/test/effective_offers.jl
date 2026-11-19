@@ -116,18 +116,14 @@ end
     end
 
     @testset "fixed loading is invoked outside the fast-start profile" begin
-        @test in_fast_start_profile(NEMUnitState(10.0, 1))
-        @test in_fast_start_profile(NEMUnitState(10.0, 2))
-        @test !in_fast_start_profile(NEMUnitState(10.0, 0))
-        @test !in_fast_start_profile(NEMUnitState(10.0, 3))
-        @test !in_fast_start_profile(NEMUnitState(10.0, 4))
-        @test fixed_load_invoked(50.0, NEMUnitState(10.0, 4))
-        @test !fixed_load_invoked(50.0, NEMUnitState(10.0, 2))
-        @test !fixed_load_invoked(NaN, NEMUnitState(10.0, 4))
-        @test !fixed_load_invoked(0.0, NEMUnitState(10.0, 4))
-        @test effective_fixed_load(50.0, NEMUnitState(10.0, 4)) == 50.0
-        @test effective_fixed_load(50.0, NEMUnitState(10.0, 1)) == 0.0
-        @test effective_fixed_load(NaN, NEMUnitState(10.0, 4)) == 0.0
+        # Fast-start modes 1 and 2 are the profile; a NaN (NULL) or zero bid loading is not a loading.
+        for mode in 0:4, fixed_load in (50.0, 0.0, NaN)
+            state = NEMUnitState(10.0, mode)
+            invoked = mode ∉ (1, 2) && fixed_load == 50.0
+            @test in_fast_start_profile(state) == (mode in (1, 2))
+            @test fixed_load_invoked(fixed_load, state) == invoked
+            @test effective_fixed_load(fixed_load, state) == (invoked ? 50.0 : 0.0)
+        end
     end
 
     @testset "the composite ramp rate clears a unit across zero" begin

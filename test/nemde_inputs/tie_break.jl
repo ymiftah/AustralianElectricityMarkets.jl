@@ -6,11 +6,7 @@ const _TB_N = 4
 const _TB_START = DateTime(2025, 1, 1, 0, 5)
 
 # A NEM run System on the mock hive, with its NEMDE inputs written by `nem_system`.
-const _TB_SYS = let hive = mktempdir()
-    create_mock_data(hive; complete_inputs = true)
-    write_mock_interconnector_results(hive)
-    nem_system(aem_connect(HiveConfiguration(hive_location = hive)), NEMDEConfiguration(); date_range = _TB_START:Minute(5):(_TB_START + Minute(20)))
-end
+const _TB_SYS = nemde_test_system()
 
 # Removes the energy offers, the tie-break scales and the EnergyTieBreak service of `sys`, so the writer can run again.
 function _tb_strip!(sys)

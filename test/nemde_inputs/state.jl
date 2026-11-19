@@ -131,12 +131,7 @@ end
 end
 
 @testset "the observed-state series of a mock NEMDE system follow the raw observed state and bids" begin
-    hive = mktempdir()
-    create_mock_data(hive; complete_inputs = true)
-    write_mock_interconnector_results(hive)
-    db = aem_connect(HiveConfiguration(hive_location = hive))
-    t = DateTime(2025, 1, 1, 0, 5)
-    sys = nem_system(db, NEMDEConfiguration(); date_range = t:Minute(5):(t + Minute(20)))
+    sys = nemde_test_system()
     base = PowerSystems.get_base_power(sys)
     names = AustralianElectricityMarkets.NEM_STATE_INPUT_SERIES
     checked = 0

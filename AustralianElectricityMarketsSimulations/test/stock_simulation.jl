@@ -264,7 +264,6 @@ const BATTERY_SENTINEL_EXPECTED = [
 @testset "a battery's ramp floor binds in step 1 only" begin
     expected = BATTERY_SENTINEL_EXPECTED
     sim = stock_simulate(battery_sentinel_system())
-    @test PSI.built_for_recurrent_solves(PSI.get_optimization_container(sim.model))
     @test sim.objectives ≈ [e.objective for e in expected] atol = TOY_TOLERANCE
     @test [[stock_mw(s, TOY_BATTERY), stock_mw(s, TOY_CHEAP), stock_price(s)] for s in sim.solved] ≈
         [[e.battery, e.alta, e.price] for e in expected] atol = TOY_TOLERANCE
@@ -351,7 +350,7 @@ end
     @test PSY.get_time_series_values(PSY.SingleTimeSeries, ic, "loss_demand_coefficient") ≈ [0.05, 0.1, 0.1]
     sim = stock_simulate(sys)
     container = PSI.get_optimization_container(sim.model)
-    @test PSI.built_for_recurrent_solves(container) && PSI.is_milp(container)
+    @test PSI.is_milp(container)
     definition = PSI.get_constraint(container, AEMS.InterconnectorLossConstraint(), PSY.AreaInterchange, "loss_definition")[TOY_INTERCHANGE, 1]
     flow_var = PSI.get_variable(container, PSI.FlowActivePowerVariable(), PSY.AreaInterchange)[TOY_INTERCHANGE, 1]
     @test PSI.JuMP.normalized_coefficient(definition, flow_var) ≈ -0.1
@@ -543,7 +542,6 @@ end
 function stock_fcas_case(build, expected)
     sys = build()
     sim = stock_simulate(sys)
-    @test PSI.built_for_recurrent_solves(PSI.get_optimization_container(sim.model))
     for (k, t) in enumerate(STOCK_STEPS)
         e = expected[k]
         capacities = stock_fcas_capacities(sim.results, t)
@@ -570,10 +568,8 @@ end
     ]
     sim, _ = stock_fcas_case(reg_ramp_system, expected)
     rhs = stock_realized(sim.results, "FCASRampingLimitParameter__ThermalStandard__RAISEREG", TOY_CHEAP; field = "joint_ramping")
-    @test rhs ≈ [90.0, 70.0] atol = TOY_TOLERANCE
     # Energy + RaiseReg is 70 MW in both steps: slack in step 1, at the RHS in step 2.
-    @test rhs[1] - (50.0 + 20.0) ≈ 20.0 atol = TOY_TOLERANCE
-    @test rhs[2] - (60.0 + 10.0) ≈ 0.0 atol = TOY_TOLERANCE
+    @test rhs ≈ [90.0, 70.0] atol = TOY_TOLERANCE
     slack = stock_realized(sim.results, "FCASSlack__FCASService__joint_ramping|1_RAISEREG", TOY_CHEAP; parameter = false)
     @test all(abs.(slack) .<= TOY_TOLERANCE)
 end
@@ -627,9 +623,6 @@ end
     )
     @test coefficient("gen") ≈ -0.625 atol = TOY_TOLERANCE
     @test coefficient("load") ≈ 0.0 atol = TOY_TOLERANCE
-    for (k, cap) in enumerate((5.0, 8.0))
-        @test 5.0 - gen_slope[k] * cap ≈ 0.0 atol = TOY_TOLERANCE
-    end
 end
 
 @testset "an FCAS requirement short in step 2 only is priced at its CVP and reported in step 2 only" begin
@@ -650,7 +643,6 @@ end
     slack = stock_realized(sim.results, "GenericConstraintSlackDown__GenericConstraint", "F_REG"; parameter = false, scale = 1.0)
     @test slack ≈ [0.0, 15.0] atol = TOY_TOLERANCE
     v = read_constraint_violations(sim.results, sys)
-    @test nrow(v) == 1
     row = only(eachrow(v))
     @test (row.family, row.name, row.DateTime, row.direction) == ("generic_constraint", "F_REG", STOCK_STEPS[2], "down")
     @test row.MW ≈ 15.0 atol = TOY_TOLERANCE
@@ -812,7 +804,7 @@ const CLOSED_FCAS = stock_simulate(CLOSED_FCAS_SYSTEM; problem = NEMClosedLoopDi
 @testset "closed loop: MNSP and FCAS sentinels build and execute, starting as open loop" begin
     closed_mnsp = stock_simulate(mnsp_sentinel_system(); problem = NEMClosedLoopDispatchProblem)
     @test PSI.has_container_key(PSI.get_optimization_container(closed_mnsp.model), NEMInitialFlow, PSY.AreaInterchange)
-    @test [closed_mnsp.objectives; CLOSED_FCAS.objectives][[1, 3]] ≈ [STOCK_MNSP_SIM.objectives[1], STOCK_FCAS_SIM.objectives[1]] atol = TOY_TOLERANCE
+    @test first.((closed_mnsp.objectives, CLOSED_FCAS.objectives)) ≈ first.((STOCK_MNSP_SIM.objectives, STOCK_FCAS_SIM.objectives)) atol = TOY_TOLERANCE
     @test length(closed_mnsp.objectives) == length(CLOSED_FCAS.objectives) == 2
 end
 

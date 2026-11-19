@@ -74,30 +74,21 @@ end
     @test restored == cost
 end
 
-@testset "NEMEnergyBid band_prices compare by value and round-trip as a ten-tuple" begin
-    prices = (5.0, 50.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-    bid = _static_energy_bid(AEM.BidDirection.GEN)
-    priced = AEM.NEMEnergyBid(;
-        direction = AEM.BidDirection.GEN, offer_curves = _curves(), max_avail = 100.0, roc_up = 1.5, roc_down = 2.5,
-        fixed_load = 3.0, minimum_load = 4.0, fast_start_profile = (t1 = 1.0, t2 = 2.0, t3 = 3.0, t4 = 4.0),
-        daily_energy_constraint = 500.0, normal_status = true, energy_limit = 60.0, band_prices = prices,
+@testset "$(nameof(typeof(priced))) band_prices compare by value and round-trip as a ten-tuple" for (bid, priced) in (
+        _static_energy_bid(AEM.BidDirection.GEN) => AEM.NEMEnergyBid(;
+            direction = AEM.BidDirection.GEN, offer_curves = _curves(), max_avail = 100.0, roc_up = 1.5, roc_down = 2.5,
+            fixed_load = 3.0, minimum_load = 4.0, fast_start_profile = (t1 = 1.0, t2 = 2.0, t3 = 3.0, t4 = 4.0),
+            daily_energy_constraint = 500.0, normal_status = true, energy_limit = 60.0,
+            band_prices = (5.0, 50.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+        ),
+        _static_fcas_bid(BidType.RAISE6SEC, AEM.BidDirection.GEN) => AEM.NEMFCASBid(;
+            service = BidType.RAISE6SEC, direction = AEM.BidDirection.GEN, offer_curves = _curves(), max_avail = 10.0,
+            trapezium = (enablement_min = 0.0, low_breakpoint = 1.0, high_breakpoint = 2.0, enablement_max = 3.0),
+            band_prices = (5.0, 12.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+        ),
     )
     @test priced != bid && hash(priced) != hash(bid)
-    restored = _IS.deserialize(AEM.NEMEnergyBid, _IS.serialize(priced))
-    @test restored == priced
-    @test restored.band_prices isa NTuple{10, Float64}
-end
-
-@testset "NEMFCASBid band_prices compare by value and round-trip as a ten-tuple" begin
-    prices = (5.0, 12.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-    bid = _static_fcas_bid(BidType.RAISE6SEC, AEM.BidDirection.GEN)
-    priced = AEM.NEMFCASBid(;
-        service = BidType.RAISE6SEC, direction = AEM.BidDirection.GEN, offer_curves = _curves(), max_avail = 10.0,
-        trapezium = (enablement_min = 0.0, low_breakpoint = 1.0, high_breakpoint = 2.0, enablement_max = 3.0),
-        band_prices = prices,
-    )
-    @test priced != bid && hash(priced) != hash(bid)
-    restored = _IS.deserialize(AEM.NEMFCASBid, _IS.serialize(priced))
+    restored = _IS.deserialize(typeof(priced), _IS.serialize(priced))
     @test restored == priced
     @test restored.band_prices isa NTuple{10, Float64}
 end

@@ -1,264 +1,163 @@
-@testset "merit order: the cheaper unit is filled first" begin
-    sys = nem_toy_system(
-        [
-            TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0),
-            TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = 60.0, ramp_up = 100.0),
-        ],
-        120.0,
-    )
-    out = solve_toy(sys)
+const NDT_MPC = AustralianElectricityMarkets._financial_year_mpc(TOY_START)
+const NDT_HOURS = interval_hours(DISPATCH_INTERVAL)
+ndt_alta(; initial = 60.0, ramp_up = 100.0, bands = [(100.0, 20.0)], kwargs...) =
+    TOY_CHEAP => toy_unit(100.0, bands; initial, ramp_up, kwargs...)
+ndt_park(; initial = 60.0, ramp_up = 100.0, bands = [(100.0, 80.0)]) = TOY_EXPENSIVE => toy_unit(100.0, bands; initial, ramp_up)
+ndt_battery(args...; kwargs...) = [TOY_BATTERY => toy_battery(args...; kwargs...)]
+ndt_pump(price; kwargs...) = ["PUMP" => toy_load(30.0, price; kwargs...)]
+ndt_capped(rhs_mw) = nem_toy_system(
+    [ndt_alta(), ndt_park()], 120.0; mutate! = (sys, stamps) -> add_toy_generic_constraint!(sys, stamps, TOY_CHEAP, rhs_mw),
+)
 
-    @test out.dispatch_mw[TOY_CHEAP] ≈ 100.0 atol = TOY_TOLERANCE
-    @test out.dispatch_mw[TOY_EXPENSIVE] ≈ 20.0 atol = TOY_TOLERANCE
-    @test out.price ≈ 80.0 atol = TOY_TOLERANCE
-    @test out.objective ≈ (100.0 * 20.0 + 20.0 * 80.0) * interval_hours(DISPATCH_INTERVAL) atol = TOY_TOLERANCE
-end
-
-@testset "multi-band stack: bands load in price order, the marginal one partially" begin
-    sys = nem_toy_system(
-        [
-            TOY_CHEAP => toy_unit(
-                100.0, [(20.0, 20.0), (30.0, 50.0), (50.0, 300.0)];
-                initial = 60.0, ramp_up = 100.0,
-            ),
-            TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 1000.0)]; initial = 60.0, ramp_up = 100.0),
-        ],
-        40.0,
-    )
-    out = solve_toy(sys)
-
-    @test out.dispatch_mw[TOY_CHEAP] ≈ 40.0 atol = TOY_TOLERANCE
-    @test out.dispatch_mw[TOY_EXPENSIVE] ≈ 0.0 atol = TOY_TOLERANCE
-    @test out.band_mw[(TOY_CHEAP, 1)] ≈ 20.0 atol = TOY_TOLERANCE
-    @test out.band_mw[(TOY_CHEAP, 2)] ≈ 20.0 atol = TOY_TOLERANCE
-    @test out.band_mw[(TOY_CHEAP, 3)] ≈ 0.0 atol = TOY_TOLERANCE
-    @test out.price ≈ 50.0 atol = TOY_TOLERANCE
-    @test out.objective ≈ (20.0 * 20.0 + 20.0 * 50.0) * interval_hours(DISPATCH_INTERVAL) atol = TOY_TOLERANCE
-end
-
-@testset "a binding ramp overrides merit order" begin
-    function ramp_toy(cheap_ramp_up)
-        return nem_toy_system(
-            [
-                TOY_CHEAP => toy_unit(
-                    100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = cheap_ramp_up,
-                ),
-                TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = 50.0, ramp_up = 20.0),
-            ],
-            90.0,
-        )
-    end
-    tight = solve_toy(ramp_toy(1.0))
-    relaxed = solve_toy(ramp_toy(20.0))
-
-    @testset "held at INITIALMW + rate × 5 min, the expensive unit covers the rest" begin
-        @test tight.dispatch_mw[TOY_CHEAP] ≈ 50.0 + 1.0 * 5 atol = TOY_TOLERANCE
-        @test tight.dispatch_mw[TOY_EXPENSIVE] ≈ 35.0 atol = TOY_TOLERANCE
-        @test tight.price ≈ 80.0 atol = TOY_TOLERANCE
-    end
-
-    @testset "an ordinary ramp row leaves its slack at zero" begin
-        @test tight.ramp_slack_mw.up ≈ 0.0 atol = TOY_TOLERANCE
-        @test tight.ramp_slack_mw.down ≈ 0.0 atol = TOY_TOLERANCE
-    end
-
-    @testset "with the ramp relaxed, merit order is restored" begin
-        @test relaxed.dispatch_mw[TOY_CHEAP] ≈ 90.0 atol = TOY_TOLERANCE
-        @test relaxed.dispatch_mw[TOY_EXPENSIVE] ≈ 0.0 atol = TOY_TOLERANCE
-        @test relaxed.price ≈ 20.0 atol = TOY_TOLERANCE
-    end
-end
-
-@testset "a battery discharges when the area price is above its generation offer" begin
-    # The battery's 60 MW, $20/MWh offer clears first; Park City's $80/MWh offer covers the
-    # remaining 40 MW of the 100 MW load and sets the price. The battery's load band ($1/MWh)
-    # is never worth clearing against either offer, so it does not charge.
-    sys = nem_toy_system(
-        [TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = 60.0, ramp_up = 100.0)],
-        100.0;
-        batteries = [
-            TOY_BATTERY => toy_battery(
-                60.0, 20.0, 10.0, 1.0; initial = 0.0, ramp_up = 100.0,
-            ),
-        ],
-    )
-    out = solve_toy(sys)
-
-    @test out.battery_out_mw[TOY_BATTERY] ≈ 60.0 atol = TOY_TOLERANCE
-    @test out.battery_in_mw[TOY_BATTERY] ≈ 0.0 atol = TOY_TOLERANCE
-    @test out.dispatch_mw[TOY_EXPENSIVE] ≈ 40.0 atol = TOY_TOLERANCE
-    @test out.price ≈ 80.0 atol = TOY_TOLERANCE
-    @test out.objective ≈ (60.0 * 20.0 + 40.0 * 80.0) * interval_hours(DISPATCH_INTERVAL) atol = TOY_TOLERANCE
-end
-
-@testset "a battery charges when its load bid is above the marginal generator's price" begin
-    # Alta's $20/MWh offer covers the 40 MW load plus the battery's full 30 MW charge, since
-    # the battery's $50/MWh load bid values that charge above Alta's cost.
-    sys = nem_toy_system(
-        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)],
-        40.0;
-        batteries = [
-            TOY_BATTERY => toy_battery(
-                10.0, 1000.0, 30.0, 50.0; initial = 0.0, ramp_up = 100.0,
-            ),
-        ],
-    )
-    out = solve_toy(sys)
-
-    @test out.battery_in_mw[TOY_BATTERY] ≈ 30.0 atol = TOY_TOLERANCE
-    @test out.battery_out_mw[TOY_BATTERY] ≈ 0.0 atol = TOY_TOLERANCE
-    @test out.dispatch_mw[TOY_CHEAP] ≈ 70.0 atol = TOY_TOLERANCE
-    @test out.price ≈ 20.0 atol = TOY_TOLERANCE
-    @test out.objective ≈ (70.0 * 20.0 - 30.0 * 50.0) * interval_hours(DISPATCH_INTERVAL) atol = TOY_TOLERANCE
-end
-
-@testset "a net ramp limit binding across zero" begin
-    # INITIALMW = -10 (charging 10 MW net); ramp_up = 1 MW/min-convention over the 5-minute
-    # interval allows a +5 MW move, so net cannot exceed -10 + 5 = -5 (still a net 5 MW
-    # charge). The battery's own gen availability is zero, so Out = 0 and In is pinned to
-    # exactly 5 by the ramp floor (In >= Out + 5) and the load availability ceiling (In <= 5)
-    # at once. Alta supplies the 5 MW the battery's net charging still needs off a 0 MW load.
-    sys = nem_toy_system(
-        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)],
-        0.0;
-        batteries = [
-            TOY_BATTERY => toy_battery(
-                10.0, 20.0, 10.0, 30.0;
-                initial = -10.0, ramp_up = 1.0, ramp_down = 100.0, gen_avail = 0.0, load_avail = 5.0,
-            ),
-        ],
-    )
-    out = solve_toy(sys)
-
-    @test out.battery_out_mw[TOY_BATTERY] ≈ 0.0 atol = TOY_TOLERANCE
-    @test out.battery_in_mw[TOY_BATTERY] ≈ 5.0 atol = TOY_TOLERANCE
-    @test out.dispatch_mw[TOY_CHEAP] ≈ 5.0 atol = TOY_TOLERANCE
-    # The battery's offer band ties with Alta's at 20, so the held-back band carries the
-    # tie-break slack penalty (1e-6) into the price.
-    @test out.price ≈ 20.0 atol = TOY_TOLERANCE
-    @test out.objective ≈ (5.0 * 20.0 - 5.0 * 30.0) * interval_hours(DISPATCH_INTERVAL) atol = TOY_TOLERANCE
-end
-
-@testset "a net ramp-down floor can violate generation availability at its price" begin
-    # Ramping holds net generation at 15 MW despite 10 MW availability, incurring 5 MW
-    # of availability violation rather than relaxing the higher-priority ramp row.
-    sys = nem_toy_system(
-        [TOY_CHEAP => toy_unit(100.0, [(100.0, 100.0)]; initial = 0.0, ramp_up = 100.0)],
-        15.0;
-        batteries = [
-            TOY_BATTERY => toy_battery(
-                100.0, 5.0, 100.0, 1.0;
-                initial = 20.0, ramp_up = 100.0, ramp_down = 1.0, gen_avail = 10.0,
-            ),
-        ],
-    )
-    out = solve_toy(sys)
-
-    @test out.battery_out_mw[TOY_BATTERY] ≈ 15.0 atol = TOY_TOLERANCE
-    @test out.battery_in_mw[TOY_BATTERY] ≈ 0.0 atol = TOY_TOLERANCE
-    @test out.dispatch_mw[TOY_CHEAP] ≈ 0.0 atol = TOY_TOLERANCE
-    @test out.objective ≈ (15.0 * 5.0 + 5.0 * AustralianElectricityMarkets.ENERGY_MAX_AVAIL_CVP_FACTOR * AustralianElectricityMarkets._financial_year_mpc(TOY_START)) * interval_hours(DISPATCH_INTERVAL) atol = 1.0e-4
-end
-
-@testset "a net ramp-up ceiling can violate load availability at its price" begin
-    # Ramping holds net consumption at 15 MW despite 10 MW availability, incurring 5 MW
-    # of availability violation at the raw offer limit.
-    sys = nem_toy_system(
-        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)],
-        0.0;
-        batteries = [
-            TOY_BATTERY => toy_battery(
-                100.0, 1.0, 100.0, 1000.0;
-                initial = -20.0, ramp_up = 1.0, ramp_down = 100.0, gen_avail = 0.0, load_avail = 10.0,
-            ),
-        ],
-    )
-    out = solve_toy(sys)
-
-    @test out.battery_in_mw[TOY_BATTERY] ≈ 15.0 atol = TOY_TOLERANCE
-    @test out.battery_out_mw[TOY_BATTERY] ≈ 0.0 atol = TOY_TOLERANCE
-    @test out.dispatch_mw[TOY_CHEAP] ≈ 15.0 atol = TOY_TOLERANCE
-    @test out.objective ≈ (15.0 * 20.0 - 15.0 * 1000.0 + 5.0 * AustralianElectricityMarkets.ENERGY_MAX_AVAIL_CVP_FACTOR * AustralianElectricityMarkets._financial_year_mpc(TOY_START)) * interval_hours(DISPATCH_INTERVAL) atol = 1.0e-4
-end
-
-@testset "a per-direction availability binding" begin
-    @testset "discharge is capped by the generation-side MAXAVAIL, not the cheaper price" begin
-        # The battery's $5/MWh offer is cheaper than Alta's $20/MWh, so it would fill first
-        # without a cap; its 10 MW generation availability caps it well below the 50 MW load,
-        # and its load availability is zero, so it never charges.
-        sys = nem_toy_system(
-            [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)],
-            50.0;
-            batteries = [
-                TOY_BATTERY => toy_battery(
-                    10.0, 5.0, 10.0, 1.0; initial = 0.0, ramp_up = 100.0, load_avail = 0.0,
-                ),
-            ],
-        )
-        out = solve_toy(sys)
-
-        @test out.battery_out_mw[TOY_BATTERY] ≈ 10.0 atol = TOY_TOLERANCE
-        @test out.battery_in_mw[TOY_BATTERY] ≈ 0.0 atol = TOY_TOLERANCE
-        @test out.dispatch_mw[TOY_CHEAP] ≈ 40.0 atol = TOY_TOLERANCE
-        @test out.price ≈ 20.0 atol = TOY_TOLERANCE
-        @test out.objective ≈ (40.0 * 20.0 + 10.0 * 5.0) * interval_hours(DISPATCH_INTERVAL) atol = TOY_TOLERANCE
-    end
-
-    @testset "charge is capped by the load-side MAXAVAIL, not the attractive price" begin
-        # The battery's $1000/MWh load bid is far above Alta's $20/MWh cost, so it would
-        # charge without limit; its 8 MW load availability caps it, and its generation
-        # availability is zero, so it never discharges.
-        sys = nem_toy_system(
-            [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)],
-            0.0;
-            batteries = [
-                TOY_BATTERY => toy_battery(
-                    10.0, 1.0, 20.0, 1000.0; initial = 0.0, ramp_up = 100.0, gen_avail = 0.0, load_avail = 8.0,
-                ),
-            ],
-        )
-        out = solve_toy(sys)
-
-        @test out.battery_in_mw[TOY_BATTERY] ≈ 8.0 atol = TOY_TOLERANCE
-        @test out.battery_out_mw[TOY_BATTERY] ≈ 0.0 atol = TOY_TOLERANCE
-        @test out.dispatch_mw[TOY_CHEAP] ≈ 8.0 atol = TOY_TOLERANCE
-        @test out.price ≈ 20.0 atol = TOY_TOLERANCE
-        @test out.objective ≈ (8.0 * 20.0 - 8.0 * 1000.0) * interval_hours(DISPATCH_INTERVAL) atol = TOY_TOLERANCE
-    end
-end
-
-@testset "a generic constraint binds against NEMDispatch" begin
-    function constrained_toy(rhs_mw)
-        return nem_toy_system(
-            [
-                TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0),
-                TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = 60.0, ramp_up = 100.0),
-            ],
-            120.0;
-            mutate! = (sys, stamps) -> add_toy_generic_constraint!(sys, stamps, TOY_CHEAP, rhs_mw),
-        )
-    end
-
-    @testset "a 70 MW cap on the cheap unit binds, forcing the expensive unit up" begin
-        out = solve_toy(constrained_toy(70.0))
-
-        @test out.dispatch_mw[TOY_CHEAP] ≈ 70.0 atol = TOY_TOLERANCE
-        @test out.dispatch_mw[TOY_EXPENSIVE] ≈ 50.0 atol = TOY_TOLERANCE
-        @test out.price ≈ 80.0 atol = TOY_TOLERANCE
-        @test out.objective ≈ (70.0 * 20.0 + 50.0 * 80.0) * interval_hours(DISPATCH_INTERVAL) atol = TOY_TOLERANCE
-
+# Each case: a toy System, its demand and the MW, price and objective it clears at. `"<battery> out"` and
+# `"<battery> in"` are a battery's directions; a scheduled load's name is its consumption.
+const NDT_CASES = [
+    (
+        label = "merit order: the cheaper unit is filled first",
+        sys = () -> nem_toy_system([ndt_alta(), ndt_park()], 120.0), demand = 120.0,
+        mw = [TOY_CHEAP => 100.0, TOY_EXPENSIVE => 20.0], price = 80.0, objective = (100.0 * 20.0 + 20.0 * 80.0) * NDT_HOURS,
+    ),
+    (
+        label = "multi-band stack: bands load in price order, the marginal one partially",
+        sys = () -> nem_toy_system(
+            [ndt_alta(; bands = [(20.0, 20.0), (30.0, 50.0), (50.0, 300.0)]), ndt_park(; bands = [(100.0, 1000.0)])], 40.0,
+        ),
+        demand = 40.0, mw = [TOY_CHEAP => 40.0, TOY_EXPENSIVE => 0.0], price = 50.0,
+        objective = (20.0 * 20.0 + 20.0 * 50.0) * NDT_HOURS, bands = [20.0, 20.0, 0.0],
+    ),
+    (
+        label = "a binding ramp holds the cheap unit at INITIALMW + rate x 5 min",
+        sys = () -> nem_toy_system([ndt_alta(; initial = 50.0, ramp_up = 1.0), ndt_park(; initial = 50.0, ramp_up = 20.0)], 90.0),
+        demand = 90.0, mw = [TOY_CHEAP => 55.0, TOY_EXPENSIVE => 35.0], price = 80.0,
+    ),
+    (
+        label = "with the ramp relaxed, merit order is restored",
+        sys = () -> nem_toy_system([ndt_alta(; initial = 50.0, ramp_up = 20.0), ndt_park(; initial = 50.0, ramp_up = 20.0)], 90.0),
+        demand = 90.0, mw = [TOY_CHEAP => 90.0, TOY_EXPENSIVE => 0.0], price = 20.0,
+    ),
+    (
+        # Its $1/MWh load band is never worth clearing, so it does not charge.
+        label = "a battery discharges when the area price is above its generation offer",
+        sys = () -> nem_toy_system([ndt_park()], 100.0; batteries = ndt_battery(60.0, 20.0, 10.0, 1.0; initial = 0.0, ramp_up = 100.0)),
+        demand = 100.0, mw = ["$TOY_BATTERY out" => 60.0, "$TOY_BATTERY in" => 0.0, TOY_EXPENSIVE => 40.0], price = 80.0,
+        objective = (60.0 * 20.0 + 40.0 * 80.0) * NDT_HOURS,
+    ),
+    (
+        label = "a battery charges when its load bid is above the marginal generator's price",
+        sys = () -> nem_toy_system([ndt_alta()], 40.0; batteries = ndt_battery(10.0, 1000.0, 30.0, 50.0; initial = 0.0, ramp_up = 100.0)),
+        demand = 40.0, mw = ["$TOY_BATTERY in" => 30.0, "$TOY_BATTERY out" => 0.0, TOY_CHEAP => 70.0], price = 20.0,
+        objective = (70.0 * 20.0 - 30.0 * 50.0) * NDT_HOURS,
+    ),
+    (
+        # From -10 MW net a 1 MW/min up rate caps net at -5; zero generation availability pins In at 5.
+        # The battery's band ties with Alta's at 20, so the price carries the tie-break penalty within tolerance.
+        label = "a net ramp limit binding across zero",
+        sys = () -> nem_toy_system(
+            [ndt_alta()], 0.0;
+            batteries = ndt_battery(10.0, 20.0, 10.0, 30.0; initial = -10.0, ramp_up = 1.0, ramp_down = 100.0, gen_avail = 0.0, load_avail = 5.0),
+        ),
+        demand = 0.0, mw = ["$TOY_BATTERY out" => 0.0, "$TOY_BATTERY in" => 5.0, TOY_CHEAP => 5.0], price = 20.0,
+        objective = (5.0 * 20.0 - 5.0 * 30.0) * NDT_HOURS,
+    ),
+    (
+        # Ramping holds net generation at 15 MW against 10 MW availability: 5 MW of priced availability violation.
+        label = "a net ramp-down floor can violate generation availability at its price",
+        sys = () -> nem_toy_system(
+            [ndt_alta(; initial = 0.0, bands = [(100.0, 100.0)])], 15.0;
+            batteries = ndt_battery(100.0, 5.0, 100.0, 1.0; initial = 20.0, ramp_up = 100.0, ramp_down = 1.0, gen_avail = 10.0),
+        ),
+        demand = 15.0, mw = ["$TOY_BATTERY out" => 15.0, "$TOY_BATTERY in" => 0.0, TOY_CHEAP => 0.0],
+        objective = (15.0 * 5.0 + 5.0 * AustralianElectricityMarkets.ENERGY_MAX_AVAIL_CVP_FACTOR * NDT_MPC) * NDT_HOURS,
+    ),
+    (
+        label = "a net ramp-up ceiling can violate load availability at its price",
+        sys = () -> nem_toy_system(
+            [ndt_alta()], 0.0;
+            batteries = ndt_battery(100.0, 1.0, 100.0, 1000.0; initial = -20.0, ramp_up = 1.0, ramp_down = 100.0, gen_avail = 0.0, load_avail = 10.0),
+        ),
+        demand = 0.0, mw = ["$TOY_BATTERY in" => 15.0, "$TOY_BATTERY out" => 0.0, TOY_CHEAP => 15.0],
+        objective = (15.0 * 20.0 - 15.0 * 1000.0 + 5.0 * AustralianElectricityMarkets.ENERGY_MAX_AVAIL_CVP_FACTOR * NDT_MPC) * NDT_HOURS,
+    ),
+    (
+        label = "discharge is capped by the generation-side MAXAVAIL, not the cheaper price",
+        sys = () -> nem_toy_system([ndt_alta()], 50.0; batteries = ndt_battery(10.0, 5.0, 10.0, 1.0; initial = 0.0, ramp_up = 100.0, load_avail = 0.0)),
+        demand = 50.0, mw = ["$TOY_BATTERY out" => 10.0, "$TOY_BATTERY in" => 0.0, TOY_CHEAP => 40.0], price = 20.0,
+        objective = (40.0 * 20.0 + 10.0 * 5.0) * NDT_HOURS,
+    ),
+    (
+        label = "charge is capped by the load-side MAXAVAIL, not the attractive price",
+        sys = () -> nem_toy_system(
+            [ndt_alta()], 0.0; batteries = ndt_battery(10.0, 1.0, 20.0, 1000.0; initial = 0.0, ramp_up = 100.0, gen_avail = 0.0, load_avail = 8.0),
+        ),
+        demand = 0.0, mw = ["$TOY_BATTERY in" => 8.0, "$TOY_BATTERY out" => 0.0, TOY_CHEAP => 8.0], price = 20.0,
+        objective = (8.0 * 20.0 - 8.0 * 1000.0) * NDT_HOURS,
+    ),
+    (
         # A binding `<=` carries a negative dual under minimisation.
-        @test out.constraint_price["N_TOY_LIMIT"] ≈ -60.0 atol = TOY_TOLERANCE
-    end
+        label = "a 70 MW generic constraint on the cheap unit binds, forcing the expensive unit up",
+        sys = () -> ndt_capped(70.0), demand = 120.0, mw = [TOY_CHEAP => 70.0, TOY_EXPENSIVE => 50.0], price = 80.0,
+        objective = (70.0 * 20.0 + 50.0 * 80.0) * NDT_HOURS, gc_price = -60.0,
+    ),
+    (
+        label = "a slack 120 MW generic constraint leaves merit order unaffected",
+        sys = () -> ndt_capped(120.0), demand = 120.0, mw = [TOY_CHEAP => 100.0, TOY_EXPENSIVE => 20.0], price = 80.0, gc_price = 0.0,
+    ),
+    (
+        label = "a scheduled load clears when its bid is above the price",
+        sys = () -> nem_toy_system(
+            [ndt_alta(; initial = 40.0), ndt_park(; initial = 0.0)], 40.0; loads = ndt_pump(50.0; initial = 30.0, ramp_up = 100.0),
+        ),
+        demand = 40.0, mw = ["PUMP" => 30.0, TOY_CHEAP => 70.0, TOY_EXPENSIVE => 0.0], price = 20.0,
+        objective = (70.0 * 20.0 - 30.0 * 50.0) * NDT_HOURS,
+    ),
+    (
+        label = "a scheduled load does not clear when its bid is below the price",
+        sys = () -> nem_toy_system([ndt_alta(; initial = 40.0)], 40.0; loads = ndt_pump(10.0; initial = 0.0, ramp_up = 100.0)),
+        demand = 40.0, mw = ["PUMP" => 0.0, TOY_CHEAP => 40.0],
+    ),
+    (
+        # The pump's $10/MWh bid would not clear at $20/MWh, but a 20 MW fixed loading holds it there.
+        label = "a scheduled load's fixed loading holds its consumption against its bid",
+        sys = () -> nem_toy_system(
+            [ndt_alta(; initial = 40.0)], 40.0; loads = ndt_pump(10.0; initial = 0.0, ramp_up = 100.0),
+            mutate! = function (sys, stamps)
+                _toy_energy_bid!(
+                    sys, PSY.get_component(InterruptiblePowerLoad, sys, "PUMP"), AustralianElectricityMarkets.BidDirection.LOAD, stamps,
+                    fill(PSY.PiecewiseStepData([0.0, 30.0], [10.0]), length(stamps)), fill(30.0, length(stamps));
+                    fixed_load = fill(20.0, length(stamps)),
+                )
+                return
+            end,
+        ),
+        demand = 40.0, mw = ["PUMP" => 20.0, TOY_CHEAP => 60.0],
+    ),
+    (
+        # 5 MW + 2 MW/min over 5 minutes caps the pump at 15 MW, below its 30 MW availability.
+        label = "a scheduled load is limited by its ramp rate",
+        sys = () -> nem_toy_system([ndt_alta(; initial = 40.0)], 40.0; loads = ndt_pump(50.0; initial = 5.0, ramp_up = 2.0, availability = 30.0)),
+        demand = 40.0, mw = ["PUMP" => 15.0, TOY_CHEAP => 55.0],
+    ),
+    (
+        label = "a scheduled load is limited by its availability",
+        sys = () -> nem_toy_system([ndt_alta(; initial = 40.0)], 40.0; loads = ndt_pump(50.0; initial = 5.0, ramp_up = 100.0, availability = 10.0)),
+        demand = 40.0, mw = ["PUMP" => 10.0, TOY_CHEAP => 50.0],
+    ),
+]
 
-    @testset "a 120 MW cap is slack, and merit order is unaffected" begin
-        out = solve_toy(constrained_toy(120.0))
-
-        @test out.dispatch_mw[TOY_CHEAP] ≈ 100.0 atol = TOY_TOLERANCE
-        @test out.dispatch_mw[TOY_EXPENSIVE] ≈ 20.0 atol = TOY_TOLERANCE
-        @test out.price ≈ 80.0 atol = TOY_TOLERANCE
-        @test out.constraint_price["N_TOY_LIMIT"] ≈ 0.0 atol = TOY_TOLERANCE
-    end
+@testset "$(c.label)" for c in NDT_CASES
+    out = solve_toy(c.sys())
+    solved = merge(
+        out.dispatch_mw, out.load_mw,
+        Dict("$k out" => v for (k, v) in out.battery_out_mw), Dict("$k in" => v for (k, v) in out.battery_in_mw),
+    )
+    # Every case clears its demand from net generation, with no unit ramp row broken.
+    @test sum(values(out.dispatch_mw)) - sum(values(out.load_mw); init = 0.0) ≈ c.demand atol = TOY_TOLERANCE
+    @test all(≈(0.0; atol = TOY_TOLERANCE), (out.ramp_slack_mw..., out.storage_ramp_slack_mw...))
+    @test [solved[k] for k in first.(c.mw)] ≈ last.(c.mw) atol = TOY_TOLERANCE
+    haskey(c, :price) && @test out.price ≈ c.price atol = TOY_TOLERANCE
+    haskey(c, :objective) && @test out.objective ≈ c.objective rtol = 1.0e-8 atol = TOY_TOLERANCE
+    haskey(c, :bands) && @test [out.band_mw[(TOY_CHEAP, b)] for b in eachindex(c.bands)] ≈ c.bands atol = TOY_TOLERANCE
+    haskey(c, :gc_price) && @test out.constraint_price["N_TOY_LIMIT"] ≈ c.gc_price atol = TOY_TOLERANCE
 end
 
 @testset "a ramp-up ceiling below zero is violated at 1155 x the Market Price Cap" begin
@@ -279,78 +178,6 @@ end
     violations = read_constraint_violations(out.results, sys)
     @test violations.family == ["unit_ramp"]
     @test only(violations.MW) ≈ 1.0 atol = TOY_TOLERANCE
-end
-
-@testset "a scheduled load adds to the balance and clears when its bid is above the price" begin
-    # Alta's $20/MWh offer covers the 40 MW demand plus the pump's full 30 MW: its $50/MWh decremental
-    # bid values that consumption above Alta's cost, so the objective falls by (50 - 20) * 30 against
-    # the 40 * 20 baseline.
-    sys = nem_toy_system(
-        [
-            TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 40.0, ramp_up = 100.0),
-            TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = 0.0, ramp_up = 100.0),
-        ],
-        40.0;
-        loads = ["PUMP" => toy_load(30.0, 50.0; initial = 30.0, ramp_up = 100.0)],
-    )
-    out = solve_toy(sys)
-
-    @test out.load_mw["PUMP"] ≈ 30.0 atol = TOY_TOLERANCE
-    @test out.dispatch_mw[TOY_CHEAP] ≈ 70.0 atol = TOY_TOLERANCE
-    @test out.dispatch_mw[TOY_EXPENSIVE] ≈ 0.0 atol = TOY_TOLERANCE
-    @test out.price ≈ 20.0 atol = TOY_TOLERANCE
-    @test out.objective ≈ (70.0 * 20.0 - 30.0 * 50.0) * interval_hours(DISPATCH_INTERVAL) atol = TOY_TOLERANCE
-end
-
-@testset "a scheduled load does not clear when its bid is below the price" begin
-    sys = nem_toy_system(
-        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 40.0, ramp_up = 100.0)],
-        40.0;
-        loads = ["PUMP" => toy_load(30.0, 10.0; initial = 0.0, ramp_up = 100.0)],
-    )
-    out = solve_toy(sys)
-
-    @test out.load_mw["PUMP"] ≈ 0.0 atol = TOY_TOLERANCE
-    @test out.dispatch_mw[TOY_CHEAP] ≈ 40.0 atol = TOY_TOLERANCE
-end
-
-@testset "a scheduled load's fixed loading holds its consumption against its bid" begin
-    # The pump's $10/MWh bid would not clear at Alta's $20/MWh, but a 20 MW fixed loading holds it there.
-    sys = nem_toy_system(
-        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 40.0, ramp_up = 100.0)],
-        40.0;
-        loads = ["PUMP" => toy_load(30.0, 10.0; initial = 0.0, ramp_up = 100.0)],
-        mutate! = function (sys, stamps)
-            pump = PSY.get_component(InterruptiblePowerLoad, sys, "PUMP")
-            _toy_energy_bid!(
-                sys, pump, AustralianElectricityMarkets.BidDirection.LOAD, stamps,
-                fill(PSY.PiecewiseStepData([0.0, 30.0], [10.0]), length(stamps)), fill(30.0, length(stamps));
-                fixed_load = fill(20.0, length(stamps)),
-            )
-            return
-        end,
-    )
-    out = solve_toy(sys)
-
-    @test out.load_mw["PUMP"] ≈ 20.0 atol = TOY_TOLERANCE
-    @test out.dispatch_mw[TOY_CHEAP] ≈ 60.0 atol = TOY_TOLERANCE
-end
-
-@testset "a scheduled load is limited by its availability and ramp rate" begin
-    function pump_toy(; availability, ramp_up)
-        return nem_toy_system(
-            [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 40.0, ramp_up = 100.0)],
-            40.0;
-            loads = ["PUMP" => toy_load(30.0, 50.0; initial = 5.0, ramp_up, availability)],
-        )
-    end
-    # 5 MW + 2 MW/min over 5 minutes caps the pump at 15 MW, below its 30 MW availability.
-    ramp_limited = solve_toy(pump_toy(; availability = 30.0, ramp_up = 2.0))
-    @test ramp_limited.load_mw["PUMP"] ≈ 15.0 atol = TOY_TOLERANCE
-    @test ramp_limited.dispatch_mw[TOY_CHEAP] ≈ 55.0 atol = TOY_TOLERANCE
-
-    availability_limited = solve_toy(pump_toy(; availability = 10.0, ramp_up = 100.0))
-    @test availability_limited.load_mw["PUMP"] ≈ 10.0 atol = TOY_TOLERANCE
 end
 
 @testset "a battery's ramp floor can exceed its rating with priced availability" begin

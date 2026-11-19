@@ -68,9 +68,7 @@
         @test Dict(df.name .=> df.scheduled) == Dict(
             "PUMP1" => true, "PUMP2" => true, "WDR1" => true, "ASLOAD1" => false, "ASLOAD2" => false,
         )
-        @test Dict(df.name .=> df.available) == Dict(
-            "PUMP1" => true, "PUMP2" => true, "WDR1" => true, "ASLOAD1" => false, "ASLOAD2" => false,
-        )
+        @test df.available == df.scheduled
         @test all(==("NSW1"), df.region)
         @test all(==(100.0), df.base_power)
         @test all(==(1.0), df.max_active_power)

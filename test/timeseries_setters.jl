@@ -15,13 +15,7 @@
         # The mock hive holds demand to 04:00; a window running to 06:00 has no rows for the last two hours.
         start_date = DateTime(2025, 1, 1, 3, 0)
         late_range = start_date:Minute(5):(start_date + Hour(3))
-        err = try
-            attach_demand!(deepcopy(sys_base), db, late_range; resolution = Minute(5))
-            nothing
-        catch e
-            e
-        end
-        @test err isa ArgumentError
+        err = (@test_throws ArgumentError attach_demand!(deepcopy(sys_base), db, late_range; resolution = Minute(5))).value
         @test occursin("missing regional demand inputs", err.msg)
     end
 
@@ -108,7 +102,6 @@
         uigf = read_uigf(db, date_range; resolution = resolution)
 
         @testset "read_uigf returns only semi-scheduled units" begin
-            @test !isempty(uigf)
             @test Set(names(uigf)) == Set(["SETTLEMENTDATE", "DUID", "UIGF"])
             # BW03 (Solar) and BW04 (Wind) are the fixture's only semi-scheduled DUIDs.
             @test Set(unique(uigf.DUID)) == Set(["BW03", "BW04"])
@@ -116,13 +109,7 @@
 
         @testset "read_uigf throws when DISPATCHLOAD is not cached" begin
             empty_db = aem_connect(HiveConfiguration(hive_location = mktempdir(), filesystem = "file"))
-            err = try
-                read_uigf(empty_db, date_range; resolution = resolution)
-                nothing
-            catch e
-                e
-            end
-            @test err isa ArgumentError
+            err = (@test_throws ArgumentError read_uigf(empty_db, date_range; resolution)).value
             @test occursin("DISPATCHLOAD", err.msg)
         end
 
@@ -142,15 +129,8 @@
             DuckDB.unregister_table(conn, "tmp_table")
 
             no_uigf_db = aem_connect(HiveConfiguration(hive_location = no_uigf_hive, filesystem = "file"))
-            err = try
-                read_uigf(no_uigf_db, date_range; resolution = resolution)
-                nothing
-            catch e
-                e
-            end
-            @test err isa ArgumentError
-            @test occursin("no UIGF column", err.msg)
-            @test occursin("force_new = true", err.msg)
+            err = (@test_throws ArgumentError read_uigf(no_uigf_db, date_range; resolution)).value
+            @test occursin("no UIGF column", err.msg) && occursin("force_new = true", err.msg)
         end
 
         @testset "read_uigf throws without DUDETAILSUMMARY's SCHEDULE_TYPE" begin
@@ -171,13 +151,7 @@
                 ), "DISPATCHLOAD",
             )
             hive_db = aem_connect(HiveConfiguration(hive_location = hive, filesystem = "file"))
-            err = try
-                read_uigf(hive_db, date_range; resolution = resolution)
-                nothing
-            catch e
-                e
-            end
-            @test err isa ArgumentError
+            err = (@test_throws ArgumentError read_uigf(hive_db, date_range; resolution)).value
             @test occursin("DUDETAILSUMMARY is not cached", err.msg)
 
             save_table(
@@ -185,13 +159,7 @@
                     DUID = ["BW03"], START_DATE = [DateTime(2020, 1, 1)], archive_month = ["2025-01"],
                 ), "DUDETAILSUMMARY",
             )
-            err = try
-                read_uigf(hive_db, date_range; resolution = resolution)
-                nothing
-            catch e
-                e
-            end
-            @test err isa ArgumentError
+            err = (@test_throws ArgumentError read_uigf(hive_db, date_range; resolution)).value
             @test occursin("SCHEDULE_TYPE", err.msg)
         end
     end
@@ -491,44 +459,25 @@
         )
         dispatch_rows(frame) = frame.DUID .== "ER01"
 
-        @testset "a missing RAMPUPRATE throws, naming the DUID, and leaves sys untouched" begin
-            sys = deepcopy(sys_base)
-            @test_throws ArgumentError corrupt_and_build(
-                :DISPATCHLOAD, frame -> begin
-                    frame.RAMPUPRATE = Union{Float64, Missing}[r.DUID == "ER01" && r.SETTLEMENTDATE == at(5) ? missing : r.RAMPUPRATE for r in eachrow(frame)]
-                end; sys
+        # Sets `column` to `value` on `duid`'s row at 00:05.
+        set_at(column, duid, value) = frame -> (frame[!, column] = Union{Float64, Missing}[r.DUID == duid && r.SETTLEMENTDATE == at(5) ? value : r[column] for r in eachrow(frame)])
+        @testset "a corrupt DISPATCHLOAD throws ($message) and leaves sys untouched" for (transform!, message) in (
+                set_at(:RAMPUPRATE, "ER01", missing) => "ER01: missing INITIALMW/RAMPUPRATE/RAMPDOWNRATE/AVAILABILITY at $(at(5))",
+                set_at(:AVAILABILITY, "ER01", -1.0) => "ER01: negative AVAILABILITY",
+                (frame -> filter!(r -> r.DUID != "ER01", frame)) => "ER01: no DISPATCHLOAD rows",
+                set_at(:UIGF, "BW03", -1.0) => "BW03 at $(at(5)): missing or invalid UIGF",
+                (frame -> select!(frame, Not(:UIGF))) => "",
             )
-            @test occursin("ER01: missing INITIALMW/RAMPUPRATE/RAMPDOWNRATE/AVAILABILITY at $(at(5))", last_error[].msg)
-            @test untouched(sys)
-        end
-
-        @testset "a negative AVAILABILITY throws, naming the DUID, and leaves sys untouched" begin
             sys = deepcopy(sys_base)
-            @test_throws ArgumentError corrupt_and_build(
-                :DISPATCHLOAD, frame -> begin
-                    frame.AVAILABILITY = Union{Float64, Missing}[r.DUID == "ER01" && r.SETTLEMENTDATE == at(5) ? -1.0 : r.AVAILABILITY for r in eachrow(frame)]
-                end; sys
-            )
-            @test occursin("ER01: negative AVAILABILITY", last_error[].msg)
+            @test_throws ArgumentError corrupt_and_build(:DISPATCHLOAD, transform!; sys)
+            @test occursin(message, last_error[].msg)
             @test untouched(sys)
         end
 
         @testset "zero AVAILABILITY and zero ramp rates are carried through, not rejected" begin
-            sys = corrupt_and_build(
-                :DISPATCHLOAD, frame -> begin
-                    frame.AVAILABILITY = Union{Float64, Missing}[r.DUID == "ER01" && r.SETTLEMENTDATE == at(5) ? 0.0 : r.AVAILABILITY for r in eachrow(frame)]
-                    frame.RAMPUPRATE = Union{Float64, Missing}[r.DUID == "ER01" && r.SETTLEMENTDATE == at(5) ? 0.0 : r.RAMPUPRATE for r in eachrow(frame)]
-                end
-            )
+            sys = corrupt_and_build(:DISPATCHLOAD, frame -> (set_at(:AVAILABILITY, "ER01", 0.0)(frame); set_at(:RAMPUPRATE, "ER01", 0.0)(frame)))
             er01 = get_component(ThermalStandard, sys, "ER01")
             @test unit_values(er01, get_telemetry(er01).ramp_up_limit)[2] == 0.0
-        end
-
-        @testset "a device with no DISPATCHLOAD rows throws, naming the DUID" begin
-            sys = deepcopy(sys_base)
-            @test_throws ArgumentError corrupt_and_build(:DISPATCHLOAD, frame -> filter!(r -> r.DUID != "ER01", frame); sys)
-            @test occursin("ER01: no DISPATCHLOAD rows", last_error[].msg)
-            @test untouched(sys)
         end
 
         @testset "a missing row inside a unit's registration throws, and one outside it does not" begin
@@ -581,12 +530,6 @@
                 end; sys
             )
             @test occursin("BW03 at $(at(5)): missing or invalid UIGF", last_error[].msg)
-            @test untouched(sys)
-        end
-
-        @testset "a cached DISPATCHLOAD without a required column throws, leaving sys untouched" begin
-            sys = deepcopy(sys_base)
-            @test_throws ArgumentError corrupt_and_build(:DISPATCHLOAD, frame -> select!(frame, Not(:UIGF)); sys)
             @test untouched(sys)
         end
 

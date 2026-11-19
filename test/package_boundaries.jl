@@ -3,32 +3,26 @@ using TOML
 using Logging
 
 @testset "Independent population and reader packages" begin
-    readers = AustralianElectricityMarkets.Readers
-    @test !isdefined(readers, :PowerSystems)
-    @test isdefined(AustralianElectricityMarkets, :EnergyTieBreak)
-    @test !isdefined(AustralianElectricityMarkets, :set_fcas_effective_offers!)
-    @test !isdefined(AustralianElectricityMarkets, :get_fcas_offer)
-    @test isdefined(AustralianElectricityMarkets, :MARKET_PRICE_CAP_BY_FINANCIAL_YEAR)
-    @test isdefined(AustralianElectricityMarkets, :constraint_cvp_factor)
-
+    AEM = AustralianElectricityMarkets
+    @test !isdefined(AEM.Readers, :PowerSystems)
+    @test all(name -> isdefined(AEM, name), (:EnergyTieBreak, :MARKET_PRICE_CAP_BY_FINANCIAL_YEAR, :constraint_cvp_factor))
+    @test !any(name -> isdefined(AEM, name), (:set_fcas_effective_offers!, :get_fcas_offer, :populate))
+    @test !any(name -> isdefined(AustralianElectricityMarketsData, name), (:read_demand, :read_units))
     @test HiveConfiguration === AustralianElectricityMarketsData.HiveConfiguration
     @test aem_connect === AustralianElectricityMarketsData.aem_connect
-    @test !isdefined(AustralianElectricityMarkets, :populate)
-    @test !isdefined(AustralianElectricityMarketsData, :read_demand)
-    @test !isdefined(AustralianElectricityMarketsData, :read_units)
 
+    # (package directory, dependency, whether it may depend on it); "" is the root package.
     root = dirname(@__DIR__)
-    aem_deps = TOML.parsefile(joinpath(root, "Project.toml"))["deps"]
-    data_deps = TOML.parsefile(joinpath(root, "AustralianElectricityMarketsData", "Project.toml"))["deps"]
-    sim_deps = TOML.parsefile(joinpath(root, "AustralianElectricityMarketsSimulations", "Project.toml"))["deps"]
-    @test !haskey(aem_deps, "AustralianElectricityMarketsData")
-    @test !haskey(aem_deps, "AustralianElectricityMarketsSimulations")
-    @test !haskey(aem_deps, "PowerSimulations")
-    @test !haskey(sim_deps, "DuckDB")
-    @test !haskey(data_deps, "AustralianElectricityMarkets")
-    @test !haskey(data_deps, "AustralianElectricityMarketsSimulations")
-    @test !haskey(sim_deps, "AustralianElectricityMarketsData")
-    @test haskey(sim_deps, "AustralianElectricityMarkets")
+    deps(package) = TOML.parsefile(joinpath(root, package, "Project.toml"))["deps"]
+    allowed = [
+        ("", "AustralianElectricityMarketsData", false), ("", "AustralianElectricityMarketsSimulations", false),
+        ("", "PowerSimulations", false), ("AustralianElectricityMarketsData", "AustralianElectricityMarkets", false),
+        ("AustralianElectricityMarketsData", "AustralianElectricityMarketsSimulations", false),
+        ("AustralianElectricityMarketsSimulations", "DuckDB", false),
+        ("AustralianElectricityMarketsSimulations", "AustralianElectricityMarketsData", false),
+        ("AustralianElectricityMarketsSimulations", "AustralianElectricityMarkets", true),
+    ]
+    @test [haskey(deps(package), dep) for (package, dep, _) in allowed] == last.(allowed)
 
     cache_dir = mktempdir()
     partition = joinpath(cache_dir, "DISPATCHPRICE", "archive_month=2025-01-01")

@@ -1,13 +1,9 @@
 # One complete mock hive with interconnector results, shared read-only by the testsets below.
-const _NEMDE_HIVE = let hive = mktempdir()
-    create_mock_data(hive; complete_inputs = true)
-    write_mock_interconnector_results(hive)
-    hive
-end
+const _NEMDE_HIVE = nemde_test_hive()
 
 # The NEMDE system of the shared hive, read-only for the testsets below.
 const _NEMDE_INTERVAL = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
-const _NEMDE_SYS = nem_system(aem_connect(HiveConfiguration(hive_location = _NEMDE_HIVE)), NEMDEConfiguration(); date_range = _NEMDE_INTERVAL)
+const _NEMDE_SYS = nemde_test_system(_NEMDE_INTERVAL)
 
 @testset "NEMDE requirements include mandatory MNSP metering" begin
     @test :DISPATCHINTERCONNECTORRES in table_requirements(NEMDEConfiguration())
@@ -127,8 +123,8 @@ end
     db = aem_connect(HiveConfiguration(hive_location = hive))
     interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
 
-    # One fresh build for the two hand-edited systems; the telemetry is restored before the MNSP edit.
-    edited = nem_system(db, NEMDEConfiguration(); date_range = interval)
+    # One copy for the two hand-edited systems; the telemetry is restored before the MNSP edit.
+    edited = deepcopy(_NEMDE_SYS)
     @testset "a dispatch device without its typed fields" begin
         er01 = get_component(ThermalStandard, edited, "ER01")
         telemetry = get_telemetry(er01)
@@ -163,15 +159,7 @@ end
             "UPDATE input SET GENERICCONSTRAINTWEIGHT = NULL " *
                 "WHERE GENCONID IN ('N_BAYSW_THERMAL', 'N_PUMP_THERMAL')",
         )
-        err = try
-            nem_system(both, NEMDEConfiguration(); date_range = interval)
-            nothing
-        catch e
-            e
-        end
-        @test err isa ArgumentError
-        @test occursin("N_BAYSW_THERMAL", err.msg)
-        @test occursin("N_PUMP_THERMAL", err.msg)
+        @test_throws ["N_BAYSW_THERMAL", "N_PUMP_THERMAL"] nem_system(both, NEMDEConfiguration(); date_range = interval)
     end
 
     @testset "a unit term whose DUID is absent from the system is reported, dropped" begin
@@ -187,15 +175,7 @@ end
             "PERIODID + 1 AS PERIODID, 1.0 AS FACTOR, BIDTYPE, LASTCHANGED, archive_month FROM input " *
             "WHERE GENCONID IN ('N_BAYSW_THERMAL', 'N_PUMP_THERMAL')"
         both = damaged_cache(hive, :SPDCONNECTIONPOINTCONSTRAINT, both_terms)
-        err = try
-            nem_system(both, NEMDEConfiguration(); date_range = interval)
-            nothing
-        catch e
-            e
-        end
-        @test err isa ArgumentError
-        @test occursin("N_BAYSW_THERMAL", err.msg)
-        @test occursin("N_PUMP_THERMAL", err.msg)
+        @test_throws ["N_BAYSW_THERMAL", "N_PUMP_THERMAL"] nem_system(both, NEMDEConfiguration(); date_range = interval)
     end
 
     @testset "fixed-load constraints need no GENCONDATA" begin
@@ -313,11 +293,9 @@ end
     db = aem_connect(HiveConfiguration(hive_location = hive))
     interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
     sys = _NEMDE_SYS
-    @test all(has_nem_unit_data, (d for T in (ThermalStandard, HydroDispatch, RenewableDispatch, EnergyReservoirStorage, InterruptiblePowerLoad) for d in get_components(T, sys)))
-    @test !any(d -> get_operation_cost(d) isa MarketBidCost, Iterators.flatten((get_components(Generator, sys), get_components(Storage, sys), get_components(ControllableLoad, sys))))
     nem_devices = [d for T in (ThermalStandard, HydroDispatch, RenewableDispatch, EnergyReservoirStorage, InterruptiblePowerLoad) for d in get_components(T, sys)]
-    @test !isempty(nem_devices)
-    @test all(d -> AustralianElectricityMarkets._nem_offer_cost(d) isa NEMOfferCost, nem_devices)
+    @test all(has_nem_unit_data, nem_devices)
+    @test !any(d -> get_operation_cost(d) isa MarketBidCost, Iterators.flatten((get_components(Generator, sys), get_components(Storage, sys), get_components(ControllableLoad, sys))))
     # Every recorded bid key resolves to a series on its device.
     bids = [(d, b) for d in nem_devices for b in AustralianElectricityMarkets.get_energy_bids(AustralianElectricityMarkets._nem_offer_cost(d))]
     @test !isempty(bids)

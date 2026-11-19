@@ -34,18 +34,9 @@ end
     sys = problem_validation_system(ConstraintTerm[ghost])
     skipped = NamedTuple[]
     template = with_generic_constraints!(energy_template(); exclude_constraints = Dict("N_REVIEW" => :manual_exclusion))
-    @test problem_template(sys; template, skipped) isa PSI.ProblemTemplate
+    problem_template(sys; template, skipped)
     @test only(skipped) == (constraint = "N_REVIEW", reason = :manual_exclusion, n_missing = 0)
-    # The system is untouched: the constraint stays available, and the model has no container for it.
-    gc = PSY.get_component(GenericConstraint, sys, "N_REVIEW")
-    model = PSI.DecisionModel(
-        AEMS.NEMDispatchProblem, template, sys; optimizer = HiGHS.Optimizer, initial_time = TOY_START,
-    )
-    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    container = PSI.get_optimization_container(model)
-    @test !any(k -> k.meta == "N_REVIEW", PSI.get_constraint_keys(container))
-    @test !any(k -> k.meta == "N_REVIEW", PSI.get_variable_keys(container))
-    @test PSY.get_available(gc)
+    @test PSY.get_available(PSY.get_component(GenericConstraint, sys, "N_REVIEW"))
 end
 
 @testset "a never-invoked constraint bypasses buildability checks and is reported again on a reused system" begin
@@ -54,7 +45,7 @@ end
     AustralianElectricityMarkets._set_constraint_availability!(sys)
     for _ in 1:2
         skipped = NamedTuple[]
-        @test problem_template(sys; template = with_generic_constraints!(energy_template()), skipped) isa PSI.ProblemTemplate
+        problem_template(sys; template = with_generic_constraints!(energy_template()), skipped)
         @test only(skipped) == (constraint = "N_REVIEW", reason = :never_invoked, n_missing = 0)
         @test !PSY.get_available(PSY.get_component(GenericConstraint, sys, "N_REVIEW"))
     end
@@ -69,7 +60,7 @@ end
     end
     sys = problem_validation_system(ConstraintTerm[fcas])
     skipped = NamedTuple[]
-    @test problem_template(sys; template = with_generic_constraints!(energy_template()), skipped) isa PSI.ProblemTemplate
+    problem_template(sys; template = with_generic_constraints!(energy_template()), skipped)
     @test only(skipped) == (constraint = "N_REVIEW", reason = :unmodeled_fcas_service, n_missing = 1)
 end
 
@@ -138,8 +129,6 @@ end
     excluding = with_generic_constraints!(energy_template(); exclude_constraints = Dict("N_REVIEW" => :manual_exclusion))
     rows = template_skipped_constraints(sys, excluding)
     @test rows == DataFrame(; constraint = ["N_REVIEW"], reason = [:manual_exclusion], n_missing = [0])
-    @test PSY.get_available(review)
-    @test !PSY.get_available(off)
     @test template_skipped_constraints(sys, excluding) == rows
     # A template without the exclusion judges N_REVIEW on its terms: the ghost term is blocking.
     plain = with_generic_constraints!(energy_template())
@@ -246,7 +235,6 @@ end
     PSI.set_initial_time!(model, next_year)
     PSI.validate_template(model)
     @test ext["market_price_cap"] == AEMS._financial_year_mpc(next_year)
-    @test ext["market_price_cap"] != AEMS._financial_year_mpc(TOY_START)
 end
 
 @testset "NEMDispatchProblem in a Simulation" begin

@@ -8,173 +8,55 @@
         round(t.high_breakpoint; digits = digits), round(get_enablement_max(t); digits = digits),
         round(get_max_avail(t); digits = digits),
     )
+    trap(emin, low, high, emax, avail; kwargs...) = FCASTrapezium(;
+        enablement_min = emin, low_breakpoint = low, high_breakpoint = high, enablement_max = emax, max_avail = avail, kwargs...,
+    )
 
-    @testset "§4.1 AGC enablement limits (regulation only)" begin
-        bid = FCASTrapezium(;
-            enablement_min = 20.0, low_breakpoint = 50.0, high_breakpoint = 70.0,
-            enablement_max = 100.0, max_avail = 30.0,
-        )
+    agc_bid = trap(20.0, 50.0, 70.0, 100.0, 30.0)
+    ramp_bid = trap(20.0, 40.0, 80.0, 100.0, 20.0; ramp_up_rate = 60.0, ramp_down_rate = 30.0)
+    uigf_bid = trap(0.0, 0.0, 80.0, 100.0, 20.0)
+    load_bid = trap(-100.0, -70.0, -10.0, 0.0, 30.0)
+    gen_bid = trap(0.0, 20.0, 80.0, 100.0, 20.0)
 
-        @testset "AGC limits more restrictive: enablement moves in, breakpoints preserve slope" begin
-            eff = scale_fcas_trapezium(
-                bid; agc_enablement_min = 30.0, agc_enablement_max = 90.0, is_regulation = true,
-            )
-            @test trap_tuple(eff) == (30.0, 60.0, 60.0, 90.0, 30.0)
-            @test get_lower_slope_coeff(eff) == get_lower_slope_coeff(bid)
-            @test get_upper_slope_coeff(eff) == get_upper_slope_coeff(bid)
-        end
-
-        @testset "AGC limits less restrictive than the bid: no impact" begin
-            eff = scale_fcas_trapezium(
-                bid; agc_enablement_min = 0.0 - 1.0, agc_enablement_max = 200.0, is_regulation = true,
-            )
-            @test trap_tuple(eff) == trap_tuple(bid)
-        end
-
-        @testset "contingency service: AGC enablement input is ignored" begin
-            eff = scale_fcas_trapezium(
-                bid; agc_enablement_min = 30.0, agc_enablement_max = 90.0, is_regulation = false,
-            )
-            @test trap_tuple(eff) == trap_tuple(bid)
-        end
-
-        @testset "zero AGC enablement limit is treated as absent, not as a genuine narrow value" begin
-            negative_bid = FCASTrapezium(;
-                enablement_min = -10.0, low_breakpoint = -5.0, high_breakpoint = 5.0,
-                enablement_max = 10.0, max_avail = 5.0,
-            )
-            eff = scale_fcas_trapezium(negative_bid; agc_enablement_min = 0.0, is_regulation = true)
-            @test trap_tuple(eff) == trap_tuple(negative_bid)
-        end
-
-        @testset "absent (nothing) AGC enablement limits: no impact" begin
-            eff = scale_fcas_trapezium(bid; is_regulation = true)
-            @test trap_tuple(eff) == trap_tuple(bid)
-        end
-
-        @testset "a load-side (negative net-MW axis) trapezium narrows like any other" begin
-            load_bid = FCASTrapezium(;
-                enablement_min = -100.0, low_breakpoint = -70.0, high_breakpoint = -10.0,
-                enablement_max = 0.0, max_avail = 30.0,
-            )
-            eff = scale_fcas_trapezium(
-                load_bid; agc_enablement_min = -80.0, agc_enablement_max = 90.0, is_regulation = true,
-            )
-            @test trap_tuple(eff) == (-80.0, -50.0, -10.0, 0.0, 30.0)
-        end
-
-        @testset "an AGC window outside a side's own span leaves an empty trapezium" begin
-            load_bid = FCASTrapezium(;
-                enablement_min = -100.0, low_breakpoint = -70.0, high_breakpoint = -10.0,
-                enablement_max = 0.0, max_avail = 30.0,
-            )
-            gen_bid = FCASTrapezium(;
-                enablement_min = 0.0, low_breakpoint = 20.0, high_breakpoint = 80.0,
-                enablement_max = 100.0, max_avail = 20.0,
-            )
-            eff_load = scale_fcas_trapezium(
-                load_bid; agc_enablement_min = 368.39502, agc_enablement_max = 0.0, is_regulation = true,
-            )
-            eff_gen = scale_fcas_trapezium(
-                gen_bid; agc_enablement_min = 368.39502, agc_enablement_max = 0.0, is_regulation = true,
-            )
-            # EnablementMin rises to 368.4 while EnablementMax stays at the bid's: no feasible
-            # FCAS, which §5's EnablementMax >= EnablementMin pre-condition disables.
-            @test get_enablement_min(eff_load) ≈ 368.39502
-            @test get_enablement_max(eff_load) == 0.0
-            @test get_enablement_min(eff_gen) ≈ 368.39502
-            @test get_enablement_max(eff_gen) == 100.0
-        end
-    end
-
-    @testset "§4.2 AGC ramp rate (regulation only)" begin
-        bid = FCASTrapezium(;
-            enablement_min = 20.0, low_breakpoint = 40.0, high_breakpoint = 80.0,
-            enablement_max = 100.0, max_avail = 20.0,
-        )
-
-        @testset "AGC ramping capability more restrictive: plateau and breakpoints narrow" begin
-            eff = scale_fcas_trapezium(bid; agc_max_avail = 10.0, is_regulation = true)
-            @test trap_tuple(eff) == (20.0, 30.0, 90.0, 100.0, 10.0)
-            @test get_lower_slope_coeff(eff) == get_lower_slope_coeff(bid)
-            @test get_upper_slope_coeff(eff) == get_upper_slope_coeff(bid)
-        end
-
-        @testset "AGC ramping capability less restrictive than the bid: no impact" begin
-            eff = scale_fcas_trapezium(bid; agc_max_avail = 100.0, is_regulation = true)
-            @test trap_tuple(eff) == trap_tuple(bid)
-        end
-
-        @testset "contingency service: AGC ramp input is ignored" begin
-            eff = scale_fcas_trapezium(bid; agc_max_avail = 10.0, is_regulation = false)
-            @test trap_tuple(eff) == trap_tuple(bid)
-        end
-
-        @testset "zero AGC ramping capability is treated as absent" begin
-            eff = scale_fcas_trapezium(bid; agc_max_avail = 0.0, is_regulation = true)
-            @test trap_tuple(eff) == trap_tuple(bid)
-        end
-    end
-
-    @testset "§4.3 UIGF (all services, semi-scheduled units)" begin
-        bid = FCASTrapezium(;
-            enablement_min = 0.0, low_breakpoint = 0.0, high_breakpoint = 80.0,
-            enablement_max = 100.0, max_avail = 20.0,
-        )
-
-        @testset "UIGF more restrictive than EnablementMax: high breakpoint slides in" begin
-            eff = scale_fcas_trapezium(bid; uigf = 90.0, is_regulation = false)
-            @test trap_tuple(eff) == (0.0, 0.0, 70.0, 90.0, 20.0)
-            @test get_upper_slope_coeff(eff) == get_upper_slope_coeff(bid)
-        end
-
-        @testset "UIGF less restrictive than EnablementMax: no impact" begin
-            eff = scale_fcas_trapezium(bid; uigf = 150.0, is_regulation = false)
-            @test trap_tuple(eff) == trap_tuple(bid)
-        end
-
-        @testset "applies to a regulation trapezium too" begin
-            eff = scale_fcas_trapezium(bid; uigf = 90.0, is_regulation = true)
-            @test trap_tuple(eff) == (0.0, 0.0, 70.0, 90.0, 20.0)
-        end
-
-        @testset "zero UIGF is NOT treated as absent: clamps EnablementMax to zero" begin
-            eff = scale_fcas_trapezium(bid; uigf = 0.0, is_regulation = false)
-            @test get_enablement_max(eff) == 0.0
-            # The high breakpoint slides past the low one: the upper slope still forces zero
-            # FCAS at zero output (E + UpperSlope·X <= 0).
-            @test eff.high_breakpoint == -20.0
-            @test get_upper_slope_coeff(eff) ≈ get_upper_slope_coeff(bid)
-        end
-
-        @testset "a squeezed trapezium keeps both slopes rather than clamping its breakpoints" begin
-            eff = scale_fcas_trapezium(bid; uigf = 10.0, is_regulation = false)
-            @test trap_tuple(eff) == (0.0, 0.0, -10.0, 10.0, 20.0)
-            @test get_lower_slope_coeff(eff) ≈ get_lower_slope_coeff(bid)
-            @test get_upper_slope_coeff(eff) ≈ get_upper_slope_coeff(bid)
-        end
-    end
-
-    @testset "combined §4.1 + §4.2 + §4.3 scaling" begin
-        bid = FCASTrapezium(;
-            enablement_min = 0.0, low_breakpoint = 10.0, high_breakpoint = 90.0,
-            enablement_max = 100.0, max_avail = 20.0,
-        )
-        eff = scale_fcas_trapezium(
-            bid;
-            agc_enablement_min = 5.0, agc_enablement_max = 95.0, agc_max_avail = 10.0,
-            uigf = 80.0, is_regulation = true,
-        )
-        @test trap_tuple(eff) == (5.0, 10.0, 75.0, 80.0, 10.0)
-    end
-
-    @testset "ramp rates carry through unscaled" begin
-        bid = FCASTrapezium(;
-            enablement_min = 20.0, low_breakpoint = 40.0, high_breakpoint = 80.0,
-            enablement_max = 100.0, max_avail = 20.0, ramp_up_rate = 60.0, ramp_down_rate = 30.0,
-        )
-        eff = scale_fcas_trapezium(bid; agc_max_avail = 10.0, is_regulation = true)
-        @test get_ramp_up_rate(eff) == 60.0
-        @test get_ramp_down_rate(eff) == 30.0
+    # (bid, scaling inputs, expected trapezium): §4.1 AGC enablement and §4.2 AGC ramp narrow a regulation
+    # trapezium, §4.3 UIGF narrows any; `nothing` expects the bid unchanged.
+    cases = [
+        # §4.1: more restrictive AGC limits move the enablement in.
+        (agc_bid, (agc_enablement_min = 30.0, agc_enablement_max = 90.0, is_regulation = true), (30.0, 60.0, 60.0, 90.0, 30.0)),
+        (load_bid, (agc_enablement_min = -80.0, agc_enablement_max = 90.0, is_regulation = true), (-80.0, -50.0, -10.0, 0.0, 30.0)),
+        # §4.1 no impact: looser limits, a contingency service, absent limits, a zero limit read as absent.
+        (agc_bid, (agc_enablement_min = -1.0, agc_enablement_max = 200.0, is_regulation = true), nothing),
+        (agc_bid, (agc_enablement_min = 30.0, agc_enablement_max = 90.0, is_regulation = false), nothing),
+        (agc_bid, (is_regulation = true,), nothing),
+        (trap(-10.0, -5.0, 5.0, 10.0, 5.0), (agc_enablement_min = 0.0, is_regulation = true), nothing),
+        # §4.2: a smaller AGC ramping capability lowers the plateau; looser, contingency or zero is no impact.
+        (ramp_bid, (agc_max_avail = 10.0, is_regulation = true), (20.0, 30.0, 90.0, 100.0, 10.0)),
+        (ramp_bid, (agc_max_avail = 100.0, is_regulation = true), nothing),
+        (ramp_bid, (agc_max_avail = 10.0, is_regulation = false), nothing),
+        (ramp_bid, (agc_max_avail = 0.0, is_regulation = true), nothing),
+        # §4.3: UIGF slides EnablementMax and the high breakpoint in, for any service; a zero UIGF is a real
+        # limit, and a squeezed trapezium keeps its slopes rather than clamping its breakpoints.
+        (uigf_bid, (uigf = 90.0, is_regulation = false), (0.0, 0.0, 70.0, 90.0, 20.0)),
+        (uigf_bid, (uigf = 90.0, is_regulation = true), (0.0, 0.0, 70.0, 90.0, 20.0)),
+        (uigf_bid, (uigf = 150.0, is_regulation = false), nothing),
+        (uigf_bid, (uigf = 0.0, is_regulation = false), (0.0, 0.0, -20.0, 0.0, 20.0)),
+        (uigf_bid, (uigf = 10.0, is_regulation = false), (0.0, 0.0, -10.0, 10.0, 20.0)),
+        # Combined §4.1 + §4.2 + §4.3.
+        (
+            trap(0.0, 10.0, 90.0, 100.0, 20.0),
+            (agc_enablement_min = 5.0, agc_enablement_max = 95.0, agc_max_avail = 10.0, uigf = 80.0, is_regulation = true),
+            (5.0, 10.0, 75.0, 80.0, 10.0),
+        ),
+        # An AGC window outside a side's own span raises EnablementMin past EnablementMax: no feasible FCAS,
+        # which §5's EnablementMax >= EnablementMin pre-condition disables.
+        (load_bid, (agc_enablement_min = 368.39502, agc_enablement_max = 0.0, is_regulation = true), (368.39502, 398.39502, -10.0, 0.0, 30.0)),
+        (gen_bid, (agc_enablement_min = 368.39502, agc_enablement_max = 0.0, is_regulation = true), (368.39502, 388.39502, 80.0, 100.0, 20.0)),
+    ]
+    for (bid, inputs, expected) in cases
+        eff = scale_fcas_trapezium(bid; inputs...)
+        @test trap_tuple(eff) == something(expected, trap_tuple(bid))
+        # Every scaling keeps both slopes and carries the ramp rates through unscaled.
+        @test get_lower_slope_coeff(eff) ≈ get_lower_slope_coeff(bid) && get_upper_slope_coeff(eff) ≈ get_upper_slope_coeff(bid)
+        @test isequal((get_ramp_up_rate(eff), get_ramp_down_rate(eff)), (get_ramp_up_rate(bid), get_ramp_down_rate(bid)))
     end
 end

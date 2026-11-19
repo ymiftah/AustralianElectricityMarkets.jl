@@ -1,12 +1,7 @@
 # The band prices of each energy bid, written on the mock run System (AEMSim not loaded).
 
 # A NEM run System on the mock hive, with its NEMDE inputs written by `nem_system`.
-const _PR_SYS = let hive = mktempdir()
-    create_mock_data(hive; complete_inputs = true)
-    write_mock_interconnector_results(hive)
-    t = DateTime(2025, 1, 1, 0, 5)
-    nem_system(aem_connect(HiveConfiguration(hive_location = hive)), NEMDEConfiguration(); date_range = t:Minute(5):(t + Minute(20)))
-end
+const _PR_SYS = nemde_test_system()
 
 _prices_curve(prices) = PowerSystems.PiecewiseStepData(collect(0.0:10.0:(10.0 * length(prices))), prices)
 

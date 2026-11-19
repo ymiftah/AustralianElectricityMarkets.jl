@@ -32,10 +32,8 @@
             enablement_max = 13.0, max_avail = 4.0, ramp_up_rate = 2.0, ramp_down_rate = 3.0,
         )
         t = Tuple(with_ramps)
-        @test t isa NTuple{7, Float64}
         @test t == (1.0, 5.0, 9.0, 13.0, 4.0, 2.0, 3.0)
-        back = FCASTrapezium(t)
-        @test back == with_ramps
+        @test FCASTrapezium(t) == with_ramps
 
         # Non-regulation markets: both ramp rates nothing -> NaN -> nothing. NaN != NaN, so
         # `==` on the tuple is wrong here - use isequal.
@@ -48,52 +46,28 @@
         @test isequal(FCASTrapezium(nt), no_ramps)
     end
 
-    @testset "_fcas_trapezium_points throws an actionable error on a missing required field" begin
-        row = (
-            DIRECTION = "GEN", PRICEBANDARRAY = [10.0, 20.0], BANDAVAILARRAY = [5.0, 5.0],
-            DUID = "BW01", ENABLEMENTMIN = missing, LOWBREAKPOINT = 30.0, HIGHBREAKPOINT = 90.0,
-            ENABLEMENTMAX = 100.0, MAXAVAIL = 10.0, ROCUP = missing, ROCDOWN = missing,
-        )
-        err = try
-            AustralianElectricityMarkets._fcas_trapezium_points(row)
-            nothing
-        catch e
-            e
-        end
-        @test err isa ArgumentError
-        @test occursin("ENABLEMENTMIN", err.msg)
-        @test occursin("BW01", err.msg)
-    end
-
-    @testset "_fcas_trapezium_points rejects a malformed trapezium" begin
+    @testset "_fcas_trapezium_points accepts well-formed trapeziums and names the unit of a bad one" begin
         base_row = (
             DIRECTION = "GEN", PRICEBANDARRAY = [10.0, 20.0], BANDAVAILARRAY = [5.0, 5.0],
             DUID = "BW01", ENABLEMENTMIN = 10.0, LOWBREAKPOINT = 30.0, HIGHBREAKPOINT = 90.0,
             ENABLEMENTMAX = 100.0, MAXAVAIL = 10.0, ROCUP = missing, ROCDOWN = missing,
         )
         # Well-formed, including the degenerate vertical and triangular shapes.
-        @test AustralianElectricityMarkets._fcas_trapezium_points(base_row) isa AustralianElectricityMarkets.FCASTrapeziumPoints
-        vertical = merge(base_row, (ENABLEMENTMIN = 0.0, LOWBREAKPOINT = 0.0, HIGHBREAKPOINT = 0.0, ENABLEMENTMAX = 0.0))
-        @test AustralianElectricityMarkets._fcas_trapezium_points(vertical) isa AustralianElectricityMarkets.FCASTrapeziumPoints
-        triangle = merge(base_row, (LOWBREAKPOINT = 50.0, HIGHBREAKPOINT = 50.0))
-        @test AustralianElectricityMarkets._fcas_trapezium_points(triangle) isa AustralianElectricityMarkets.FCASTrapeziumPoints
-
-        for bad in (
-                (LOWBREAKPOINT = 5.0,),                         # LowBreakpoint < EnablementMin
-                (LOWBREAKPOINT = 95.0,),                        # LowBreakpoint > HighBreakpoint
-                (HIGHBREAKPOINT = 110.0,),                      # HighBreakpoint > EnablementMax
-                (ENABLEMENTMIN = 120.0, LOWBREAKPOINT = 120.0), # EnablementMin > EnablementMax
-                (MAXAVAIL = -1.0,),
+        for ok in ((;), (ENABLEMENTMIN = 0.0, LOWBREAKPOINT = 0.0, HIGHBREAKPOINT = 0.0, ENABLEMENTMAX = 0.0), (LOWBREAKPOINT = 50.0, HIGHBREAKPOINT = 50.0))
+            row = merge(base_row, ok)
+            @test AustralianElectricityMarkets._fcas_trapezium_points(row) ==
+                AustralianElectricityMarkets.FCASTrapeziumPoints((row.ENABLEMENTMIN, row.LOWBREAKPOINT, row.HIGHBREAKPOINT, row.ENABLEMENTMAX))
+        end
+        for (bad, message) in (
+                (ENABLEMENTMIN = missing,) => "ENABLEMENTMIN",
+                (LOWBREAKPOINT = 5.0,) => "Malformed FCAS trapezium",                         # LowBreakpoint < EnablementMin
+                (LOWBREAKPOINT = 95.0,) => "Malformed FCAS trapezium",                        # LowBreakpoint > HighBreakpoint
+                (HIGHBREAKPOINT = 110.0,) => "Malformed FCAS trapezium",                      # HighBreakpoint > EnablementMax
+                (ENABLEMENTMIN = 120.0, LOWBREAKPOINT = 120.0) => "Malformed FCAS trapezium", # EnablementMin > EnablementMax
+                (MAXAVAIL = -1.0,) => "Malformed FCAS trapezium",
             )
-            err = try
-                AustralianElectricityMarkets._fcas_trapezium_points(merge(base_row, bad))
-                nothing
-            catch e
-                e
-            end
-            @test err isa ArgumentError
-            @test occursin("Malformed FCAS trapezium", err.msg)
-            @test occursin("BW01", err.msg)
+            err = (@test_throws ArgumentError AustralianElectricityMarkets._fcas_trapezium_points(merge(base_row, bad))).value
+            @test occursin(message, err.msg) && occursin("BW01", err.msg)
         end
     end
 
@@ -101,7 +75,7 @@
         sys = first(nem_network(db))
         set_market_bids!(sys, db, date_range)
         asload1 = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
-        @test fcas_service(asload1, BidType.RAISE6SEC) isa FCASService
+        @test fcas_service(asload1, BidType.RAISE6SEC) === get_component(FCASService, sys, "NSW1_RAISE6SEC")
         extra = FCASService(; name = "NSW1_RAISE6SEC_EXTRA", region = "NSW1", bid_type = BidType.RAISE6SEC)
         add_service!(sys, extra, [asload1])
         @test_throws ArgumentError fcas_service(asload1, BidType.RAISE6SEC)
@@ -221,14 +195,7 @@
         rm(joinpath(partial_hive, "DISPATCH_FCAS_REQ"); recursive = true)
         rm(joinpath(partial_hive, "DISPATCH_FCAS_REQ_CONSTRAINT"); recursive = true)
         partial_db = aem_connect(HiveConfiguration(hive_location = partial_hive, filesystem = "file"))
-        err = try
-            read_fcas_requirements(partial_db, date_range)
-            nothing
-        catch e
-            e
-        end
-        @test err isa ArgumentError
-        @test occursin("DISPATCH_FCAS_REQ", err.msg)
+        err = (@test_throws ArgumentError read_fcas_requirements(partial_db, date_range)).value
         @test occursin("DISPATCH_FCAS_REQ_CONSTRAINT", err.msg)
     end
 
@@ -243,11 +210,10 @@
 
     @testset "read_prices" begin
         prices = read_prices(db, date_range)
-        @test !isempty(prices)
         @test Set(["SETTLEMENTDATE", "REGIONID", "RRP", "ROP", "APCFLAG"]) == Set(names(prices))
         @test eltype(prices.RRP) == Float64
         first_interval = subset(prices, :SETTLEMENTDATE => ByRow(==(start_date)))
-        @test all(==(50.0), first_interval.RRP)
+        @test !isempty(first_interval) && all(==(50.0), first_interval.RRP)
         @test all(==(50.0), first_interval.ROP)
     end
 

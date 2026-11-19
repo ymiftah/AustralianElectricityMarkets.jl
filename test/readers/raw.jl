@@ -45,13 +45,7 @@ let
             cp(joinpath(hive_dir, table), joinpath(bare_dir, table); force = true)
         end
         bare_db = aem_connect(HiveConfiguration(hive_location = bare_dir, filesystem = "file"))
-        err = try
-            read_interconnectors(bare_db)
-            nothing
-        catch e
-            e
-        end
-        @test err isa ArgumentError
+        err = (@test_throws ArgumentError read_interconnectors(bare_db)).value
         @test occursin("DISPATCHREGIONSUM", sprint(showerror, err))
     end
 
@@ -144,8 +138,7 @@ let
 
     @testset "read_units" begin
         df = read_units(db)
-        @test !("TECHNOLOGY" in names(df))
-        @test !("FUELTYPE" in names(df))
+        @test isdisjoint(("TECHNOLOGY", "FUELTYPE"), names(df))
         @test only(df.CO2E_ENERGY_SOURCE[df.DUID .== "BW01"]) == "Battery Storage"
 
         # BAYSW (station for BW01-BW04) is renamed in a later STATION archive_month
@@ -173,13 +166,7 @@ let
         end
         partial_db = aem_connect(HiveConfiguration(hive_location = partial, filesystem = "file"))
         date_range = DateTime(2025, 1, 1, 0, 0):Dates.Minute(5):DateTime(2025, 1, 1, 1, 0)
-        err = try
-            read_bids(partial_db, date_range)
-            nothing
-        catch e
-            e
-        end
-        @test err isa ArgumentError
+        err = (@test_throws ArgumentError read_bids(partial_db, date_range)).value
         @test occursin("BW03", err.msg)
     end
 
@@ -203,14 +190,12 @@ let
         date_range = DateTime(2025, 1, 1, 0, 0):Dates.Minute(5):DateTime(2025, 1, 1, 1, 0)
         df = read_fixed_loads(db, date_range)
         @test names(df) == ["INTERVAL_DATETIME", "DUID", "DIRECTION", "FIXEDLOAD"]
-        @test nrow(df) == 4
         @test df.INTERVAL_DATETIME == [DateTime(2025, 1, 1, 0, 10), DateTime(2025, 1, 1, 0, 10), DateTime(2025, 1, 1, 0, 15), DateTime(2025, 1, 1, 0, 15)]
         @test df.DUID == ["BW02", "BW04", "BW02", "BW04"]
         @test all(==(50.0), df.FIXEDLOAD)
         # The stop bound is exclusive.
         @test nrow(read_fixed_loads(db, DateTime(2025, 1, 1, 0, 0):Dates.Minute(5):DateTime(2025, 1, 1, 0, 15))) == 2
-        empty_df = read_fixed_loads(db, DateTime(2025, 1, 1, 2, 0):Dates.Minute(5):DateTime(2025, 1, 1, 2, 5))
-        @test nrow(empty_df) == 0
+        @test isempty(read_fixed_loads(db, DateTime(2025, 1, 1, 2, 0):Dates.Minute(5):DateTime(2025, 1, 1, 2, 5)))
     end
 
     @testset "read_mnsp_offers" begin
@@ -257,14 +242,7 @@ let
         @test sort(partition_dirs(edge)) == ["archive_month=2024-12", "archive_month=2025-01"]
         @test sort(edge) == sort(vcat(partition_files("MNSP_DAYOFFER", "2024-12"), partition_files("MNSP_DAYOFFER", "2025-01")))
         # No cached month in range: the error names the months and the populate call, with no all-partitions fallback.
-        uncached = try
-            read_hive(db, :DISPATCHLOAD, DateTime(2030, 1, 1):Dates.Minute(5):DateTime(2030, 1, 1, 1))
-            nothing
-        catch e
-            e
-        end
-        @test uncached isa ArgumentError
-        @test occursin("2029-12, 2030-01", uncached.msg)
-        @test occursin("populate(db, :DISPATCHLOAD, 2029-12-01, 2030-01-31)", uncached.msg)
+        uncached = (@test_throws ArgumentError read_hive(db, :DISPATCHLOAD, DateTime(2030, 1, 1):Dates.Minute(5):DateTime(2030, 1, 1, 1))).value
+        @test occursin("2029-12, 2030-01", uncached.msg) && occursin("populate(db, :DISPATCHLOAD, 2029-12-01, 2030-01-31)", uncached.msg)
     end
 end

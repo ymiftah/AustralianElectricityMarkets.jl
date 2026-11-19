@@ -13,9 +13,8 @@ end
     @test all(m -> parentmodule(m) !== AEMS || occursin("GenericConstraint", string(m.sig)), methods(PSI.update_container_parameter_values!))
     @test !any(m -> parentmodule(m) === AEMS, methods(PSI._update_parameter_values!))
     ours = [m for m in methods(PSI.update_parameter_values!) if parentmodule(m) === AEMS]
-    @test !isempty(ours)
     fast_start(m) = occursin("FastStartModeTimeSeriesParameter", string(m.sig)) || occursin("FixValueParameter", string(m.sig))
-    @test all(m -> occursin("NEMClosedLoopDispatchProblem", string(m.sig)) || fast_start(m), ours)
+    @test !isempty(ours) && all(m -> occursin("NEMClosedLoopDispatchProblem", string(m.sig)) || fast_start(m), ours)
 end
 
 @testset "Pinned PowerSimulations.jl fork resolves the area-balance dual to an Area-keyed container" begin
@@ -109,9 +108,7 @@ end
     @test axes(bands, 2) == ["1", "2", "3"]
     base_power = PSY.get_base_power(sys)
     cleared(name, b) = PSI.JuMP.value(bands[name, string(b), 1]) * base_power
-    @test cleared(TOY_CHEAP, 1) ≈ 100.0 atol = 1.0e-6
-    @test cleared(TOY_CHEAP, 2) ≈ 0.0 atol = 1.0e-6
-    @test cleared(TOY_CHEAP, 3) ≈ 0.0 atol = 1.0e-6
+    @test [cleared(TOY_CHEAP, b) for b in 1:3] ≈ [100.0, 0.0, 0.0] atol = 1.0e-6
 end
 
 @testset "a battery with its LOAD price below its GEN price does not circulate" begin

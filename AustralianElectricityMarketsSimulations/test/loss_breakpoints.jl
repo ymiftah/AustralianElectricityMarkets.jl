@@ -60,15 +60,18 @@ const LB_FULL = InterconnectorLossModel(;
 
 @testset "the thinned curve keeps the endpoints, takes the interior evenly, and stays convex" begin
     @test AEMS._thin_loss_model(LB_FULL, LB_CAP).breakpoints == [-1000.0, -500.0, 0.0, 500.0, 1000.0]
-    @test AEMS._thin_loss_model(LB_FULL, 2).breakpoints == [-1000.0, 1000.0]
     # Four of 21 does not divide evenly: the interior indices round down.
     @test AEMS._thin_loss_model(LB_FULL, 4).breakpoints == [-1000.0, -400.0, 300.0, 1000.0]
     @test AEMS._thin_loss_model(LB_FULL, nothing) === LB_FULL
     @test AEMS._thin_loss_model(LB_FULL, length(LB_BREAKPOINTS)) === LB_FULL
-    thinned = [AEMS._thin_loss_model(LB_FULL, n) for n in 2:length(LB_BREAKPOINTS)]
-    @test length.(getfield.(thinned, :breakpoints)) == collect(2:length(LB_BREAKPOINTS))
-    @test all(t -> issubset(t.breakpoints, LB_FULL.breakpoints) && issorted(t.breakpoints), thinned)
-    @test all(t -> issorted(s.slope for s in loss_segments(t, Dict{String, Float64}())), thinned)
+    # Every cap keeps that many sorted breakpoints of the full curve, its endpoints, and ascending slopes.
+    @test all(2:length(LB_BREAKPOINTS)) do n
+        t = AEMS._thin_loss_model(LB_FULL, n)
+        bps = t.breakpoints
+        length(bps) == n && issubset(bps, LB_BREAKPOINTS) && issorted(bps) &&
+            (first(bps), last(bps)) == extrema(LB_BREAKPOINTS) &&
+            issorted(s.slope for s in loss_segments(t, Dict{String, Float64}()))
+    end
     @test_throws ArgumentError AEMS._thin_loss_model(LB_FULL, 1)
 end
 

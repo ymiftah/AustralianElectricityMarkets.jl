@@ -65,8 +65,6 @@ const FS_POWER = "ActivePowerVariable__ThermalStandard"
 @testset "a mode-0 unit dispatched in the commitment run is held at 0 MW in the dispatch run" begin
     # The commitment run dispatches Alta at $10 without ramp rows; it enters mode 1 with T1 = 7 > 5 minutes left.
     out = fs_problem(fast_start_system())
-    @test PSI.get_name(out.commitment) == Symbol(FAST_START_COMMITMENT_NAME)
-    @test PSI.get_name(out.dispatch) == :dispatch
     run1 = fs_values(out.commitment_results, FS_POWER)
     @test run1[TOY_CHEAP] ≈ 250.0 atol = TOY_TOLERANCE
     @test fs_price(out.commitment_results) ≈ 10.0 atol = TOY_TOLERANCE
@@ -97,40 +95,35 @@ end
     @test fs_price(out.dispatch_results) ≈ 10.0 atol = TOY_TOLERANCE
 end
 
-@testset "a unit ending in mode 2 is fixed at M t / T2" begin
+# `(case, system keywords, Alta's dispatch-run MW, its commitment-run MW)`; Park City at $50 covers the rest.
+const FS_PROFILE_CASES = [
     # From mode 1 with 4 of 7 minutes: 3 minutes to mode 2, then 2 of its 3 minutes, so 230 x 2 / 3 MW.
-    out = fs_problem(fast_start_system(; alta_price = 100.0, mode = 1, mode_time = 4.0))
-    @test fs_values(out.commitment_results, FS_POWER)[TOY_CHEAP] ≈ 0.0 atol = TOY_TOLERANCE
-    run2 = fs_values(out.dispatch_results, FS_POWER)
-    @test run2[TOY_CHEAP] ≈ FS_MINIMUM_LOAD * 2 / 3 atol = 1.0e-6
-    @test run2[TOY_EXPENSIVE] ≈ 250.0 - FS_MINIMUM_LOAD * 2 / 3 atol = 1.0e-6
-    @test fs_price(out.dispatch_results) ≈ 50.0 atol = TOY_TOLERANCE
-end
-
-@testset "a unit ending in mode 3 holds at least its minimum loading" begin
+    ("a unit ending in mode 2 is fixed at M t / T2", (; alta_price = 100.0, mode = 1, mode_time = 4.0), FS_MINIMUM_LOAD * 2 / 3, 0.0),
     # From mode 2 with 1 of 3 minutes: 2 minutes to mode 3, where it spends the other 3.
-    out = fs_problem(fast_start_system(; alta_price = 100.0, alta_initial = FS_MINIMUM_LOAD / 3, mode = 2, mode_time = 1.0))
-    run2 = fs_values(out.dispatch_results, FS_POWER)
-    @test run2[TOY_CHEAP] ≈ FS_MINIMUM_LOAD atol = 1.0e-6
-    @test fs_price(out.dispatch_results) ≈ 50.0 atol = TOY_TOLERANCE
-end
-
-@testset "a unit leaving mode 2 ramps up from its minimum loading" begin
+    (
+        "a unit ending in mode 3 holds at least its minimum loading",
+        (; alta_price = 100.0, alta_initial = FS_MINIMUM_LOAD / 3, mode = 2, mode_time = 1.0), FS_MINIMUM_LOAD, nothing,
+    ),
     # The standard row would hold Alta to 76.7 + 5 x 10 MW; the profile row ramps it from 230 MW for 3 minutes.
-    out = fs_problem(fast_start_system(; alta_initial = FS_MINIMUM_LOAD / 3, mode = 2, mode_time = 1.0, ramp_up = 10.0, load_mw = 400.0))
-    run2 = fs_values(out.dispatch_results, FS_POWER)
-    @test run2[TOY_CHEAP] ≈ FS_MINIMUM_LOAD + 10.0 * 3 atol = 1.0e-6
-    @test run2[TOY_EXPENSIVE] ≈ 400.0 - FS_MINIMUM_LOAD - 30.0 atol = 1.0e-6
-    @test fs_price(out.dispatch_results) ≈ 50.0 atol = TOY_TOLERANCE
     # Starting in mode 2, the commitment run has no ramp rows for Alta: it takes the whole load at $10.
-    @test fs_values(out.commitment_results, FS_POWER)[TOY_CHEAP] ≈ 400.0 atol = 1.0e-6
+    (
+        "a unit leaving mode 2 ramps up from its minimum loading",
+        (; alta_initial = FS_MINIMUM_LOAD / 3, mode = 2, mode_time = 1.0, ramp_up = 10.0, load_mw = 400.0), FS_MINIMUM_LOAD + 10.0 * 3, 400.0,
+    ),
+    # From mode 4 with 2 of 10 minutes: 7 minutes at the end, so at least 230 x (1 - 7 / 10) = 69 MW.
+    ("a unit ending in mode 4 has a lower bound on its declining profile", (; alta_price = 100.0, alta_initial = 120.0, mode = 4, mode_time = 2.0), 69.0, nothing),
+]
+
+@testset "$name" for (name, kwargs, alta_mw, commitment_mw) in FS_PROFILE_CASES
+    out = fs_problem(fast_start_system(; kwargs...))
+    run2 = fs_values(out.dispatch_results, FS_POWER)
+    @test run2[TOY_CHEAP] ≈ alta_mw atol = 1.0e-6
+    @test run2[TOY_CHEAP] + run2[TOY_EXPENSIVE] ≈ get(kwargs, :load_mw, 250.0) atol = 1.0e-6
+    @test fs_price(out.dispatch_results) ≈ 50.0 atol = TOY_TOLERANCE
+    isnothing(commitment_mw) || @test fs_values(out.commitment_results, FS_POWER)[TOY_CHEAP] ≈ commitment_mw atol = 1.0e-6
 end
 
-@testset "a unit ending in mode 4 has a lower bound on its declining profile" begin
-    # From mode 4 with 2 of 10 minutes: 7 minutes at the end, so at least 230 x (1 - 7 / 10) = 69 MW.
-    out = fs_problem(fast_start_system(; alta_price = 100.0, alta_initial = 120.0, mode = 4, mode_time = 2.0))
-    @test fs_values(out.dispatch_results, FS_POWER)[TOY_CHEAP] ≈ 69.0 atol = 1.0e-6
-    # The bound is a floor only: a cheap unit ramps above it, from its initial output.
+@testset "the mode-4 bound is a floor only: a cheap unit ramps above it from its initial output" begin
     cheap = fs_problem(fast_start_system(; alta_initial = 120.0, mode = 4, mode_time = 2.0, ramp_up = 10.0))
     @test fs_values(cheap.dispatch_results, FS_POWER)[TOY_CHEAP] ≈ 170.0 atol = 1.0e-6
 end

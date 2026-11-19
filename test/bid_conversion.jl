@@ -37,14 +37,8 @@
         points = AEM._fcas_trapezium_points(row)
         @test points == AEM.FCASTrapeziumPoints((0.0, 10.0, 20.0, 30.0))
         invalid = merge(row, (LOWBREAKPOINT = 40.0,))
-        error = try
-            AEM._fcas_trapezium_points(invalid)
-        catch e
-            e
-        end
-        @test error isa ArgumentError
-        @test occursin("EXAMPLE ($direction) at 2026-01-22T04:05:00", error.msg)
-        @test occursin("LowBreakpoint = 40.0", error.msg)
+        error = (@test_throws ArgumentError AEM._fcas_trapezium_points(invalid)).value
+        @test occursin("EXAMPLE ($direction) at 2026-01-22T04:05:00", error.msg) && occursin("LowBreakpoint = 40.0", error.msg)
     end
     for direction in ("GEN", "LOAD")
         row = (DIRECTION = direction, PRICEBANDARRAY = zeros(2), BANDAVAILARRAY = [0.0, 0.0])
@@ -70,19 +64,9 @@ end
     @test AEM._validate_fcas_trapezium(valid, context) === valid
     @test calls[] == 0
     invalid = FCASTrapezium(; enablement_min = 0.0, low_breakpoint = 40.0, high_breakpoint = 20.0, enablement_max = 30.0, max_avail = 5.0)
-    expected = try
-        AEM._validate_fcas_trapezium(invalid, "DUID EXAMPLE at 2026-01-22T04:05:00")
-    catch e
-        e
-    end
-    actual = try
-        AEM._validate_fcas_trapezium(invalid, context)
-    catch e
-        e
-    end
+    expected = (@test_throws ArgumentError AEM._validate_fcas_trapezium(invalid, "DUID EXAMPLE at 2026-01-22T04:05:00")).value
+    @test_throws expected AEM._validate_fcas_trapezium(invalid, context)
     @test calls[] == 1
-    @test actual isa ArgumentError
-    @test actual.msg == expected.msg
 end
 
 @testset "FCAS numeric extraction is inferred for each field" begin

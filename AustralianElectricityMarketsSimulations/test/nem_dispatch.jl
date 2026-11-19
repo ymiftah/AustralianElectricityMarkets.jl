@@ -220,12 +220,10 @@ end
     @test length(PSI.get_time_steps(container)) == 1
 
     power = PSI.get_variable(container, PSI.ActivePowerVariable(), ThermalStandard)
-    @test size(power, 2) == 1
     for meta in ("up", "dn")
         constraint = PSI.get_constraint(
             container, PSI.RampConstraint(), ThermalStandard, meta,
         )
-        @test size(constraint, 2) == 1
         @test constraint_vars(constraint["ER02", 1]) == Set([power["ER02", 1]])
         slack_meta = meta == "up" ? "unit_ramp|up" : "unit_ramp|down"
         other_meta = meta == "up" ? "unit_ramp|down" : "unit_ramp|up"

@@ -1,14 +1,11 @@
 # The forecast windows of a NEMDE System, its dispatch intervals, and the date-range rules of `nem_system`.
 # Runs on the mock NEMDE hive; the rule `_check_nemde_range` is also called on bare ranges.
 
-const _RG_HIVE = mktempdir()
-create_mock_data(_RG_HIVE; complete_inputs = true)
-write_mock_interconnector_results(_RG_HIVE)
 
 @testset "dispatch_intervals and the forecast windows of a NEMDE System" begin
-    db = aem_connect(HiveConfiguration(hive_location = _RG_HIVE))
+    db = nemde_test_db()
     t = DateTime(2025, 1, 1, 0, 5)
-    sys = nem_system(db, NEMDEConfiguration(); date_range = t:Minute(5):(t + Minute(20)))
+    sys = nemde_test_system()
     @test PowerSystems.get_time_series_counts(sys).forecast_count > 0
     @test dispatch_intervals(sys) == collect(t:Minute(5):(t + Minute(10)))
     @test_throws ArgumentError nem_system(db, NEMDEConfiguration(); date_range = t:Minute(5):(t + Minute(5)))

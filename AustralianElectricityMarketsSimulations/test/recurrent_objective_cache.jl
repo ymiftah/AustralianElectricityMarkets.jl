@@ -46,16 +46,17 @@ end
             slack = PSI.get_variable(container, GenericConstraintSlackDown(), GenericConstraint)["F_REG", 1]
             gc = PSY.get_component(GenericConstraint, sys, "F_REG")
             penalty = PSI.get_base_power(container) * interval_cost_coefficient(AustralianElectricityMarkets.constraint_cvp_factor(gc), PSI.get_resolution(container))
-            @test PSI.JuMP.coefficient(PSI.get_invariant_terms(PSI.get_objective_expression(container)), slack) == 12345.0 * penalty
-            @test PSI.JuMP.coefficient(PSI.get_variant_terms(PSI.get_objective_expression(container)), slack) == 0.0
+            # The slack is priced at the cap as an invariant term only, before and after the update.
+            priced() = PSI.JuMP.coefficient(PSI.get_invariant_terms(PSI.get_objective_expression(container)), slack) == 12345.0 * penalty &&
+                PSI.JuMP.coefficient(PSI.get_variant_terms(PSI.get_objective_expression(container)), slack) == 0.0
+            @test priced()
             storage = PSI.IS.get_time_series_storage(PSY.get_component(ThermalStandard, sys, TOY_CHEAP))
             path = storage.file_path
             cached && mv(path, path * ".hidden")
             try
                 _update_objective_cache_parameters!(model, keys, 1)
                 @test PSI.get_parameter_column_refs(PSI.get_parameter(container, invoked_key), "F_REG")[1] == 0.0
-                @test PSI.JuMP.coefficient(PSI.get_invariant_terms(PSI.get_objective_expression(container)), slack) == 12345.0 * penalty
-                @test PSI.JuMP.coefficient(PSI.get_variant_terms(PSI.get_objective_expression(container)), slack) == 0.0
+                @test priced()
                 @test cached || isempty(PSI.get_time_series_cache(model))
             finally
                 cached && mv(path * ".hidden", path)

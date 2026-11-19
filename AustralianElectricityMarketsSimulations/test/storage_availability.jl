@@ -22,7 +22,6 @@ end
         @test out.dispatch_mw[TOY_BATTERY] ≈ target atol = 1.0e-6
         violations = read_constraint_violations(out.results, sys)
         rows = filter(r -> r.family == "energy_max_avail" && r.name == TOY_BATTERY, violations)
-        @test nrow(rows) == 1
         @test only(rows.MW) ≈ expected atol = 1.0e-6
         @test only(rows.direction) == direction
         @test !any(==("generic_constraint"), violations.family)

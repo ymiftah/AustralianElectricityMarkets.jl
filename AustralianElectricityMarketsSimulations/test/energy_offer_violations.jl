@@ -63,7 +63,6 @@ end
     sys = offered_band_system(; bands = [[(40.0, 20.0)], [(80.0, 20.0)]])
     out = run_problem(sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false))
     rows = filter(:family => ==("energy_offer"), read_constraint_violations(out.results, sys))
-    @test nrow(rows) == 1
     @test only(rows.MW) ≈ 20.0 atol = 1.0e-6
     @test only(rows.DateTime) == TOY_START
 end

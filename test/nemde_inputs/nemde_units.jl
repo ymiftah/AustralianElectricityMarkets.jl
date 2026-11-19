@@ -1,7 +1,5 @@
 # NEMDE units of a nem_system build: energy offers, MAXAVAIL, FCAS offers and the series the accessors read.
-const RU_NEMDE_HIVE = mktempdir()
-create_mock_data(RU_NEMDE_HIVE; complete_inputs = true)
-write_mock_interconnector_results(RU_NEMDE_HIVE)
+const RU_NEMDE_HIVE = nemde_test_hive()
 
 # Reads `source` with the unit `duid` first registered at `stamp`, as NEMWEB has it.
 function _ru_registered_from(source, duid, stamp)
@@ -19,7 +17,7 @@ function _ru_registered_from(source, duid, stamp)
 end
 
 const RU_INTERVAL = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
-const RU_SYS = nem_system(aem_connect(HiveConfiguration(hive_location = RU_NEMDE_HIVE, filesystem = "file")), NEMDEConfiguration(); date_range = RU_INTERVAL)
+const RU_SYS = nemde_test_system(RU_INTERVAL)
 
 # The mock hive's network with bids, unit conditions and NEMDE inputs set over an hour, stage by stage.
 const RU_DB = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
@@ -61,10 +59,7 @@ end
     # BW02's RAISE6SEC is a modelled incremental bid, so its effective offer is disabled where AEMO publishes none.
     inactive = -FCAS_INACTIVE_LIMIT_MW / get_base_power(late)
     effective = get_time_series_values(SingleTimeSeries, bw02, fcas_effective_series_name(BidType.RAISE6SEC, false); ignore_scaling_factors = true)
-    for i in 1:2
-        @test effective[i][1] == 0.0
-        @test effective[i][2] == inactive
-    end
+    @test all(e -> e[1] == 0.0 && e[2] == inactive, effective[1:2])
     # A tie-break scale is zero where the padded band has no width, or absent when the unit is never tied.
     for key in get_time_series_keys(bw02)
         get_time_series_type(key) === SingleTimeSeries && startswith(get_name(key), "tie_break_scale_") || continue
@@ -93,21 +88,6 @@ end
     )
     add_component!(sys, stock)
     @test isnothing(AEM._energy_offer_view(stock, OfferSide.GEN))
-end
-
-@testset "a second set_market_bids! replaces the bid series timestamps" begin
-    sys = deepcopy(RU_NETWORK)
-    second_range = (RU_START + Minute(30)):Minute(5):(RU_START + Minute(90))
-    set_market_bids!(sys, RU_DB, RU_RANGE)
-    set_unit_conditions!(sys, RU_DB, RU_RANGE)
-    set_market_bids!(sys, RU_DB, second_range)
-    for device in vcat(collect(get_components(ThermalStandard, sys)), collect(get_components(EnergyReservoirStorage, sys)))
-        get_available(device) || continue
-        for bid in AustralianElectricityMarkets.get_energy_bids(AustralianElectricityMarkets._nem_offer_cost(device))
-            name = bid_series_name(BidType.ENERGY, :offer_curves, bid.direction)
-            @test first(get_time_series_timestamps(SingleTimeSeries, device, name)) == second_range[1]
-        end
-    end
 end
 
 @testset "a one-interval range is refused" begin

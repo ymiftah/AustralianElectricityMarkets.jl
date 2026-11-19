@@ -121,12 +121,8 @@ end
 end
 
 @testset "nem_system writes the fast-start state of a unit with a fast-start profile" begin
-    hive = mktempdir()
-    create_mock_data(hive; complete_inputs = true)
-    write_mock_interconnector_results(hive)
-    db = aem_connect(HiveConfiguration(hive_location = hive))
     interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
-    sys = nem_system(db, NEMDEConfiguration(); date_range = interval)
+    sys = nemde_test_system(interval)
     bw04 = get_component(Device, sys, "BW04")
     @test _FS.has_fast_start_profile(bw04)
     observed = _FS.get_observed_state(bw04)
@@ -148,13 +144,9 @@ end
 
 
 @testset "a unit whose rebid drops its fast-start profile is not fast-start from that interval" begin
-    hive = mktempdir()
-    create_mock_data(hive; complete_inputs = true)
-    write_mock_interconnector_results(hive)
-    db = aem_connect(HiveConfiguration(hive_location = hive))
     # BW04 rebids at 03:02:34 to T1 = 12 and a 5 MW minimum load, and at 03:17 to a zero profile.
     interval = DateTime(2025, 1, 1, 3, 0):Minute(5):DateTime(2025, 1, 1, 3, 35)
-    sys = nem_system(db, NEMDEConfiguration(); date_range = interval)
+    sys = nemde_test_system(interval)
     bw04 = get_component(Device, sys, "BW04")
     @test _FS.has_fast_start_profile(bw04)
     inputs = _FS.fast_start_unit_inputs(bw04, first(interval), 6)

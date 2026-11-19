@@ -57,58 +57,40 @@ function energy_slack(out, meta)
     return only(r.value for r in eachrow(PSI.read_variable(out.results, "NEMUnitSlack__ThermalStandard__" * meta)) if r.name == TOY_CHEAP)
 end
 
-@testset "a static rating does not defeat the separate energy limits" begin
-    out = energy_limit_solve(energy_limit_system(; max_avail = 70.0, uigf = 65.0, rating = 30.0))
-    @test out.power ≈ 60.0 atol = 1.0e-6
-    @test energy_slack(out, "energy_limit|max_avail") ≈ 0.0 atol = 1.0e-6
-    @test energy_slack(out, "energy_limit|uigf") ≈ 0.0 atol = 1.0e-6
-end
+# `(case, system keywords, Alta's MW, MAXAVAIL slack, UIGF slack)`; a `nothing` slack is not checked.
+const ENERGY_LIMIT_CASES = [
+    ("a static rating does not defeat the separate energy limits", (; max_avail = 70.0, uigf = 65.0, rating = 30.0), 60.0, 0.0, 0.0),
+    ("non-conformance can violate both distinct energy limits", (; max_avail = 40.0), 60.0, 20.0, 15.0),
+    ("fixed loading beats MaxAvail but does not beat UIGF", (; max_avail = 40.0, target = nothing, fixed_load = 60.0), 45.0, 5.0, 0.0),
+    ("an uninvoked fixed loading never binds", (; max_avail = 40.0, target = nothing, fixed_load = 60.0, fixed_invoked = 0.0), 40.0, 0.0, 0.0),
+    ("ramping beats the combined availability and UIGF penalties", (; max_avail = 40.0, target = nothing, initial = 65.0, down = 1.0), 60.0, 20.0, 15.0),
+    ("an ordinary forecast stays binding with negative bids", (; max_avail = 40.0, uigf = 30.0, target = nothing, price = -1000.0), 30.0, 0.0, 0.0),
+    ("a zero forecast stays binding with negative bids", (; max_avail = 40.0, uigf = 0.0, target = nothing, price = -1000.0), 0.0, 0.0, 0.0),
+    ("a scheduled unit is held at MAXAVAIL", (; max_avail = 40.0, uigf = nothing, target = nothing), 40.0, 0.0, nothing),
+]
 
-@testset "non-conformance can violate both distinct energy limits" begin
-    out = energy_limit_solve(energy_limit_system(; max_avail = 40.0))
-    @test out.power ≈ 60.0 atol = 1.0e-6
-    @test energy_slack(out, "energy_limit|max_avail") ≈ 20.0 atol = 1.0e-6
-    @test energy_slack(out, "energy_limit|uigf") ≈ 15.0 atol = 1.0e-6
-    @test only(filter(:family => ==("energy_max_avail"), out.violations).MW) ≈ 20.0 atol = 1.0e-6
-    @test only(filter(:family => ==("energy_uigf"), out.violations).MW) ≈ 15.0 atol = 1.0e-6
-    @test !any(==("generic_constraint"), out.violations.family)
-    @test out.objective ≈ 19213775.0 atol = 1.0e-4
-end
-
-@testset "fixed loading beats MaxAvail but does not beat UIGF" begin
-    out = energy_limit_solve(energy_limit_system(; max_avail = 40.0, target = nothing, fixed_load = 60.0))
-    @test out.power ≈ 45.0 atol = 1.0e-6
-    @test energy_slack(out, "energy_limit|max_avail") ≈ 5.0 atol = 1.0e-6
-    @test energy_slack(out, "energy_limit|uigf") ≈ 0.0 atol = 1.0e-6
-    fixed = only(filter(:family => ==("fixed_load"), out.violations))
+@testset "energy limits against conformance, fixed loading and ramping" begin
+    outs = Dict{String, Any}()
+    for (name, kwargs, power, max_avail_slack, uigf_slack) in ENERGY_LIMIT_CASES
+        @testset "$name" begin
+            out = outs[name] = energy_limit_solve(energy_limit_system(; kwargs...))
+            @test out.power ≈ power atol = 1.0e-6
+            # The violation reader reports exactly the solved energy-limit slacks, and no ramp or conformance row breaks first.
+            for (meta, family, slack) in (("energy_limit|max_avail", "energy_max_avail", max_avail_slack), ("energy_limit|uigf", "energy_uigf", uigf_slack))
+                isnothing(slack) && continue
+                @test energy_slack(out, meta) ≈ slack atol = 1.0e-6
+                @test sum(filter(:family => ==(family), out.violations).MW; init = 0.0) ≈ slack atol = 1.0e-6
+            end
+            @test !any(in(("generic_constraint", "unit_ramp")), out.violations.family)
+        end
+    end
+    @test outs["non-conformance can violate both distinct energy limits"].objective ≈ 19213775.0 atol = 1.0e-4
+    fixed = only(filter(:family => ==("fixed_load"), outs["fixed loading beats MaxAvail but does not beat UIGF"].violations))
     @test fixed.MW ≈ 15.0 atol = 1.0e-6
     @test fixed.direction == "down"
+    @test !any(==("fixed_load"), outs["an uninvoked fixed loading never binds"].violations.family)
 end
 
-@testset "an uninvoked fixed loading never binds" begin
-    out = energy_limit_solve(energy_limit_system(; max_avail = 40.0, target = nothing, fixed_load = 60.0, fixed_invoked = 0.0))
-    @test out.power ≈ 40.0 atol = 1.0e-6
-    @test !any(==("fixed_load"), out.violations.family)
-end
-
-@testset "ramping beats the combined availability and UIGF penalties" begin
-    out = energy_limit_solve(energy_limit_system(; max_avail = 40.0, target = nothing, initial = 65.0, down = 1.0))
-    @test out.power ≈ 60.0 atol = 1.0e-6
-    @test energy_slack(out, "energy_limit|max_avail") ≈ 20.0 atol = 1.0e-6
-    @test energy_slack(out, "energy_limit|uigf") ≈ 15.0 atol = 1.0e-6
-    @test !any(==("unit_ramp"), out.violations.family)
-end
-
-@testset "ordinary and zero forecasts stay binding with negative bids" begin
-    for forecast in (30.0, 0.0)
-        out = energy_limit_solve(energy_limit_system(; max_avail = 40.0, uigf = forecast, target = nothing, price = -1000.0))
-        @test out.power ≈ forecast atol = 1.0e-6
-        @test energy_slack(out, "energy_limit|max_avail") ≈ 0.0 atol = 1.0e-6
-        @test energy_slack(out, "energy_limit|uigf") ≈ 0.0 atol = 1.0e-6
-    end
-    scheduled = energy_limit_solve(energy_limit_system(; max_avail = 40.0, uigf = nothing, target = nothing))
-    @test scheduled.power ≈ 40.0 atol = 1.0e-6
-end
 
 @testset "recurrent energy limits update step by step" begin
     sys = energy_limit_system(; max_avail = [100.0, 35.0], uigf = [45.0, 25.0], target = [60.0, 20.0])
@@ -119,7 +101,6 @@ end
     @test power ≈ [60.0, 20.0] atol = 1.0e-6
     violations = read_constraint_violations(out.results, sys)
     forecast = filter(:family => ==("energy_uigf"), violations)
-    @test nrow(forecast) == 1
     @test only(forecast.MW) ≈ 15.0 atol = 1.0e-6
     @test only(forecast.DateTime) == TOY_START
 end

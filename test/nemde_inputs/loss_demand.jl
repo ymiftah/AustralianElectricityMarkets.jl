@@ -6,22 +6,7 @@ const _LD_START = DateTime(2025, 1, 1, 0, 5)
 const _LD_N = 4
 
 # A NEM run System on the mock hive, with its NEMDE inputs written by `nem_system`.
-const _LD_SYS = let hive = mktempdir()
-    create_mock_data(hive; complete_inputs = true)
-    write_mock_interconnector_results(hive)
-    db = aem_connect(HiveConfiguration(hive_location = hive))
-    nem_system(db, NEMDEConfiguration(); date_range = _LD_START:Minute(5):(_LD_START + Minute(5 * _LD_N)))
-end
-
-# The error thrown by `f`.
-function _ld_error(f)
-    try
-        f()
-    catch err
-        return err
-    end
-    error("no error was thrown")
-end
+const _LD_SYS = nemde_test_system()
 
 # The loss-modelled interchanges of `sys`, as `PowerSystems.AreaInterchange` components.
 _ld_modelled(sys) = [
@@ -147,6 +132,6 @@ end
     )
     sys = _ld_strip!(deepcopy(_LD_SYS))
     damage!(sys, PowerSystems.get_component(PowerSystems.PowerLoad, sys, "VIC1 Load"))
-    err = _ld_error(() -> AustralianElectricityMarkets._set_loss_demand_coefficients!(sys))
-    @test err isa ArgumentError && occursin(message, sprint(showerror, err))
+    err = (@test_throws ArgumentError AustralianElectricityMarkets._set_loss_demand_coefficients!(sys)).value
+    @test occursin(message, sprint(showerror, err))
 end

@@ -20,12 +20,7 @@ end
 end
 
 # A NEM run System on the mock hive, with its NEMDE inputs written by `nem_system`.
-const _RP_SYS = let hive = mktempdir()
-    create_mock_data(hive; complete_inputs = true)
-    write_mock_interconnector_results(hive)
-    t = DateTime(2025, 1, 1, 0, 5)
-    nem_system(aem_connect(HiveConfiguration(hive_location = hive)), NEMDEConfiguration(); date_range = t:Minute(5):(t + Minute(20)))
-end
+const _RP_SYS = nemde_test_system()
 
 # The stored values of `device`'s series `name`, without the scaling factor.
 _ramps_raw(device, name::AbstractString) = get_time_series_values(SingleTimeSeries, device, name; ignore_scaling_factors = true)
@@ -272,12 +267,6 @@ end
     @test !has_time_series(device, SingleTimeSeries, NEM_SERIES.ramp_down_rate)
     other = get_component(ThermalStandard, sys, "ER02")
     @test has_time_series(other, SingleTimeSeries, NEM_SERIES.ramp_up_rate)
-    err = try
-        get_telemetry(device)
-        nothing
-    catch e
-        e
-    end
-    @test err isa ArgumentError
+    err = (@test_throws ArgumentError get_telemetry(device)).value
     @test occursin("ER01 has no telemetry", sprint(showerror, err))
 end

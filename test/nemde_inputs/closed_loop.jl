@@ -1,9 +1,4 @@
-const _CL_SYS = let hive = mktempdir()
-    create_mock_data(hive; complete_inputs = true)
-    write_mock_interconnector_results(hive)
-    t0 = DateTime(2025, 1, 1, 0, 5)
-    nem_system(aem_connect(HiveConfiguration(hive_location = hive)), NEMDEConfiguration(); date_range = t0:Minute(5):(t0 + Minute(20)))
-end
+const _CL_SYS = nemde_test_system()
 
 # With the observed starting output, the closed-loop inputs of an interval are the series nem_system wrote.
 @testset "closed-loop inputs equal the written series for the observed state" begin

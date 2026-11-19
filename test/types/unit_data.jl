@@ -47,18 +47,8 @@ _ud_telemetry(; uigf = nothing) = AEM.NEMTelemetry(;
     @test_throws ArgumentError AEM.set_registration!(stock, _ud_registration())
     @test_throws ArgumentError AEM.set_observed_state!(stock, AEM.NEMObservedState(; initial_mw = 5, dispatch_mode = 0))
 
-    err = try
-        AEM.get_registration(stock)
-    catch e
-        e
-    end
-    @test err.msg == "attached is not a NEM device, so it has no registration"
-    err = try
-        AEM.set_telemetry!(stock, _ud_telemetry())
-    catch e
-        e
-    end
-    @test err.msg == "attached has no NEM unit data; attach it with attach_nem_unit_data!"
+    @test_throws ArgumentError("attached is not a NEM device, so it has no registration") AEM.get_registration(stock)
+    @test_throws ArgumentError("attached has no NEM unit data; attach it with attach_nem_unit_data!") AEM.set_telemetry!(stock, _ud_telemetry())
 
     unit = AEM.attach_nem_unit_data!(sys, stock)
     @test AEM.has_nem_unit_data(stock)
@@ -68,12 +58,7 @@ _ud_telemetry(; uigf = nothing) = AEM.NEMTelemetry(;
     @test AEM.has_nem_unit_data(stock)
 
     # Unit data without a registration reports the registration missing, not a stock device.
-    err = try
-        AEM.get_registration(stock)
-    catch e
-        e
-    end
-    @test err.msg == "attached has no registration; build it with nem_system"
+    @test_throws ArgumentError("attached has no registration; build it with nem_system") AEM.get_registration(stock)
 
     reg = _ud_registration()
     @test AEM.set_registration!(stock, reg) === reg

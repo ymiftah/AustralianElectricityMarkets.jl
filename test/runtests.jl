@@ -18,6 +18,22 @@ include("integration/pscb_nemweb_data.jl")
 const AEM_TEST_PSCB_HIVE_DIR = mktempdir()
 create_pscb_nemweb_data(AEM_TEST_PSCB_HIVE_DIR)
 
+# The complete NEMDE mock hive and its NEMDE systems, built on first use and shared read-only:
+# a test that edits a system works on a `deepcopy`, and one that damages the hive on a `damaged_cache`.
+const _NEMDE_FIXTURES = Dict{Any, Any}()
+function nemde_test_hive()
+    return get!(_NEMDE_FIXTURES, :hive) do
+        hive = mktempdir()
+        create_mock_data(hive; complete_inputs = true)
+        write_mock_interconnector_results(hive)
+        return hive
+    end
+end
+nemde_test_db() = aem_connect(HiveConfiguration(hive_location = nemde_test_hive()))
+function nemde_test_system(date_range = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 25))
+    return get!(() -> nem_system(nemde_test_db(), NEMDEConfiguration(); date_range), _NEMDE_FIXTURES, date_range)
+end
+
 # Test groups, in run order: name => (testset title, files). Pass group names as test arguments
 # to run only those, e.g. `Pkg.test(; test_args = ["fcas", "timeseries_setters"])`.
 const TEST_GROUPS = [

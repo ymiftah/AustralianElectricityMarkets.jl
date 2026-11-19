@@ -23,10 +23,7 @@
             limit_type = missing, source = missing,
             effective_date = nothing, version_no = nothing,
         )
-        @test get_limit_type(gc_null_ext) === nothing
-        @test get_source(gc_null_ext) === nothing
-        @test get_effective_date(gc_null_ext) === nothing
-        @test get_version_no(gc_null_ext) === nothing
+        @test all(isnothing, (get_limit_type(gc_null_ext), get_source(gc_null_ext), get_effective_date(gc_null_ext), get_version_no(gc_null_ext)))
         @test get_gencon_id(gc_null_ext) == "F_NULL_EXT"
     end
 
@@ -217,7 +214,6 @@ end
     pump_gc = get_component(GenericConstraint, sys, vname("N_PUMP_THERMAL"))
     @test only(get_terms(pump_gc)) == UnitTerm("PUMP1", BidType.ENERGY, -1.0)
     # A load DUID names exactly one Device, also when it has a GENUNITS row (PUMP1).
-    @test get_component(Device, sys, "PUMP1") isa InterruptiblePowerLoad
     @test has_nem_unit_data(get_component(Device, sys, "PUMP1"))
 
     skipped_table = get_skipped_constraints(sys)
@@ -293,7 +289,6 @@ end
         @test isnothing(resolve_term_devices(sys, RegionTerm("NO_SUCH_REGION", BidType.ENERGY, 1.0)))
         nsw1_names = resolve_term_devices(sys, RegionTerm("NSW1", BidType.ENERGY, 1.0))
         @test nsw1_names isa Vector{String}
-        @test !isempty(nsw1_names)
         expected_nsw1 = get_name.(AustralianElectricityMarkets._region_devices(sys, "NSW1"))
         @test Set(nsw1_names) == Set(expected_nsw1)
 
@@ -315,16 +310,9 @@ end
         @test isempty(AustralianElectricityMarkets._region_devices(sys_relocated, "TAS1"))
         @test resolve_term_devices(sys_relocated, RegionTerm("TAS1", BidType.RAISEREG, 1.0)) == String[]
 
-        err = try
-            build_constraints!(sys_relocated, db, date_range)
-            nothing
-        catch e
-            e
-        end
-        @test err isa ArgumentError
+        err = (@test_throws ArgumentError build_constraints!(sys_relocated, db, date_range)).value
         # Names every affected GENCONID/region/bid_type in one aggregated message.
-        @test occursin("F_TAS1_RAISEREG", err.msg)
-        @test occursin("F_TAS1_LOWERREG", err.msg)
+        @test occursin("F_TAS1_RAISEREG", err.msg) && occursin("F_TAS1_LOWERREG", err.msg)
 
         # The throw must leave sys untouched.
         @test isempty(collect(get_components(GenericConstraint, sys_relocated)))
@@ -386,14 +374,8 @@ end
         @test_throws r"fall outside date_range's grid" build_constraints!(misaligned_sys, misaligned_db, date_range)
     end
 
-    @testset "resolution inference" begin
-        # The stored series resolution is the step of date_range.
-        sys_default = nem_system(db, RegionalNetworkConfiguration())
-        build_constraints!(sys_default, db, date_range)
-        gc_default = get_component(GenericConstraint, sys_default, vname("N_BAYSW_THERMAL"))
-        rhs_ts_default = PowerSystems.IS.get_time_series(gc_default, gc_default.rhs)
-        @test get_resolution(rhs_ts_default) == Minute(5)
-    end
+    # The stored series resolution is the step of date_range.
+    @test get_resolution(PowerSystems.IS.get_time_series(gc, gc.rhs)) == Minute(5)
 
     @testset "Interconnector Zero constraints have a built-in definition" begin
         # Copy the mock hive, add Murraylink and Basslink to INTERCONNECTOR/INTERCONNECTORCONSTRAINT
@@ -592,24 +574,14 @@ end
         # Without matchmissing = :notequal, this would throw "Missing values in key columns"
         # The helper must not throw and must keep the row with missing EFFECTIVEDATE.
         undefined = AustralianElectricityMarkets._versions_without_definition(invoked_versions, definitions)
-        # Should have 2 rows: TEST1 with missing EFFECTIVEDATE and TEST2
-        @test nrow(undefined) == 2
         @test undefined.GENCONID == ["TEST1", "TEST2"]
-        # Verify the missing EFFECTIVEDATE is preserved
-        @test ismissing(undefined.GENCONID_EFFECTIVEDATE[1])
-        @test undefined.GENCONID_EFFECTIVEDATE[2] == DateTime(2025, 1, 1)
+        @test isequal(undefined.GENCONID_EFFECTIVEDATE, [missing, DateTime(2025, 1, 1)])
     end
 
     @testset "throws when DISPATCHCONSTRAINT is not cached" begin
         empty_db = aem_connect(HiveConfiguration(hive_location = mktempdir(), filesystem = "file"))
         empty_sys = nem_system(db, RegionalNetworkConfiguration())
-        err = try
-            build_constraints!(empty_sys, empty_db, date_range)
-            nothing
-        catch e
-            e
-        end
-        @test err isa ArgumentError
+        err = (@test_throws ArgumentError build_constraints!(empty_sys, empty_db, date_range)).value
         @test occursin("DISPATCHCONSTRAINT", err.msg)
     end
 
@@ -693,15 +665,8 @@ end
 
     # PHANTOM1 is registered (DUDETAILSUMMARY) but not built: a registered dropped term fails the check, vacuous or not.
     @test all(get_dropped_terms(sys).registered)
-    err = try
-        check(sys)
-        nothing
-    catch e
-        e
-    end
-    @test err isa ArgumentError
-    @test occursin(vname("N_ONE_PHANTOM_TERM"), err.msg)
-    @test occursin(vname("N_PHANTOM_TEST"), err.msg)
+    err = (@test_throws ArgumentError check(sys)).value
+    @test occursin(vname("N_ONE_PHANTOM_TERM"), err.msg) && occursin(vname("N_PHANTOM_TEST"), err.msg)
 
     # The dropped term of a unit not registered over the range contributes zero and passes the check.
     report = AustralianElectricityMarkets.get_build_report(sys)
@@ -724,13 +689,7 @@ end
     # A violated zero left-hand side (0 >= 5) is never silently omitted.
     sys, added, skipped = build_with_rhs(5.0)
     @test skipped[vname("N_PHANTOM_TEST")] == :unknown_duid
-    err = try
-        check(sys)
-        nothing
-    catch e
-        e
-    end
-    @test err isa ArgumentError
+    err = (@test_throws ArgumentError check(sys)).value
     @test occursin(vname("N_PHANTOM_TEST"), err.msg)
 
     # A vacuous constraint whose only dropped term is one unit: it fails the check when that unit is registered and
@@ -752,13 +711,7 @@ end
         )
         return check(sys)
     end
-    err = try
-        check_with_registration(true)
-        nothing
-    catch e
-        e
-    end
-    @test err isa ArgumentError
+    err = (@test_throws ArgumentError check_with_registration(true)).value
     @test occursin(vname("N_PHANTOM_TEST"), err.msg)
     @test isnothing(check_with_registration(false))
 

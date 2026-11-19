@@ -7,7 +7,6 @@
         time_series_in_memory = false, time_series_directory = mktempdir()
     )
     DuckDB.close(db.db)
-    @test PowerSystems.get_time_series_counts(sys).forecast_count > 0
     @test dispatch_intervals(sys) == collect(t:Minute(5):(t + Minute(5)))
     folder = mktempdir()
     problem = problem_simulation(sys, steps; name = "custom_dispatch", simulation_name = "custom_run", folder)

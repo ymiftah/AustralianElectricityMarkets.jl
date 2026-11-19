@@ -213,34 +213,23 @@ function _add_fcas_services!(sys)
     return
 end
 
-@testset "an FCAS term whose service the template doesn't model throws, naming the constraint and the term" begin
-    sys = _prepared_system()
-    for id in ("F_R2_LOWERREG", "N_HYDRO_LIMIT", "N_IC1_LIMIT", "N_PARTIAL")
-        remove_component!(sys, _gc(sys, id))
+@testset "an unmodeled FCAS service or device type throws, naming the constraint and the term" begin
+    # (kept constraint, whether its FCAS service is added, expected message parts)
+    for (kept, fcas, parts) in (
+            ("F_R1_RAISE6SEC", true, ("F_R1_RAISE6SEC", "1_RAISE6SEC")),
+            ("N_HYDRO_LIMIT", false, ("N_HYDRO_LIMIT", "template must model")),
+        )
+        sys = _prepared_system()
+        for id in NEM_CONSTRAINTS_GENCON_IDS
+            id == kept || remove_component!(sys, _gc(sys, id))
+        end
+        fcas && add_service!(
+            sys, FCASService(; name = "1_RAISE6SEC", region = "1", bid_type = BidType.RAISE6SEC),
+            get_contributing_devices(sys, _gc(sys, kept)),
+        )
+        err = _build_error(_decision_model(_nem_service_template(sys), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2)))
+        @test err isa ArgumentError && all(part -> occursin(part, sprint(showerror, err)), parts)
     end
-    add_service!(
-        sys, FCASService(; name = "1_RAISE6SEC", region = "1", bid_type = BidType.RAISE6SEC),
-        get_contributing_devices(sys, _gc(sys, "F_R1_RAISE6SEC")),
-    )
-    model = _decision_model(_nem_service_template(sys), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
-    err = _build_error(model)
-    @test err isa ArgumentError
-    msg = sprint(showerror, err)
-    @test occursin("F_R1_RAISE6SEC", msg)
-    @test occursin("1_RAISE6SEC", msg)
-end
-
-@testset "a device type this template doesn't model throws, naming the constraint and the device" begin
-    sys = _prepared_system()
-    for id in ("F_R1_RAISE6SEC", "F_R2_LOWERREG", "N_IC1_LIMIT", "N_PARTIAL")
-        remove_component!(sys, _gc(sys, id))
-    end
-    model = _decision_model(_nem_service_template(sys), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
-    err = _build_error(model)
-    @test err isa ArgumentError
-    msg = sprint(showerror, err)
-    @test occursin("N_HYDRO_LIMIT", msg)
-    @test occursin("template must model", msg)
 end
 
 """
@@ -322,9 +311,6 @@ _row_bounds(container, name, t) = PSI.JuMP.MOI.get(
         container = PSI.get_optimization_container(model)
         gc = _gc(sys, "N_IC1_LIMIT")
         name = PSY.get_name(gc)
-        @test AustralianElectricityMarkets.constraint_cvp_factor(gc) == 1.0
-        @test PSI.get_base_power(container) == 100.0
-        @test PSI.get_resolution(container) == Hour(1)
 
         key = PSI.ParameterKey(AEMS.GenericConstraintInvocationParameter, GenericConstraint)
         invoked = () -> PSI.get_parameter_column_refs(PSI.get_parameter(container, key), name)
@@ -335,7 +321,8 @@ _row_bounds(container, name, t) = PSI.JuMP.MOI.get(
 
         if use_slacks
             # Constant slack price in the invariant objective: weight x base x interval coefficient x MPC.
-            expected = 1.0 * 100.0 * interval_cost_coefficient(1.0, Hour(1)) * 20_300.0
+            expected = AustralianElectricityMarkets.constraint_cvp_factor(gc) * PSI.get_base_power(container) *
+                interval_cost_coefficient(1.0, PSI.get_resolution(container)) * 20_300.0
             invariant = PSI.get_invariant_terms(PSI.get_objective_expression(container))
             slack_var = only(
                 s for s in (AEMS.GenericConstraintSlackUp, AEMS.GenericConstraintSlackDown)
@@ -445,12 +432,14 @@ end
 end
 
 @testset "Market Price Cap lookup covers only the published financial years" begin
-    @test AustralianElectricityMarkets._financial_year_mpc(DateTime(2025, 7, 1)) == 17_500.0  # interval 23:55-00:00 on 30 June
-    @test AustralianElectricityMarkets._financial_year_mpc(DateTime(2025, 7, 1, 0, 5)) == 20_300.0
-    @test AustralianElectricityMarkets._financial_year_mpc(DateTime(2026, 7, 1)) == 20_300.0
-    @test AustralianElectricityMarkets._financial_year_mpc(DateTime(2026, 7, 1, 0, 5)) == 23_200.0
-    @test [AustralianElectricityMarkets._financial_year_mpc(DateTime(y, 7, 1, 0, 5)) for y in 2021:2023] == [15_100.0, 15_500.0, 16_600.0]
-    @test AustralianElectricityMarkets._financial_year_mpc(DateTime(2027, 7, 1)) == 23_200.0
+    # An interval ending at 00:00 on 1 July (23:55-00:00 on 30 June) belongs to the year that ends.
+    published = [
+        DateTime(2021, 7, 1, 0, 5) => 15_100.0, DateTime(2022, 7, 1, 0, 5) => 15_500.0,
+        DateTime(2023, 7, 1, 0, 5) => 16_600.0, DateTime(2025, 7, 1) => 17_500.0,
+        DateTime(2025, 7, 1, 0, 5) => 20_300.0, DateTime(2026, 7, 1) => 20_300.0,
+        DateTime(2026, 7, 1, 0, 5) => 23_200.0, DateTime(2027, 7, 1) => 23_200.0,
+    ]
+    @test AustralianElectricityMarkets._financial_year_mpc.(first.(published)) == last.(published)
     @test_throws r"No published Market Price Cap" AustralianElectricityMarkets._financial_year_mpc(DateTime(2021, 7, 1))
     @test_throws r"No published Market Price Cap" AustralianElectricityMarkets._financial_year_mpc(DateTime(2027, 7, 1, 0, 5))
 end
@@ -592,9 +581,7 @@ end
 @testset "validate_template: user exclusions, template-scope pruning and the checks on the System" begin
     sys = fcas_toy_system()
     optimizer = PSI.optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false)
-    steps = TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION)
     names_before = sort(PSY.get_name.(PSY.get_components(GenericConstraint, sys)))
-    @test !isempty(names_before)
 
     # A named exclusion is reported, gets no container, and leaves the constraint available.
     name = first(names_before)
@@ -621,7 +608,6 @@ end
     bare = nem_toy_system([TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0; horizon = TOY_RESOLUTION)
     unforecast = PSI.DecisionModel(AEMS.NEMDispatchProblem, template_nemde(), bare; optimizer, initial_time = TOY_START, name = "dispatch")
     PSY.remove_time_series!(bare, PSY.DeterministicSingleTimeSeries)
-    @test PSY.get_time_series_counts(bare).forecast_count == 0
     @test_throws r"nem_system\(db, NEMDEConfiguration\(\); date_range\)" PSI.validate_template(unforecast)
 end
 
@@ -669,7 +655,7 @@ end
 
     # The full template judges every constraint, so the missing unit blocks it.
     full = template_nemde()
-    @test only(template_skipped_constraints(sys, full)[template_skipped_constraints(sys, full).constraint .== "N_GHOST", :reason]) ==
-        :missing_component
+    full_rows = template_skipped_constraints(sys, full)
+    @test only(full_rows[full_rows.constraint .== "N_GHOST", :reason]) == :missing_component
     @test_throws r"missing_component" problem_template(sys; template = full)
 end
