@@ -18,8 +18,8 @@ module _PrecompileMockData
     end
 end
 
-# Builds and executes a simulation of `problem` over `steps` of `sys`, returning it.
-function _precompile_simulation(problem, template, sys, steps)
+# Builds a single-decision-model simulation of `problem` over `steps` of `sys`, returning it unbuilt.
+function _precompile_build(problem, template, sys, steps)
     model = PSI.DecisionModel(problem, template, sys; optimizer = nemde_optimizer(), initial_time = first(steps), name = "dispatch")
     models = PSI.SimulationModels(; decision_models = [model])
     sequence = PSI.SimulationSequence(; models = models, ini_cond_chronology = PSI.InterProblemChronology())
@@ -29,13 +29,12 @@ function _precompile_simulation(problem, template, sys, steps)
     )
     PSI.build!(simulation; store_systems_in_results = false) == PSI.SimulationBuildStatus.BUILT ||
         error("precompile NEMDE failed to build")
-    PSI.execute!(simulation) == PSI.RunStatus.SUCCESSFULLY_FINALIZED ||
-        error("precompile NEMDE failed to execute")
     return simulation
 end
 
-# Builds, executes and reads back a two-interval run through the public API, with the inputs and
-# steps of the run workflow (`nem_system` followed by a PSI simulation).
+# Builds the models of a two-interval run from the mock NEMWEB cache, with the inputs and steps of
+# the run workflow (`nem_system` followed by a PSI simulation). Execution and result reads are
+# not cached: they compile on first use in a session.
 function _precompile_workload()
     _PrecompileMockData.AVAILABLE || return
     hive = mktempdir()
@@ -53,21 +52,13 @@ function _precompile_workload()
         _PrecompileMockData.DuckDB.close(db.db)
     end
     template = template_nemde()
-    simulation = _precompile_simulation(NEMDispatchProblem, template, sys, steps)
-    results = PSI.get_decision_problem_results(PSI.SimulationResults(simulation), "dispatch")
-    # Realized reads of the dispatch variable and the area balance dual, as the run results do.
-    variable_names = [
-        PSI.IS.Optimization.encode_key_as_string(k) for k in PSI.list_variable_keys(results)
-            if PSI.IS.Optimization.get_entry_type(k) === PSI.ActivePowerVariable
-    ]
-    PSI.read_realized_variables(results, variable_names)
-    PSI.read_realized_duals(results, [PSI.ConstraintKey(PSI.CopperPlateBalanceConstraint, PSY.Area)])
-    # The closed-loop path (state update, per-step inputs) compiles on its own two-step run.
-    _precompile_simulation(NEMClosedLoopDispatchProblem, template, sys, steps)
+    _precompile_build(NEMDispatchProblem, template, sys, steps)
+    # The closed-loop path (state update, per-step inputs) builds on its own two-step run.
+    _precompile_build(NEMClosedLoopDispatchProblem, template, sys, steps)
     return
 end
 
-# Build, step and read back a two-interval run while creating the package cache.
+# Builds the two-interval run's models while creating the package cache; execution is not cached.
 @compile_workload begin
     Base.CoreLogging.with_logger(_precompile_workload, Base.CoreLogging.NullLogger())
 end

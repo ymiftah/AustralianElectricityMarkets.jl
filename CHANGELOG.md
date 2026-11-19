@@ -548,6 +548,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The AEMSim precompile workload caches only the system and model build of a run, not its execution or result reads. The package image shrinks from 287 MB to 210 MB; the first `execute!` of a session compiles (51 s on the mock workload).
+
 - AEMSim owns the coefficient and bound parameter types it used from PowerSimulations: `NEMConstraintCoefficientParameter` and `NEMConstraintBoundParameter`, stored as `Float64` in every build mode. The five concrete parameter types keep their names, so result keys are unchanged. AEMSim no longer uses the fork's `ConstraintCoefficientParameter`, `ConstraintBoundParameter` or `NetworkModel` `slack_cost`.
 
 - DuckDB.jl compat raised to 2 (DuckDB 1.5 to 2.0 engine). CSV.jl stays at 0.10 because the pinned PowerSimulations fork requires it.
