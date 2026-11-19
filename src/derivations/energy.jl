@@ -4,7 +4,7 @@
 `price` referred to the reference node by `loss_factor`, AEMO's unit loss factor, and rounded to cents.
 
 # Arguments
-- `price`: the energy offer band price, in \$/MWh.
+- `price`: the energy offer band price, in `\$/MWh`.
 - `loss_factor`: the loss factor to divide the price by.
 
 # Returns

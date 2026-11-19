@@ -115,13 +115,13 @@ value or a key of the time series that holds it on that interchange.
 
 # Fields
 - `direction`: the [`MNSPDirection`](@ref).
-- `offer_curves`: the cumulative price bands, MW and \$/MWh, as `PiecewiseStepData`.
+- `offer_curves`: the cumulative price bands, MW and `\$/MWh`, as `PiecewiseStepData`.
 - `max_avail`: the link's `MAXAVAIL`, MW.
 - `ramp_up`: the link's `RAMPUPRATE`, MW/min, the limit on the flow's increase in this direction. The limit on
   the net flow's decrease is the opposite direction's `ramp_up`.
 - `fixed_load`: the link's `FIXEDLOAD`, MW, with NaN at the intervals where AEMO publishes NULL, or `nothing`
   when it is NULL over the whole range.
-- `band_prices`: the ten band prices of the trading day in \$/MWh, padded with `0.0`, or `nothing` until the
+- `band_prices`: the ten band prices of the trading day in `\$/MWh`, padded with `0.0`, or `nothing` until the
   NEMDE inputs are written.
 - `internal`: `InfrastructureSystems` bookkeeping.
 """

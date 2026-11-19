@@ -323,7 +323,7 @@ Stores the bids of each unit of `sys` for `date_range`. On a NEMDE system (units
 data, built by [`nem_network`](@ref) or `nem_system(db, NEMDEConfiguration(); date_range)`) it is one
 [`read_offers`](@ref) read of the `markets`, written as one series per bid field
 ([`bid_series_name`](@ref)) and recorded on the unit's [`NEMOfferCost`](@ref) as
-[`NEMEnergyBid`](@ref)s and [`NEMFCASBid`](@ref)s. The values are as offered: MW, \$/MWh at the
+[`NEMEnergyBid`](@ref)s and [`NEMFCASBid`](@ref)s. The values are as offered: MW, `\$/MWh` at the
 connection point and MW/min. A unit's loss factors, from which AEMSim refers its energy prices, are on
 its [`NEMRegistration`](@ref) recorded by [`nem_network`](@ref).
 

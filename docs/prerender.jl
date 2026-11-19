@@ -32,6 +32,22 @@ function strip_log_blocks(content::AbstractString)
     return join(kept, '\n')
 end
 
+## DocumenterVitepress reads `$` in raw HTML output (e.g. a "price ($/MWh)" cell) as interpolation.
+function escape_raw_html_dollars(content::AbstractString)
+    lines = split(content, '\n'; keepempty = true)
+    in_raw = false
+    for (i, line) in enumerate(lines)
+        if in_raw && startswith(line, "```")
+            in_raw = false
+        elseif in_raw
+            lines[i] = replace(line, '$' => "&#36;")
+        elseif startswith(line, "```@raw html")
+            in_raw = true
+        end
+    end
+    return join(lines, '\n')
+end
+
 pages = isempty(ARGS) ? FROZEN_PAGES : ARGS
 for name in pages
     name in FROZEN_PAGES || error("$name is not a Literate page; choose from $(join(FROZEN_PAGES, ", "))")
@@ -42,7 +58,7 @@ examples = joinpath(@__DIR__, "src", "examples")
 mkpath(examples)
 for name in pages
     figures = literate_options(name)
-    options = merge(figures, (; postprocess = content -> strip_log_blocks(figures.postprocess(content))))
+    options = merge(figures, (; postprocess = content -> escape_raw_html_dollars(strip_log_blocks(figures.postprocess(content)))))
     Literate.markdown(_page_source(name), examples; options...)
     content = read(joinpath(examples, "$name.md"), String)
     for f in readdir(FROZEN_DIR)
