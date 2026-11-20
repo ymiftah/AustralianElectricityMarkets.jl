@@ -27,7 +27,7 @@ function _benchmark_updates(folder; profile_updates = false)
     println("Building three-interval system"); flush(stdout)
     db = aem_connect()
     system_s = @elapsed sys = nem_system(db, NEMDEConfiguration(); date_range = t:Minute(5):(last(steps) + Minute(10)), time_series_in_memory = false, time_series_directory = folder)
-    optimizer = PSI.optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false, "threads" => 1, "mip_rel_gap" => 1.0e-8, "mip_abs_gap" => 1.0e-10)
+    optimizer = PSI.optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false, "threads" => 1, "mip_rel_gap" => 1.0e-9, "mip_abs_gap" => 1.0e-10)
     println("System built: $system_s seconds; constructing model"); flush(stdout)
     model_s = @elapsed begin
         out = problem_simulation(sys, steps; optimizer, folder)
@@ -43,7 +43,7 @@ function _benchmark_updates(folder; profile_updates = false)
     )
     results["psi_version"] = string(Base.pkgversion(PSI))
     results["highs_package_version"] = string(Base.pkgversion(HiGHS))
-    results["mip_rel_gap"] = 1.0e-8
+    results["mip_rel_gap"] = 1.0e-9
     results["mip_abs_gap"] = 1.0e-10
     results["solver_threads"] = 1
     results["intervals_aest"] = string.(collect(steps))

@@ -548,6 +548,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The NEMDE HiGHS relative MIP gap is `1e-9` (was `1e-8`) in `NEMDE_HIGHS_OPTIONS`, the batch runner and the baseline comparison; the absolute gap stays `1e-10`. At `1e-8` some intervals stopped short of the optimum with an interconnector on a loss breakpoint, mispricing the region by up to 4 $/MWh.
 - AEMSim owns the coefficient and bound parameter types it used from PowerSimulations: `NEMConstraintCoefficientParameter` and `NEMConstraintBoundParameter`, stored as `Float64` in every build mode. The five concrete parameter types keep their names, so result keys are unchanged. AEMSim no longer uses the fork's `ConstraintCoefficientParameter`, `ConstraintBoundParameter` or `NetworkModel` `slack_cost`.
 
 - DuckDB.jl compat raised to 2 (DuckDB 1.5 to 2.0 engine). CSV.jl stays at 0.10 because the pinned PowerSimulations fork requires it.

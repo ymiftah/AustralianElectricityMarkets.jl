@@ -335,7 +335,7 @@ function supervise(options)
     config = merge(
         options, Dict(
             "started_ns" => string(started_ns), "started_utc" => string(now(UTC)),
-            "julia_version" => string(VERSION), "mip_rel_gap" => "1e-8", "mip_abs_gap" => "1e-10"
+            "julia_version" => string(VERSION), "mip_rel_gap" => "1e-9", "mip_abs_gap" => "1e-10"
         )
     )
     config["git_revision"] = try

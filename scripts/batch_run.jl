@@ -30,7 +30,7 @@ function main(args = ARGS)
               --fast-start B        run NEMDE's two fast-start runs when the system has a fast-start unit (true);
                                     false solves the single model, without inflexibility profiles
 
-            HiGHS mip_rel_gap=1e-8, mip_abs_gap=1e-10.
+            HiGHS mip_rel_gap=1e-9, mip_abs_gap=1e-10.
             See scripts/README.md for outputs and overnight launch commands.
             """
         )

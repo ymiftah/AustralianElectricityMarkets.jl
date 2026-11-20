@@ -209,7 +209,7 @@ After updating the checkout, compare `Pkg.status` with these revisions. A root
 `Pkg.add(url = ..., rev = ...)` with that project active. Existing frozen run
 launches retain their own dependency versions.
 
-- HiGHS with `mip_rel_gap = 1e-8` and `mip_abs_gap = 1e-10`.
+- HiGHS with `mip_rel_gap = 1e-9` and `mip_abs_gap = 1e-10`.
 - One solver thread, the default `template_nemde()` template, and `intervention = 0` (pricing run).
 - A new system and model per trading day, with interval parameters updated in
   place within the day. The existing workflow also splits at 00:05 on July 1.

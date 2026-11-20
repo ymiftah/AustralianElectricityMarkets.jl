@@ -8,7 +8,7 @@ using Serialization
 # Kinds whose values gate the comparison; `parameter` and `input` differences are reported only.
 const _GATING_KINDS = ("variable", "dual", "aux", "expression", "stats", "derived")
 # The objective tolerance is the solver's relative MIP gap (`mip_rel_gap` of `NEMDE_HIGHS_OPTIONS`).
-const _STATS_RTOL = 1.0e-8
+const _STATS_RTOL = 1.0e-9
 const _STATS_GATING_COLUMNS = ("objective_value",)
 # The duals that gate in invariants mode: the regional power-balance rows `read_prices` reads.
 const _ENERGY_PRICE_DUAL_KEY = "dual/CopperPlateBalanceConstraint__Area"
@@ -231,7 +231,7 @@ end
 
 Compares two snapshots from [`problem_snapshot`](@ref) and returns the gating mismatches as
 `(; key, kind, max_abs)` rows. Variable, dual, auxiliary and expression values differ when they exceed
-`atol`; the optimizer objective differs beyond the solver's relative MIP gap, `1e-8`. Parameter and input tables never gate.
+`atol`; the optimizer objective differs beyond the solver's relative MIP gap, `1e-9`. Parameter and input tables never gate.
 A key present on one side only is a mismatch unless a regex in `allow_new` or `allow_missing` matches it;
 rows that a key matching `allow_new` adds with all values zero do not count as a difference.
 
