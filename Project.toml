@@ -21,7 +21,7 @@ TimeSeries = "9e3dc215-6440-5c97-bce1-76c03772f85e"
 ZipArchives = "49080126-0e18-4c2a-b176-c102e4b3760c"
 
 [compat]
-CSV = "0.10"
+CSV = "0.10, 1"
 Chain = "0.6, 1.0"
 DBInterface = "2"
 DataFrames = "1.7"
