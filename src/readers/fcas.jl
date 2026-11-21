@@ -134,42 +134,55 @@ const _FCAS_TRAPEZIUM_COLUMNS = ["ENABLEMENTMIN", "LOWBREAKPOINT", "HIGHBREAKPOI
 
 Reads per-unit FCAS dispatch outcomes from `DISPATCHLOAD`: one row per
 `(SETTLEMENTDATE, DUID, BIDTYPE::BidType)` with `TARGET` and `ACTUALAVAILABILITY`, plus
-`INITIALMW`, `TOTALCLEARED`, `AVAILABILITY` and `AGCSTATUS`. `ACTUALAVAILABILITY` is `missing` for
-`RAISEREG` and `LOWERREG`.
+`INITIALMW`, `TOTALCLEARED`, `AVAILABILITY` and `AGCSTATUS`, sorted by `SETTLEMENTDATE`, `DUID` and
+`BIDTYPE`.
 
 `intervention` selects the dispatch run: `0` for the pricing run. `1` for the physical run where the
-interval has one, else the pricing run. A table without an `INTERVENTION` column is read unfiltered.
+interval has one, else the pricing run.
 """
 function read_fcas_dispatch(db, date_range; intervention::Integer = 0)
-    df = _read_dispatch_table(db, :DISPATCHLOAD, "DUID", date_range; intervention) do schema
-        cols = [
-            _cast_double("INITIALMW"), _cast_double("TOTALCLEARED"), _cast_double("AVAILABILITY"),
-            "TRY_CAST(AGCSTATUS AS INTEGER) AS AGCSTATUS",
-        ]
-        for bid_type in string.(FCAS_BID_TYPES)
-            bid_type in schema || continue
-            push!(cols, _cast_double(bid_type))
-            avail_col = "$(bid_type)ACTUALAVAILABILITY"
-            avail_col in schema && push!(cols, _cast_double(avail_col))
-        end
-        return cols
-    end
-
-    # TODO use DataFrames.jl methods: this should be a groupby combine, or a stack / unstack
-    long = DataFrame()
-    for bid_type in FCAS_BID_TYPES
-        bid_type_str = string(bid_type)
-        target_col = bid_type_str
-        avail_col = "$(bid_type_str)ACTUALAVAILABILITY"
-        target_col in names(df) || continue
-        block = select(
-            df,
-            :SETTLEMENTDATE, :DUID, :INITIALMW, :TOTALCLEARED, :AVAILABILITY, :AGCSTATUS,
-            target_col => :TARGET,
+    _check_intervention(intervention)
+    _require_cached(db, :DISPATCHLOAD)
+    source = read_hive(db, :DISPATCHLOAD, date_range)
+    dispatch = _query(
+        db,
+        """
+        WITH run AS (
+            SELECT * FROM $source
+            WHERE SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ?
+            QUALIFY COALESCE(INTERVENTION, 0) = CASE WHEN ? = 0 THEN 0
+                ELSE max(COALESCE(INTERVENTION, 0)) OVER (PARTITION BY SETTLEMENTDATE) END
+        ),
+        wide AS (
+            SELECT * FROM run
+            QUALIFY row_number() OVER (PARTITION BY SETTLEMENTDATE, DUID ORDER BY archive_month DESC) = 1
         )
-        block[!, :ACTUALAVAILABILITY] = avail_col in names(df) ? df[!, avail_col] : fill(missing, nrow(block))
-        block[!, :BIDTYPE] = fill(bid_type, nrow(block))
-        append!(long, block; promote = true)
-    end
-    return long
+        SELECT SETTLEMENTDATE, DUID,
+               TRY_CAST(INITIALMW AS DOUBLE) AS INITIALMW,
+               TRY_CAST(TOTALCLEARED AS DOUBLE) AS TOTALCLEARED,
+               TRY_CAST(AVAILABILITY AS DOUBLE) AS AVAILABILITY,
+               TRY_CAST(AGCSTATUS AS INTEGER) AS AGCSTATUS,
+               TRY_CAST(TARGET AS DOUBLE) AS TARGET,
+               TRY_CAST(ACTUALAVAILABILITY AS DOUBLE) AS ACTUALAVAILABILITY,
+               BIDTYPE
+        FROM wide
+        UNPIVOT INCLUDE NULLS (
+            (TARGET, ACTUALAVAILABILITY) FOR BIDTYPE IN (
+                (RAISE1SEC, RAISE1SECACTUALAVAILABILITY) AS RAISE1SEC,
+                (LOWER1SEC, LOWER1SECACTUALAVAILABILITY) AS LOWER1SEC,
+                (RAISE6SEC, RAISE6SECACTUALAVAILABILITY) AS RAISE6SEC,
+                (LOWER6SEC, LOWER6SECACTUALAVAILABILITY) AS LOWER6SEC,
+                (RAISE60SEC, RAISE60SECACTUALAVAILABILITY) AS RAISE60SEC,
+                (LOWER60SEC, LOWER60SECACTUALAVAILABILITY) AS LOWER60SEC,
+                (RAISE5MIN, RAISE5MINACTUALAVAILABILITY) AS RAISE5MIN,
+                (LOWER5MIN, LOWER5MINACTUALAVAILABILITY) AS LOWER5MIN,
+                (RAISEREG, RAISEREGACTUALAVAILABILITY) AS RAISEREG,
+                (LOWERREG, LOWERREGACTUALAVAILABILITY) AS LOWERREG
+            )
+        )
+        ORDER BY SETTLEMENTDATE, DUID, BIDTYPE
+        """,
+        [first(date_range), last(date_range), intervention],
+    )
+    return transform!(dispatch, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
 end

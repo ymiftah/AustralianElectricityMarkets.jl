@@ -744,7 +744,7 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
 
     # 15. DISPATCHLOAD (per-unit FCAS dispatch outcomes - cleared counterpart to the
     # BIDPEROFFER_D trapezium; contingency markets get an ACTUALAVAILABILITY, regulation
-    # markets don't, matching what AEMO actually publishes). UIGF is a forecast only for the
+    # markets carry the column empty). UIGF is a forecast only for the
     # two semi-scheduled units (BW03 Solar, BW04 Wind - see GENUNITS above) and `0.0` for
     # the scheduled coal/battery/hydro DUIDs, matching what real NEMWEB publishes. Both
     # profiles vary across intervals and stay strictly below the 100 MW REGISTEREDCAPACITY, so
@@ -820,6 +820,7 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
         end
         for bid_type in regulation_types
             block[!, bid_type] = fill(3.0, m)
+            block[!, "$(bid_type)ACTUALAVAILABILITY"] = Vector{Union{Missing, Float64}}(missing, m)
         end
         append!(df_dispatchload, block; promote = true)
     end
@@ -1062,6 +1063,7 @@ function write_mock_interconnector_results(hive_root::String)
         append!(
             df, DataFrame(
                 SETTLEMENTDATE = fill(t, length(interconnector_ids)),
+                INTERVENTION = fill(0, length(interconnector_ids)),
                 INTERCONNECTORID = interconnector_ids,
                 MWFLOW = [100.0 * k + i for k in 1:length(interconnector_ids)],
                 MWLOSSES = [0.1 * k for k in 1:length(interconnector_ids)],

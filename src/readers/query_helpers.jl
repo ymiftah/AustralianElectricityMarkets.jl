@@ -57,9 +57,6 @@ function _run_rows(table, schema, intervention::Integer, time_col::AbstractStrin
     return sql, params
 end
 
-# One partition storing a numeric column as VARCHAR widens it to VARCHAR across the whole glob.
-_cast_double(col) = "TRY_CAST($col AS DOUBLE) AS $col"
-
 
 """
     _table_schema(db, table) -> Vector{String}
@@ -117,54 +114,6 @@ function _require_columns(table_name::Symbol, schema, columns)
         )
     end
     return
-end
-
-
-"""
-    _read_dispatch_table(columns, db, table_name, key, date_range; intervention = 0, where = "", order = false)
-
-Reads one row per `(SETTLEMENTDATE, key)` of the dispatch-run table `table_name` with
-`first(date_range) <= SETTLEMENTDATE < last(date_range)`, keeping the latest archive month's
-row and the `intervention` run.
-
-# Arguments
-- `columns`: the select expressions after `SETTLEMENTDATE` and `key`, or a function of the cached
-  schema returning them.
-- `db`: an `AEMDB` connection.
-- `table_name`: the cached table, which must exist.
-- `key`: the column identifying a row within an interval, e.g. `"DUID"`.
-- `date_range`: the half-open interval range.
-- `intervention`: `0` for the pricing run. `1` for the physical run where the interval has one,
-  else the pricing run (see `_run_rows`).
-- `where`: an extra SQL predicate starting with `AND`; the table is aliased `src`.
-- `order`: sort the rows by `SETTLEMENTDATE` and `key`.
-
-# Returns
-A `DataFrame` with `SETTLEMENTDATE`, `key` and the selected columns.
-"""
-function _read_dispatch_table(
-        columns, db, table_name::Symbol, key::AbstractString, date_range;
-        intervention::Integer = 0, where::AbstractString = "", order::Bool = false,
-    )
-    _require_cached(db, table_name)
-    table = read_hive(db, table_name, date_range)
-    schema = _table_schema(db, table)
-    select_cols = columns isa Function ? columns(schema) : columns
-    source, params = _run_rows(
-        table, schema, intervention, "SETTLEMENTDATE", "SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ?",
-        [first(date_range), last(date_range)],
-    )
-    return _query(
-        db,
-        """
-        SELECT $(join(["SETTLEMENTDATE", key, select_cols...], ", "))
-        FROM $source AS src
-        WHERE TRUE $where
-        QUALIFY row_number() OVER (PARTITION BY SETTLEMENTDATE, $key ORDER BY archive_month DESC) = 1
-        $(order ? "ORDER BY SETTLEMENTDATE, $key" : "")
-        """,
-        params,
-    )
 end
 
 

@@ -5,12 +5,27 @@ Reads `DISPATCHCONSTRAINT` over `date_range`: one row per `(SETTLEMENTDATE, GENC
 dispatch, with `RHS` and the constraint version NEMDE used (`GENCONID_EFFECTIVEDATE`/`GENCONID_VERSIONNO`).
 """
 function read_invoked_constraints(db, date_range; intervention::Integer = 0)
-    columns = [
-        _cast_double("RHS"),
-        "GENCONID_EFFECTIVEDATE", "GENCONID_VERSIONNO",
-    ]
-    df = _read_dispatch_table(columns, db, :DISPATCHCONSTRAINT, "CONSTRAINTID", date_range; intervention, order = true)
-    return rename!(df, :CONSTRAINTID => :GENCONID)
+    _check_intervention(intervention)
+    _require_cached(db, :DISPATCHCONSTRAINT)
+    source = read_hive(db, :DISPATCHCONSTRAINT, date_range)
+    return _query(
+        db,
+        """
+        WITH run AS (
+            SELECT * FROM $source
+            WHERE SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ?
+            QUALIFY COALESCE(INTERVENTION, 0) = CASE WHEN ? = 0 THEN 0
+                ELSE max(COALESCE(INTERVENTION, 0)) OVER (PARTITION BY SETTLEMENTDATE) END
+        )
+        SELECT SETTLEMENTDATE, CONSTRAINTID AS GENCONID,
+               TRY_CAST(RHS AS DOUBLE) AS RHS,
+               GENCONID_EFFECTIVEDATE, GENCONID_VERSIONNO
+        FROM run
+        QUALIFY row_number() OVER (PARTITION BY SETTLEMENTDATE, CONSTRAINTID ORDER BY archive_month DESC) = 1
+        ORDER BY SETTLEMENTDATE, GENCONID
+        """,
+        [first(date_range), last(date_range), intervention],
+    )
 end
 
 """

@@ -196,8 +196,28 @@ A `DataFrame` with `SETTLEMENTDATE`, `INTERCONNECTORID`, `METEREDMWFLOW`, `EXPOR
 `IMPORTLIMIT`.
 """
 function read_interconnector_limits(db, date_range; intervention::Integer = 0)
-    columns = [_cast_double(c) for c in ("METEREDMWFLOW", "EXPORTLIMIT", "IMPORTLIMIT")]
-    return _read_dispatch_table(columns, db, :DISPATCHINTERCONNECTORRES, "INTERCONNECTORID", date_range; intervention)
+    _check_intervention(intervention)
+    _require_cached(db, :DISPATCHINTERCONNECTORRES)
+    source = read_hive(db, :DISPATCHINTERCONNECTORRES, date_range)
+    return _query(
+        db,
+        """
+        WITH run AS (
+            SELECT * FROM $source
+            WHERE SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ?
+            QUALIFY COALESCE(INTERVENTION, 0) = CASE WHEN ? = 0 THEN 0
+                ELSE max(COALESCE(INTERVENTION, 0)) OVER (PARTITION BY SETTLEMENTDATE) END
+        )
+        SELECT SETTLEMENTDATE, INTERCONNECTORID,
+               TRY_CAST(METEREDMWFLOW AS DOUBLE) AS METEREDMWFLOW,
+               TRY_CAST(EXPORTLIMIT AS DOUBLE) AS EXPORTLIMIT,
+               TRY_CAST(IMPORTLIMIT AS DOUBLE) AS IMPORTLIMIT
+        FROM run
+        QUALIFY row_number() OVER (PARTITION BY SETTLEMENTDATE, INTERCONNECTORID ORDER BY archive_month DESC) = 1
+        ORDER BY SETTLEMENTDATE, INTERCONNECTORID
+        """,
+        [first(date_range), last(date_range), intervention],
+    )
 end
 
 
