@@ -34,7 +34,7 @@ let
         end
         retired_config = HiveConfiguration(hive_location = retired_dir, filesystem = "file")
         retired_db = aem_connect(retired_config)
-        df = read_interconnectors(retired_db)
+        df = read_interconnectors(retired_db, MOCK_DATE_RANGE)
         @test !("V-SN" in df.INTERCONNECTORID)
         @test !("SNOWY_RETIRED" in vcat(df.REGIONFROM, df.REGIONTO))
     end
@@ -45,7 +45,7 @@ let
             cp(joinpath(hive_dir, table), joinpath(bare_dir, table); force = true)
         end
         bare_db = aem_connect(HiveConfiguration(hive_location = bare_dir, filesystem = "file"))
-        err = (@test_throws ArgumentError read_interconnectors(bare_db)).value
+        err = (@test_throws ArgumentError read_interconnectors(bare_db, MOCK_DATE_RANGE)).value
         @test occursin("DISPATCHREGIONSUM", sprint(showerror, err))
     end
 
@@ -56,30 +56,28 @@ let
         early = DateTime(2025, 3, 1)
 
         maxmwin(df) = only(df[df.INTERCONNECTORID .== "IC1", :MAXMWIN])
-        @test maxmwin(read_interconnectors(vdb)) == 300.0
-        @test maxmwin(read_interconnectors(vdb; as_of = early)) == 500.0
-        @test maxmwin(read_interconnectors(vdb; as_of = DateTime(2025, 8, 1))) == 300.0
+        @test maxmwin(read_interconnectors(vdb, mock_range_at(early))) == 500.0
+        @test maxmwin(read_interconnectors(vdb, mock_range_at(DateTime(2025, 8, 1)))) == 300.0
 
         cp_of(df) = only(df[df.DUID .== "BW01", :CONNECTIONPOINTID])
-        @test cp_of(read_units(vdb)) == "CP_NEW"
-        @test cp_of(read_units(vdb; as_of = early)) == "CP_BAYSW"
-        @test cp_of(read_units(vdb; as_of = DateTime(2025, 8, 1))) == "CP_NEW"
-        @test allunique(read_units(vdb; as_of = early).DUID)
-        for units in (read_units(vdb), read_units(vdb; as_of = early))
+        @test cp_of(read_units(vdb, mock_range_at(early))) == "CP_BAYSW"
+        @test cp_of(read_units(vdb, mock_range_at(DateTime(2025, 8, 1)))) == "CP_NEW"
+        @test allunique(read_units(vdb, mock_range_at(early)).DUID)
+        for units in (read_units(vdb, MOCK_DATE_RANGE), read_units(vdb, mock_range_at(early)))
             @test eltype(units.REGISTERED_FROM) == DateTime
             @test eltype(units.REGISTERED_UNTIL) == DateTime
         end
         # The older archive's stale open rows must not leak into either as-of read.
-        @test only(read_units(vdb; as_of = early)[read_units(vdb; as_of = early).DUID .== "BW01", :REGISTEREDCAPACITY]) == 100.0
+        @test only(read_units(vdb, mock_range_at(early))[read_units(vdb, mock_range_at(early)).DUID .== "BW01", :REGISTEREDCAPACITY]) == 100.0
         # A unit not yet registered as of the date is omitted.
-        @test isempty(read_units(vdb; as_of = DateTime(2019, 1, 1)))
+        @test isempty(read_units(vdb, mock_range_at(DateTime(2019, 1, 1))))
     end
 
     @testset "read_units over a registration window" begin
         vdir = mktempdir()
         create_versioned_static_data(hive_dir, vdir)
         vwin = aem_connect(HiveConfiguration(hive_location = vdir, filesystem = "file"))
-        window = read_units(vwin; as_of = DateTime(2025, 3, 1), through = DateTime(2025, 8, 1))
+        window = read_units(vwin, DateTime(2025, 3, 1):Minute(5):(DateTime(2025, 8, 1) + Minute(5)))
         bw01 = window[window.DUID .== "BW01", :]
         # Both BW01 rows overlap the window: the earlier one supplies the attributes, the span covers both.
         @test only(bw01.CONNECTIONPOINTID) == "CP_BAYSW"
@@ -90,10 +88,9 @@ let
         @test eltype(window.REGISTERED_FROM) == DateTime
         @test eltype(window.REGISTERED_UNTIL) == DateTime
         # Only the first row overlaps a window ending before the change.
-        before = read_units(vwin; as_of = DateTime(2025, 3, 1), through = DateTime(2025, 6, 1))
+        before = read_units(vwin, DateTime(2025, 3, 1):Minute(5):(DateTime(2025, 6, 1) + Minute(5)))
         @test only(before[before.DUID .== "BW01", :REGISTERED_UNTIL]) == DateTime(2025, 7, 1)
-        @test isempty(read_units(vwin; as_of = DateTime(2019, 1, 1), through = DateTime(2019, 12, 31)))
-        @test_throws ArgumentError read_units(vwin; through = DateTime(2025, 1, 1))
+        @test isempty(read_units(vwin, DateTime(2019, 1, 1):Minute(5):(DateTime(2019, 12, 31) + Minute(5))))
     end
 
     @testset "a mid-window region change is rejected and a loss factor change warns" begin
@@ -102,15 +99,15 @@ let
             hive_dir, :DUDETAILSUMMARY,
             "INSERT INTO input SELECT * REPLACE (TIMESTAMP '2025-01-01 00:10:00' AS START_DATE, 'NSW1' AS REGIONID) FROM input WHERE DUID = 'BW03'",
         )
-        window = (as_of = DateTime(2025, 1, 1, 0, 5), through = DateTime(2025, 1, 1, 0, 15))
-        @test_throws r"BW03.*REGIONID" read_units(moved; window...)
+        window = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
+        @test_throws r"BW03.*REGIONID" read_units(moved, window)
         # A changed loss factor is not an error: the earlier row's factor is used, with a warning.
         lossy = damaged_cache(
             hive_dir, :DUDETAILSUMMARY,
             "INSERT INTO input SELECT * REPLACE (TIMESTAMP '2025-01-01 00:10:00' AS START_DATE, 0.9 AS TRANSMISSIONLOSSFACTOR) FROM input WHERE DUID = 'BW03'",
         )
-        @test read_units(lossy; window...) isa DataFrame
-        factors = @test_logs (:warn, r"Loss factors change") match_mode = :any read_loss_factors(lossy; window...)
+        @test read_units(lossy, window) isa DataFrame
+        factors = @test_logs (:warn, r"Loss factors change") match_mode = :any read_loss_factors(lossy, window)
         @test only(factors[factors.DUID .== "BW03", :LOAD_LOSS_FACTOR]) == 1.0
         # Identical factors across the window stay quiet.
         same = damaged_cache(
@@ -119,13 +116,13 @@ let
         )
         quiet = Test.TestLogger()
         Base.CoreLogging.with_logger(quiet) do
-            read_loss_factors(same; window...)
+            read_loss_factors(same, window)
         end
         @test !any(occursin("Loss factors change", string(record.message)) for record in quiet.logs)
     end
 
     @testset "read_demand" begin
-        df = read_demand(db)
+        df = read_demand(db, MOCK_DATE_RANGE)
         first_vic = df[(df.REGIONID .== "VIC1") .& (df.SETTLEMENTDATE .== minimum(df.SETTLEMENTDATE)), :]
         @test only(first_vic.TOTALDEMAND) == 1000.0
         # Loss-equation demand is INITIALSUPPLY + DEMANDFORECAST (mock: 990 + 10 i + 25) plus the
@@ -137,7 +134,7 @@ let
     end
 
     @testset "read_units" begin
-        df = read_units(db)
+        df = read_units(db, MOCK_DATE_RANGE)
         @test isdisjoint(("TECHNOLOGY", "FUELTYPE"), names(df))
         @test only(df.CO2E_ENERGY_SOURCE[df.DUID .== "BW01"]) == "Battery Storage"
 

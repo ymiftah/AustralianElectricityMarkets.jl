@@ -116,23 +116,13 @@ end
     end
 
     @testset "DISPATCHINTERCONNECTORRES" begin
-        # The mock writes these results without an INTERVENTION column, so the run column is added first.
         hive = joinpath(mktempdir(), "hive")
         cp(AEM_TEST_HIVE_DIR, hive)
         write_mock_interconnector_results(hive)
         interconnector_base = aem_connect(HiveConfiguration(hive_location = hive))
-        @testset "a table without the column is read unfiltered" begin
-            @test isequal(
-                read_interconnector_limits(interconnector_base, _RUN_WINDOW; intervention = 1),
-                read_interconnector_limits(interconnector_base, _RUN_WINDOW),
-            )
-        end
         db = damaged_cache(
             hive, :DISPATCHINTERCONNECTORRES,
-            [
-                "ALTER TABLE input ADD COLUMN INTERVENTION INTEGER DEFAULT 0",
-                _physical_copy("TRY_CAST(METEREDMWFLOW AS DOUBLE) + 4.0 AS METEREDMWFLOW"),
-            ],
+            _physical_copy("TRY_CAST(METEREDMWFLOW AS DOUBLE) + 4.0 AS METEREDMWFLOW"),
         )
         _check_runs(read_interconnector_limits, interconnector_base, db, [:INTERCONNECTORID], :METEREDMWFLOW, 4.0)
     end

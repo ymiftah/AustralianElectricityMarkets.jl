@@ -18,50 +18,6 @@ end
 
 
 """
-    _run_rows(table, schema, intervention, time_col, bounds, bound_params) -> (sql, params)
-
-A subquery over `table` holding the rows of the dispatch run `intervention` selects, restricted
-by `bounds`, a SQL predicate with `?` placeholders bound to `bound_params`. Run 0 keeps the rows
-with `COALESCE(INTERVENTION, 0) = 0`. Run 1 keeps, for each `time_col` value, the rows of the
-highest run that interval has: run 1 where it has any, else run 0. The run is decided after
-`bounds` and before the caller's own predicates. Without an `INTERVENTION` column in `schema` the
-rows are returned unfiltered.
-
-# Arguments
-- `table`: the `FROM` source fragment of the table, e.g. from [`read_hive`](@ref).
-- `schema`: the column names of `table`.
-- `intervention`: `0` or `1`.
-- `time_col`: the interval column the run is decided over, `SETTLEMENTDATE` for every dispatch table.
-- `bounds`: the SQL predicate restricting the rows read.
-- `bound_params`: the values for the `?` placeholders of `bounds`.
-
-# Returns
-The subquery text and the parameters in placeholder order.
-"""
-function _run_rows(table, schema, intervention::Integer, time_col::AbstractString, bounds::AbstractString, bound_params)
-    _check_intervention(intervention)
-    params = Any[bound_params...]
-    if !("INTERVENTION" in schema)
-        sql = "(SELECT * FROM $table WHERE ($bounds))"
-    elseif intervention == 0
-        push!(params, 0)
-        sql = "(SELECT * FROM $table WHERE ($bounds) AND COALESCE(INTERVENTION, 0) = ?)"
-    else
-        sql = """
-        (SELECT * EXCLUDE (RUN_MAX) FROM (
-            SELECT *, max(COALESCE(INTERVENTION, 0)) OVER (PARTITION BY $time_col) AS RUN_MAX
-            FROM $table WHERE ($bounds)
-        ) WHERE COALESCE(INTERVENTION, 0) = RUN_MAX)
-        """
-    end
-    return sql, params
-end
-
-# One partition storing a numeric column as VARCHAR widens it to VARCHAR across the whole glob.
-_cast_double(col) = "TRY_CAST($col AS DOUBLE) AS $col"
-
-
-"""
     _table_schema(db, table) -> Vector{String}
 
 The column names of `table`, a `FROM` source such as the fragment [`read_hive`](@ref) returns.
@@ -117,54 +73,6 @@ function _require_columns(table_name::Symbol, schema, columns)
         )
     end
     return
-end
-
-
-"""
-    _read_dispatch_table(columns, db, table_name, key, date_range; intervention = 0, where = "", order = false)
-
-Reads one row per `(SETTLEMENTDATE, key)` of the dispatch-run table `table_name` with
-`first(date_range) <= SETTLEMENTDATE < last(date_range)`, keeping the latest archive month's
-row and the `intervention` run.
-
-# Arguments
-- `columns`: the select expressions after `SETTLEMENTDATE` and `key`, or a function of the cached
-  schema returning them.
-- `db`: an `AEMDB` connection.
-- `table_name`: the cached table, which must exist.
-- `key`: the column identifying a row within an interval, e.g. `"DUID"`.
-- `date_range`: the half-open interval range.
-- `intervention`: `0` for the pricing run. `1` for the physical run where the interval has one,
-  else the pricing run (see `_run_rows`).
-- `where`: an extra SQL predicate starting with `AND`; the table is aliased `src`.
-- `order`: sort the rows by `SETTLEMENTDATE` and `key`.
-
-# Returns
-A `DataFrame` with `SETTLEMENTDATE`, `key` and the selected columns.
-"""
-function _read_dispatch_table(
-        columns, db, table_name::Symbol, key::AbstractString, date_range;
-        intervention::Integer = 0, where::AbstractString = "", order::Bool = false,
-    )
-    _require_cached(db, table_name)
-    table = read_hive(db, table_name, date_range)
-    schema = _table_schema(db, table)
-    select_cols = columns isa Function ? columns(schema) : columns
-    source, params = _run_rows(
-        table, schema, intervention, "SETTLEMENTDATE", "SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ?",
-        [first(date_range), last(date_range)],
-    )
-    return _query(
-        db,
-        """
-        SELECT $(join(["SETTLEMENTDATE", key, select_cols...], ", "))
-        FROM $source AS src
-        WHERE TRUE $where
-        QUALIFY row_number() OVER (PARTITION BY SETTLEMENTDATE, $key ORDER BY archive_month DESC) = 1
-        $(order ? "ORDER BY SETTLEMENTDATE, $key" : "")
-        """,
-        params,
-    )
 end
 
 

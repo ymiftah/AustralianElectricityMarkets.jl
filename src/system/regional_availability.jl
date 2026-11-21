@@ -36,7 +36,7 @@ series is per-unit of each device's own `max_active_power`. A repeat call replac
 # Example
 ```julia
 db = aem_connect()
-sys = nem_system(db, RegionalNetworkConfiguration())
+sys = nem_system(db, RegionalNetworkConfiguration(); date_range = DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 2))
 set_regional_availability!(sys, db, Date(2025, 1, 2):Date(2025, 1, 3))
 ```
 """

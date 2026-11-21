@@ -211,7 +211,7 @@ end
 #
 # Each NEM region becomes an `Area` component when building a system:
 
-sys = nem_system(db, RegionalNetworkConfiguration())
+sys = nem_system(db, RegionalNetworkConfiguration(); date_range)
 get_component(Area, sys, "TAS1")
 
 # The readers used on this page - [`read_prices`](@ref), and elsewhere in this package

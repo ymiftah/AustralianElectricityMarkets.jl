@@ -74,13 +74,14 @@ end
 
 
 """
-    get_bus_dataframe(db; as_of = nothing)
+    get_bus_dataframe(db, date_range)
 
 Generates a DataFrame of bus information.
 
 # Arguments
 - `db`: The database connection.
-- `as_of`: a `Date` or `DateTime` to resolve interconnectors and regions, or `nothing` for the latest snapshot.
+- `date_range`: The half-open range of interval-ending stamps the interconnectors and regions are
+  resolved at (see [`read_interconnectors`](@ref)).
 
 # Returns
 A `DataFrame` containing bus details.
@@ -88,12 +89,13 @@ A `DataFrame` containing bus details.
 # Example
 ```julia
 db = aem_connect()
-bus_df = get_bus_dataframe(db)
+date_range = DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 2)
+bus_df = get_bus_dataframe(db, date_range)
 println(bus_df)
 ```
 """
-function get_bus_dataframe(db; as_of = nothing)
-    return _bus_dataframe(read_interconnectors(db; as_of))
+function get_bus_dataframe(db, date_range)
+    return _bus_dataframe(read_interconnectors(db, date_range))
 end
 
 
@@ -148,7 +150,8 @@ A `DataFrame` containing load details.
 # Example
 ```julia
 db = aem_connect()
-bus_df = get_bus_dataframe(db)
+date_range = DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 2)
+bus_df = get_bus_dataframe(db, date_range)
 load_df = get_load_dataframe(bus_df)
 println(load_df)
 ```
@@ -184,8 +187,9 @@ A `DataFrame` containing branch details.
 # Example
 ```julia
 db = aem_connect()
-bus_df = get_bus_dataframe(db)
-branch_df = get_branch_dataframe(bus_df, read_interconnectors(db))
+date_range = DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 2)
+bus_df = get_bus_dataframe(db, date_range)
+branch_df = get_branch_dataframe(bus_df, read_interconnectors(db, date_range))
 println(branch_df)
 ```
 """
@@ -240,8 +244,9 @@ A `DataFrame` containing generator details.
 # Example
 ```julia
 db = aem_connect()
-bus_df = get_bus_dataframe(db)
-gen_df = get_generators_dataframe(bus_df, read_units(db))
+date_range = DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 2)
+bus_df = get_bus_dataframe(db, date_range)
+gen_df = get_generators_dataframe(bus_df, read_units(db, date_range))
 println(gen_df)
 ```
 """
@@ -315,8 +320,9 @@ A `DataFrame` containing batteries details.
 # Example
 ```julia
 db = aem_connect()
-bus_df = get_bus_dataframe(db)
-branch_df = get_batteries_dataframe(bus_df, read_units(db))
+date_range = DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 2)
+bus_df = get_bus_dataframe(db, date_range)
+branch_df = get_batteries_dataframe(bus_df, read_units(db, date_range))
 println(branch_df)
 ```
 """
@@ -413,7 +419,7 @@ A `DataFrame` containing interfaces details.
 # Example
 ```julia
 db = aem_connect()
-interfaces_df = get_interfaces_dataframe(read_interconnectors(db))
+interfaces_df = get_interfaces_dataframe(read_interconnectors(db, date_range))
 println(interfaces_df)
 ```
 """

@@ -152,7 +152,7 @@ let
     end
 
     @testset "attach_interconnector_losses!" begin
-        sys = nem_system(db, RegionalNetworkConfiguration())
+        sys = nem_system(db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
         base_power = get_base_power(sys)
         added, skipped = @test_logs (:warn, r"no resolvable loss model") match_mode = :any begin
             attach_interconnector_losses!(sys, db, as_of)

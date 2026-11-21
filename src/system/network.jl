@@ -1,31 +1,28 @@
 """
-    _nem_network(db; nemde = false, time_series_in_memory = true, as_of = nothing, through = nothing, kwargs...) -> (sys, units, gen_df)
+    _nem_network(db; date_range, nemde = false, time_series_in_memory = true, kwargs...) -> (sys, units, gen_df)
 
 Builds the NEM network without operation costs: buses, loads, branches, generators, batteries,
 scheduled loads and area interfaces, with every generator's operation cost zero. Reads no ISP cost
-table. `units` is the unit table as of `as_of`, or over the window `[as_of, through]` (see
-[`read_units`](@ref)), and `gen_df` is the generator table the generators were built from, for
+table. `units` is the unit table over `date_range` (see [`read_units`](@ref)), and `gen_df` is the generator table the generators were built from, for
 `_set_isp_generation_costs!`.
 
 # Arguments
 - `db`: The database connection.
+- `date_range`: The half-open range of interval-ending stamps the units and interconnectors are
+  resolved over.
 - `nemde`: Build a NEMDE network: attach a [`NEMUnitData`](@ref) to every dispatch device and record
   each unit's [`NEMRegistration`](@ref).
 - `time_series_in_memory`: Store time series in memory when `true`.
-- `as_of`: A `Date` or `DateTime` to resolve the unit and interconnector tables as of; `nothing`
-  uses the latest cached version.
-- `through`: The end of the unit window that starts at `as_of`; `nothing` builds the units in
-  force at `as_of` only.
 - `kwargs...`: Passed to the `PowerSystems.System` constructor.
 
 # Returns
 A tuple `(sys, units, gen_df)`.
 """
-function _nem_network(db; nemde::Bool = false, time_series_in_memory = true, as_of = nothing, through = nothing, kwargs...)
+function _nem_network(db; date_range, nemde::Bool = false, time_series_in_memory = true, kwargs...)
     @info "parsing buses"
-    interconnectors = read_interconnectors(db; as_of = as_of)
+    interconnectors = read_interconnectors(db, date_range)
     bus_df = _bus_dataframe(interconnectors)
-    units = read_units(db; as_of = as_of, through = through)
+    units = read_units(db, date_range)
     @info "parsing loads"
     loads_df = get_load_dataframe(bus_df)
     @info "parsing branches"
@@ -50,7 +47,7 @@ function _nem_network(db; nemde::Bool = false, time_series_in_memory = true, as_
     _add_area_interfaces!(sys, interfaces_df)
     if nemde
         _attach_nem_unit_data!(sys)
-        _set_registrations!(sys, units, read_loss_factors(db; as_of, through))
+        _set_registrations!(sys, units, read_loss_factors(db, date_range))
     end
 
     return sys, units, gen_df
@@ -114,28 +111,26 @@ end
 
 
 """
-    nem_network(db; time_series_in_memory = true, as_of = nothing, through = nothing, kwargs...) -> (sys, units)
+    nem_network(db; date_range, time_series_in_memory = true, kwargs...) -> (sys, units)
 
 Builds the NEM network without operation costs: buses, loads, branches, generators, batteries,
 scheduled loads and area interfaces. Devices are stock PowerSystems types; each dispatch device
 (the `NEM_DISPATCH_DEVICE_TYPES` components) carries a [`NEMUnitData`](@ref) with an empty
 [`NEMOfferCost`](@ref). Reads no ISP cost table. `units` is the unit
-table as of `as_of`, or over the window `[as_of, through]` (see [`read_units`](@ref)).
+table over `date_range` (see [`read_units`](@ref)).
 
 # Arguments
 - `db`: The database connection.
+- `date_range`: The half-open range of interval-ending stamps the units and interconnectors are
+  resolved over.
 - `time_series_in_memory`: Store time series in memory when `true`.
-- `as_of`: A `Date` or `DateTime` to resolve the unit and interconnector tables as of; `nothing`
-  uses the latest cached version.
-- `through`: The end of the unit window that starts at `as_of`; `nothing` builds the units in
-  force at `as_of` only.
 - `kwargs...`: Passed to the `PowerSystems.System` constructor.
 
 # Returns
 A tuple `(sys, units)`.
 """
-function nem_network(db; time_series_in_memory = true, as_of = nothing, through = nothing, kwargs...)
-    sys, units, _ = _nem_network(db; nemde = true, time_series_in_memory, as_of, through, kwargs...)
+function nem_network(db; date_range, time_series_in_memory = true, kwargs...)
+    sys, units, _ = _nem_network(db; date_range, nemde = true, time_series_in_memory, kwargs...)
     return sys, units
 end
 

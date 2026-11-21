@@ -63,7 +63,7 @@ end
 
 @testset "FCAS scaling inputs of the effective-offer writer" begin
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
-    sys_base, _ = nem_network(db)
+    sys_base, _ = nem_network(db; date_range = MOCK_DATE_RANGE)
     resolution = Minute(5)
     start_date = DateTime(2025, 1, 1, 0, 0)
     date_range = start_date:resolution:(start_date + Hour(2))
@@ -245,7 +245,7 @@ end
         SingleTimeSeries, device, AEM.bid_series_name(BidType.ENERGY, :max_avail, direction);
         start_time = start_date, len = horizon, ignore_scaling_factors = true,
     )
-    sys = first(nem_network(db))
+    sys = first(nem_network(db; date_range = MOCK_DATE_RANGE))
     set_market_bids!(sys, db, date_range; resolution = Minute(5))
     set_available!(get_component(ThermalStandard, sys, "ER02"), false)
     set_available!(get_component(HydroDispatch, sys, "BW02"), false)

@@ -47,7 +47,7 @@ Once the data is downloaded, a few utility functions allow direct parsing of key
 such as a table of all units registered in the NEM, or the region zonal operational demand.
 
 ````julia
-units = read_units(db)
+units = read_units(db, date_range)
 
 capacity_by_fuel = @chain units begin
     select(:DUID, :REGISTEREDCAPACITY, :CO2E_ENERGY_SOURCE, :REGIONID)
@@ -135,7 +135,7 @@ The main purpose of this package is to provide the data required for instantiati
 `PowerSystems.jl` and leverage the ecosystem of power systems modelling developed by NREL-Sienna.
 
 ````julia
-sys = nem_system(db, RegionalNetworkConfiguration())
+sys = nem_system(db, RegionalNetworkConfiguration(); date_range)
 ````
 
 ```@raw html

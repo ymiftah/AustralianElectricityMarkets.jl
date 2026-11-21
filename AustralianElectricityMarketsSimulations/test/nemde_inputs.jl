@@ -37,7 +37,7 @@ end
 end
 
 # One regional system: read by the fixed-load test, then made unavailable by the MNSP test.
-const _RI_REGIONAL = nem_system(aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR)), RegionalNetworkConfiguration())
+const _RI_REGIONAL = nem_system(aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR)), RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
 
 @testset "fixed loads retain the dispatch variable's direction" begin
     sys = _RI_REGIONAL

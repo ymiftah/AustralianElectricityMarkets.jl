@@ -26,30 +26,46 @@ A `DataFrame` with `SETTLEMENTDATE`, `DUID`, `INITIALMW`, `RAMPUPRATE`, `RAMPDOW
 `AVAILABILITY`. Throws an `ArgumentError` when `DISPATCHLOAD` is not cached or lacks a column.
 """
 function read_dispatch_limits(db, date_range; intervention::Integer = 0, resolution::Dates.Period = Minute(5))
-    columns = ("INITIALMW", "RAMPUPRATE", "RAMPDOWNRATE", "AVAILABILITY")
-    start_date = first(date_range)
-    end_date = last(date_range)
+    _check_intervention(intervention)
+    _require_cached(db, :DISPATCHLOAD)
+    start_date, end_date = first(date_range), last(date_range)
     # A row ceiled into the range has its raw stamp in [start - resolution, end).
-    df = _read_dispatch_table(
-        db, :DISPATCHLOAD, "DUID", (start_date - resolution, end_date); intervention,
-    ) do schema
-        _require_columns(:DISPATCHLOAD, schema, columns[2:end])
-        return [_cast_double(c) for c in columns]
-    end
-    isempty(df) && return df
-    sort!(df, [:DUID, :SETTLEMENTDATE])
-    df[!, :SETTLEMENTDATE] = ceil.(df[!, :SETTLEMENTDATE], resolution)
-    return @chain df begin
-        groupby([:SETTLEMENTDATE, :DUID])
-        combine(
-            :INITIALMW => first => :INITIALMW,
-            :RAMPUPRATE => minimum => :RAMPUPRATE,
-            :RAMPDOWNRATE => minimum => :RAMPDOWNRATE,
-            :AVAILABILITY => minimum => :AVAILABILITY,
+    source = read_hive(db, :DISPATCHLOAD, (start_date - resolution, end_date))
+    _require_columns(:DISPATCHLOAD, _table_schema(db, source), ["RAMPUPRATE", "RAMPDOWNRATE", "AVAILABILITY"])
+    bucket = _ceil_timestamp_sql("SETTLEMENTDATE", resolution)
+    return _query(
+        db,
+        """
+        WITH run AS (
+            SELECT * FROM $source
+            WHERE SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ?
+            QUALIFY COALESCE(INTERVENTION, 0) = CASE WHEN ? = 0 THEN 0
+                ELSE max(COALESCE(INTERVENTION, 0)) OVER (PARTITION BY SETTLEMENTDATE) END
+        ),
+        limits AS (
+            SELECT SETTLEMENTDATE, DUID,
+                   TRY_CAST(INITIALMW AS DOUBLE) AS INITIALMW,
+                   TRY_CAST(RAMPUPRATE AS DOUBLE) AS RAMPUPRATE,
+                   TRY_CAST(RAMPDOWNRATE AS DOUBLE) AS RAMPDOWNRATE,
+                   TRY_CAST(AVAILABILITY AS DOUBLE) AS AVAILABILITY
+            FROM run
+            QUALIFY row_number() OVER (PARTITION BY SETTLEMENTDATE, DUID ORDER BY archive_month DESC) = 1
+        ),
+        buckets AS (
+            SELECT $bucket AS SETTLEMENTDATE, DUID,
+                   first(INITIALMW ORDER BY SETTLEMENTDATE) AS INITIALMW,
+                   min(RAMPUPRATE) AS RAMPUPRATE,
+                   min(RAMPDOWNRATE) AS RAMPDOWNRATE,
+                   min(AVAILABILITY) AS AVAILABILITY
+            FROM limits
+            GROUP BY ALL
         )
-        subset(:SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
-        sort([:DUID, :SETTLEMENTDATE])
-    end
+        SELECT * FROM buckets
+        WHERE SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ?
+        ORDER BY DUID, SETTLEMENTDATE
+        """,
+        [start_date - resolution, end_date, intervention, start_date, end_date],
+    )
 end
 
 
@@ -78,41 +94,48 @@ uigf = read_uigf(db, Date(2025, 1, 1):Date(2025, 1, 2); resolution = Minute(30))
 ```
 """
 function read_uigf(db, date_range; resolution::Dates.Period = Minute(5), intervention::Integer = 0)
-    start_date = first(date_range)
-    end_date = last(date_range)
+    _check_intervention(intervention)
     _require_cached(db, :DISPATCHLOAD)
-    _require_columns(:DISPATCHLOAD, _table_schema(db, read_hive(db, :DISPATCHLOAD)), ["UIGF"])
-    _require_cached(db, :DUDETAILSUMMARY)
-    dudetailsummary = read_hive(db, :DUDETAILSUMMARY)
-    "SCHEDULE_TYPE" in _table_schema(db, dudetailsummary) || throw(
-        ArgumentError(
-            "DUDETAILSUMMARY is cached without a SCHEDULE_TYPE column: re-populate it with " *
-                "`populate(db, :DUDETAILSUMMARY, <from>, <to>; force_new = true)`.",
-        ),
-    )
+    start_date, end_date = DateTime(first(date_range)), DateTime(last(date_range))
     # A row ceiled into the range has its raw stamp in [start - resolution, end).
-    semi_scheduled = """
-        AND UIGF IS NOT NULL AND EXISTS (
-            SELECT 1 FROM $dudetailsummary AS dus
-            WHERE dus.DUID = src.DUID AND dus.SCHEDULE_TYPE = 'SEMI-SCHEDULED'
-              AND dus.START_DATE <= src.SETTLEMENTDATE
-              AND (dus.END_DATE IS NULL OR dus.END_DATE > src.SETTLEMENTDATE)
+    source = read_hive(db, :DISPATCHLOAD, (start_date - resolution, end_date))
+    _require_columns(:DISPATCHLOAD, _table_schema(db, source), ["UIGF"])
+    _require_cached(db, :DUDETAILSUMMARY)
+    summary = read_hive(db, :DUDETAILSUMMARY)
+    _require_columns(:DUDETAILSUMMARY, _table_schema(db, summary), ["SCHEDULE_TYPE"])
+    bucket = _ceil_timestamp_sql("SETTLEMENTDATE", resolution)
+    return _query(
+        db,
+        """
+        WITH run AS (
+            SELECT * FROM $source
+            WHERE SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ?
+            QUALIFY COALESCE(INTERVENTION, 0) = CASE WHEN ? = 0 THEN 0
+                ELSE max(COALESCE(INTERVENTION, 0)) OVER (PARTITION BY SETTLEMENTDATE) END
+        ),
+        semi_scheduled AS (
+            SELECT SETTLEMENTDATE, DUID, TRY_CAST(UIGF AS DOUBLE) AS UIGF
+            FROM run AS src
+            WHERE UIGF IS NOT NULL AND EXISTS (
+                SELECT 1 FROM $summary AS dus
+                WHERE dus.DUID = src.DUID AND dus.SCHEDULE_TYPE = 'SEMI-SCHEDULED'
+                  AND dus.START_DATE <= src.SETTLEMENTDATE
+                  AND (dus.END_DATE IS NULL OR dus.END_DATE > src.SETTLEMENTDATE)
+            )
+            QUALIFY row_number() OVER (PARTITION BY SETTLEMENTDATE, DUID ORDER BY archive_month DESC) = 1
+        ),
+        buckets AS (
+            SELECT $bucket AS SETTLEMENTDATE, DUID, avg(UIGF) AS UIGF
+            FROM semi_scheduled
+            WHERE UIGF IS NOT NULL
+            GROUP BY ALL
         )
-    """
-    df = _read_dispatch_table(
-        [_cast_double("UIGF")], db, :DISPATCHLOAD, "DUID",
-        (DateTime(start_date) - resolution, DateTime(end_date)); intervention, where = semi_scheduled,
+        SELECT * FROM buckets
+        WHERE SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ?
+        ORDER BY DUID, SETTLEMENTDATE
+        """,
+        [start_date - resolution, end_date, intervention, start_date, end_date],
     )
-    dropmissing!(df, :UIGF)
-    isempty(df) && return df
-    # Ceil before filtering so a stamp just inside the range cannot add a bucket just outside it.
-    df[!, :SETTLEMENTDATE] = ceil.(df[!, :SETTLEMENTDATE], resolution)
-    return @chain df begin
-        groupby([:SETTLEMENTDATE, :DUID])
-        combine(:UIGF => mean => :UIGF)
-        subset(:SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
-        sort([:DUID, :SETTLEMENTDATE])
-    end
 end
 
 """
@@ -137,16 +160,44 @@ sorted by `DUID` and `SETTLEMENTDATE`. Throws an `ArgumentError` when `DISPATCHL
 a cached partition lacks one of these columns.
 """
 function read_unit_conditions(db, date_range; intervention::Integer = 0)
-    columns = (
-        "INITIALMW", "AVAILABILITY", "RAMPUPRATE", "RAMPDOWNRATE", "UIGF", "DISPATCHMODE", "DISPATCHMODETIME",
-        "AGCSTATUS", "RAISEREGENABLEMENTMIN", "RAISEREGENABLEMENTMAX", "LOWERREGENABLEMENTMIN", "LOWERREGENABLEMENTMAX",
-        "RAISEREGAVAILABILITY", "LOWERREGAVAILABILITY",
+    _check_intervention(intervention)
+    _require_cached(db, :DISPATCHLOAD)
+    source = read_hive(db, :DISPATCHLOAD, date_range)
+    _require_columns(
+        :DISPATCHLOAD, _table_schema(db, source),
+        [
+            "UIGF", "DISPATCHMODE", "DISPATCHMODETIME", "AGCSTATUS", "RAISEREGENABLEMENTMIN", "RAISEREGENABLEMENTMAX",
+            "LOWERREGENABLEMENTMIN", "LOWERREGENABLEMENTMAX", "RAISEREGAVAILABILITY", "LOWERREGAVAILABILITY",
+        ],
     )
-    df = _read_dispatch_table(db, :DISPATCHLOAD, "DUID", date_range; intervention) do schema
-        _require_columns(:DISPATCHLOAD, schema, columns)
-        return [_cast_double(c) for c in columns]
-    end
-    isempty(df) && return df
-    sort!(df, [:DUID, :SETTLEMENTDATE])
-    return df
+    return _query(
+        db,
+        """
+        WITH run AS (
+            SELECT * FROM $source
+            WHERE SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ?
+            QUALIFY COALESCE(INTERVENTION, 0) = CASE WHEN ? = 0 THEN 0
+                ELSE max(COALESCE(INTERVENTION, 0)) OVER (PARTITION BY SETTLEMENTDATE) END
+        )
+        SELECT SETTLEMENTDATE, DUID,
+               TRY_CAST(INITIALMW AS DOUBLE) AS INITIALMW,
+               TRY_CAST(AVAILABILITY AS DOUBLE) AS AVAILABILITY,
+               TRY_CAST(RAMPUPRATE AS DOUBLE) AS RAMPUPRATE,
+               TRY_CAST(RAMPDOWNRATE AS DOUBLE) AS RAMPDOWNRATE,
+               TRY_CAST(UIGF AS DOUBLE) AS UIGF,
+               TRY_CAST(DISPATCHMODE AS DOUBLE) AS DISPATCHMODE,
+               TRY_CAST(DISPATCHMODETIME AS DOUBLE) AS DISPATCHMODETIME,
+               TRY_CAST(AGCSTATUS AS DOUBLE) AS AGCSTATUS,
+               TRY_CAST(RAISEREGENABLEMENTMIN AS DOUBLE) AS RAISEREGENABLEMENTMIN,
+               TRY_CAST(RAISEREGENABLEMENTMAX AS DOUBLE) AS RAISEREGENABLEMENTMAX,
+               TRY_CAST(LOWERREGENABLEMENTMIN AS DOUBLE) AS LOWERREGENABLEMENTMIN,
+               TRY_CAST(LOWERREGENABLEMENTMAX AS DOUBLE) AS LOWERREGENABLEMENTMAX,
+               TRY_CAST(RAISEREGAVAILABILITY AS DOUBLE) AS RAISEREGAVAILABILITY,
+               TRY_CAST(LOWERREGAVAILABILITY AS DOUBLE) AS LOWERREGAVAILABILITY
+        FROM run
+        QUALIFY row_number() OVER (PARTITION BY SETTLEMENTDATE, DUID ORDER BY archive_month DESC) = 1
+        ORDER BY DUID, SETTLEMENTDATE
+        """,
+        [first(date_range), last(date_range), intervention],
+    )
 end

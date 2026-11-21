@@ -354,7 +354,7 @@ function set_market_bids!(
     )
     if !_is_nemde_system(sys)
         offers = read_offers(db, date_range; markets = (BidType.ENERGY,))
-        factors = read_loss_factors(db; as_of = first(date_range), through = last(date_range) - resolution)
+        factors = read_loss_factors(db, date_range)
         return _set_regional_market_bids!(sys, offers, factors, date_range; resolution)
     end
     return _set_market_bids!(sys, read_offers(db, date_range; markets), date_range; markets, resolution)

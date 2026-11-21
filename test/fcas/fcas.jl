@@ -72,7 +72,7 @@
     end
 
     @testset "fcas_service throws when a device has two services of one market" begin
-        sys = first(nem_network(db))
+        sys = first(nem_network(db; date_range = MOCK_DATE_RANGE))
         set_market_bids!(sys, db, date_range)
         asload1 = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
         @test fcas_service(asload1, BidType.RAISE6SEC) === get_component(FCASService, sys, "NSW1_RAISE6SEC")
@@ -112,21 +112,21 @@
         keys = [:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION, :BIDTYPE]
         @test isequal(sort(projected, keys), sort(expected, keys))
         @test_throws ArgumentError R._massage_bids(
-            db, first(date_range), last(date_range); resolution = Minute(15),
-            period_columns = R._FCAS_TRAPEZIUM_COLUMNS,
+            db, first(date_range), last(date_range); resolution = Minute(15), in_force = true,
         )
+        # Each coarse bucket carries the trapezium of its last native interval.
+        trapezium = select(expected, keys, Symbol.(R._FCAS_TRAPEZIUM_COLUMNS))
         for resolution in (nothing, Minute(5), Minute(15))
             bands = R._massage_bids(db, first(date_range), last(date_range); bid_types = markets, keep_bid_type = true, resolution)
-            trapezium = R._read_period_offers(db, markets, first(date_range), last(date_range), nothing; columns = R._FCAS_TRAPEZIUM_COLUMNS)
+            transform!(bands, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
             legacy = innerjoin(bands, trapezium; on = keys)
-            transform!(legacy, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
             actual = read_fcas_bids(db, date_range, markets; resolution)
             @test isequal(sort(actual, keys), sort(legacy, keys))
         end
     end
 
     @testset "a non-scheduled load offering FCAS joins its region's services" begin
-        sys = first(nem_network(db))
+        sys = first(nem_network(db; date_range = MOCK_DATE_RANGE))
         (; added, excluded) = set_market_bids!(sys, db, date_range)
         asload1 = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
         @test "NSW1_RAISE6SEC" in added
@@ -165,7 +165,7 @@
         raise1sec = subset(dispatch, :BIDTYPE => ByRow(==(BidType.RAISE1SEC)))
         @test !isempty(raise1sec)
         @test all(==(5.0), raise1sec.ACTUALAVAILABILITY)
-        sys = first(nem_network(db))
+        sys = first(nem_network(db; date_range = MOCK_DATE_RANGE))
         set_market_bids!(sys, db, date_range)
         @test any(
             g -> has_time_series(g, SingleTimeSeries, AustralianElectricityMarkets.bid_series_name(BidType.RAISE1SEC, :trapezium, AustralianElectricityMarkets.BidDirection.GEN)),

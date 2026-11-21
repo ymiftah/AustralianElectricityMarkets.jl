@@ -35,7 +35,7 @@ nothing #hide
 # Once the data is downloaded, a few utility functions allow direct parsing of key quantities,
 # such as a table of all units registered in the NEM, or the region zonal operational demand.
 
-units = read_units(db)
+units = read_units(db, date_range)
 
 capacity_by_fuel = @chain units begin
     select(:DUID, :REGISTEREDCAPACITY, :CO2E_ENERGY_SOURCE, :REGIONID)
@@ -114,7 +114,7 @@ end
 # The main purpose of this package is to provide the data required for instantiating systems with
 # `PowerSystems.jl` and leverage the ecosystem of power systems modelling developed by NREL-Sienna.
 
-sys = nem_system(db, RegionalNetworkConfiguration())
+sys = nem_system(db, RegionalNetworkConfiguration(); date_range)
 
 # Users can then interact with the system with all `PowerSystems` utilities.
 
