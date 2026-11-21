@@ -1,0 +1,690 @@
+---
+title: "Replicating NEMDE dispatch in PowerSimulations.jl: a 1000-interval benchmark against AEMO outcomes"
+subtitle: "Accuracy, run time and sources of difference on a load-duration-stratified sample of 2025"
+author: "AustralianElectricityMarkets.jl"
+date: today
+engine: julia
+julia:
+  exeflags: ["--project=."]
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: true
+    code-summary: "Show code"
+    fig-format: png
+    fig-dpi: 144
+    embed-resources: true
+    theme: cosmo
+    css: report.css
+bibliography: references.bib
+execute:
+  warning: false
+  echo: true
+---
+
+```{julia}
+#| echo: false
+#| output: false
+using CSV, DataFrames, Statistics, StatsBase, Dates, Printf, TOML, Markdown
+using CairoMakie
+CairoMakie.activate!(type = "png", px_per_unit = 2)
+set_theme!(
+    theme_minimal();
+    fontsize = 13,
+    Axis = (xgridcolor = (:black, 0.08), ygridcolor = (:black, 0.08)),
+    Legend = (framevisible = false,),
+)
+
+const RUN = get(ENV, "AEM_BENCHMARK_RUN", joinpath(homedir(), "aem_validation", "ldc-2025"))
+const AN = joinpath(RUN, "analysis")
+const REGIONS = ["NSW1", "QLD1", "SA1", "TAS1", "VIC1"]
+const REGION_COLOR = Dict(zip(REGIONS, Makie.wong_colors()[1:5]))
+const NEMPY = (mean = 0.13818, median = 0.0, p5 = -0.13336, p95 = 0.01353)
+
+const TIMECOLS = ["SETTLEMENTDATE", "interval", "DateTime"]
+function rd(name; dir = AN)
+    df = CSV.read(joinpath(dir, name), DataFrame; stringtype = String, types = Dict(c => String for c in TIMECOLS), validate = false)
+    for c in TIMECOLS
+        c in names(df) && (df[!, c] = DateTime.(df[!, c], dateformat"yyyy-mm-ddTHH:MM:SS"))
+    end
+    return df
+end
+prices = rd("price_errors.csv")
+rt = rd("interval_runtimes.csv")
+disp = rd("dispatch_errors.csv")
+fcas = rd("fcas_errors.csv")
+ic = rd("interconnector_errors.csv")
+viol = rd("constraint_violations.csv")
+ldc = rd("load_duration_curve.csv"; dir = RUN)
+manifest = TOML.parsefile(joinpath(AN, "manifest.toml"))
+
+# Markdown pipe table of a DataFrame: no type row, no row numbers, 4 significant digits.
+function mdtable(df::AbstractDataFrame)
+    cell(x) = ismissing(x) ? "–" : x isa AbstractFloat ? (isnan(x) ? "" : (x == round(x) && abs(x) < 1.0e6 ? string(Int(x)) : @sprintf("%.4g", x))) :
+        x isa DateTime ? replace(string(x), "T" => " ") : string(x)
+    io = IOBuffer()
+    println(io, "| ", join(replace.(names(df), "_" => " "), " | "), " |")
+    println(io, "|", join(fill(" --- |", ncol(df))))
+    for r in eachrow(df)
+        println(io, "| ", join((cell(r[c]) for c in names(df)), " | "), " |")
+    end
+    return Markdown.parse(String(take!(io)))
+end
+
+# Number formatting for inline text.
+f1(x) = @sprintf("%.1f", x)
+f2(x) = @sprintf("%.2f", x)
+f3(x) = @sprintf("%.3f", x)
+f4(x) = @sprintf("%.4f", x)
+pct(x; d = 1) = @sprintf("%.*f%%", d, 100x)
+fint(x) = replace(string(round(Int, x)), r"(?<=\d)(?=(\d{3})+$)" => ",")
+q(v, p) = quantile(collect(skipmissing(v)), p)
+isfin(x) = !ismissing(x) && isfinite(x)
+
+e = filter(isfinite, prices.error_rop)
+ae = abs.(e)
+EXACT = 1.0e-3
+const PHASE_COLS = ["system_build_s", "simulation_build_s", "execute_s", "compare_s"]
+STALL_S = 300.0
+n_stall = count(>(STALL_S), rt.total_s)
+stall_by_phase = [count(>(STALL_S), rt[!, c]) for c in PHASE_COLS]
+med_total = median(rt.total_s)
+n_prices, n_int = length(e), length(unique(prices.SETTLEMENTDATE))
+exact_share = mean(ae .< EXACT)
+nlarge = count(>(1.0), ae)
+nint_large = length(unique(prices.SETTLEMENTDATE[abs.(prices.error_rop) .> 1.0]))
+nint_diff = length(unique(prices.SETTLEMENTDATE[abs.(prices.error_rop) .> EXACT]))
+```
+
+# Abstract {.unnumbered}
+
+We benchmark the NEMDE replica in `AustralianElectricityMarketsSimulations` (a PowerSimulations.jl dispatch problem built from AEMO MMSDM data) against the dispatch outcomes AEMO published, following the interval-by-interval protocol of nempy [@gorman2022nempy]. Rather than a uniform random sample of intervals, we draw `{julia} fint(nrow(rt))` intervals of calendar year 2025, one at random from each of 1000 equal-count strata of the system-demand load duration curve, so that the sample represents the whole demand range, including the scarcity tail. Each interval is solved independently from AEMO's observed state, with NEMDE's two-run fast-start procedure where the interval contains a fast-start unit. Against the published regional reference price (ROP), `{julia} pct(exact_share)` of the `{julia} fint(n_prices)` regional prices agree to within 0.001 \$/MWh, the median error is exactly zero, and the mean signed error is `{julia} f3(mean(e))` \$/MWh (nempy: `{julia} NEMPY.mean`, on a different sample). Only `{julia} nint_large` of the `{julia} fint(n_int)` intervals have any price error above 1 \$/MWh. We trace the residual differences to three families: ties in the offer stack that leave the dual solution non-unique, genuine differences in the primal dispatch in a small set of intervals, and gaps in the source data. A full interval takes `{julia} f1(mean(rt.total_s))` s on average (median `{julia} f1(med_total)` s) with six solver processes sharing one machine; `{julia} pct(1 - mean(rt.execute_s) / mean(rt.total_s), d = 0)` of that is system and model construction rather than the solve, and `{julia} n_stall` intervals stall for more than five minutes (up to 35) in a single phase, which inflates the mean. We close by placing the work in the design of PowerSimulations.jl.
+
+# Introduction
+
+AEMO dispatches the National Electricity Market (NEM) every five minutes with NEMDE, a mixed-integer linear program over regional energy balance, interconnector flows and losses, frequency control ancillary services (FCAS) co-optimisation and thousands of network constraint equations. The inputs (offers, limits, constraint definitions) and the outcomes (dispatch targets, regional prices, constraint marginal values) are published in the MMSDM archive on NEMWEB [@aemo_mmsdm]. This transparency allows an open model to be validated against the real market, as nempy did for a Python implementation [@gorman2022nempy].
+
+This report documents the same exercise for `AustralianElectricityMarkets.jl`, a Julia workspace that turns MMSDM data into PowerSystems.jl `System`s and solves NEM dispatch replicas of them with PowerSimulations.jl (PSI). We ask three questions.
+
+1. **Accuracy.** How closely does the replica reproduce published prices, unit dispatch, FCAS prices and interconnector flows over a year of conditions?
+2. **Cost.** How long does it take, and where does the time go?
+3. **Residuals.** Where the replica differs from NEMDE, why?
+
+A final section relates the benchmark to the architecture of PowerSimulations.jl.
+
+# Method
+
+## Data and model
+
+All inputs come from the local MMSDM cache (Hive-partitioned parquet read through DuckDB), populated for 2025 by the data package. For each interval the system builder `nem_system(db, NEMDEConfiguration(); date_range)` writes every NEMDE input once: offers and bands, unit availability and ramp limits, observed telemetry, FCAS trapezia, regional demand, interconnector and loss models, generic constraints and their right-hand sides, and the constraint violation penalty factors. The simulation package never writes to the system; it reads these inputs, builds the dispatch decision model with `template_nemde`, and solves it. When the system contains a unit whose offer carries a fast-start inflexibility profile, the interval is solved as NEMDE does, in two runs: a commitment run and a dispatch run that holds fast-start units to their profile. Prices are the duals of the energy balance and FCAS rows of the final linear program with the integer decisions fixed, as in NEMDE and nempy.
+
+The solver is HiGHS [@huangfu2018highs] with one thread, a relative MIP gap of $10^{-9}$ and an absolute gap of $10^{-10}$, driven through JuMP [@dunning2017jump] and PSI from Julia [@bezanson2017julia].
+
+## Sampling on the load duration curve
+
+nempy draws 1000 intervals uniformly at random from the five-minute grid of 2024 H2. A uniform draw rarely visits the few hundred highest-demand intervals, and these are precisely where binding constraints, scarcity and price spikes concentrate. We therefore rank all `{julia} fint(nrow(ldc))` complete intervals of 2025 (01 January 04:05 to 31 December 23:55) by total system demand, the sum over the five regions of the dispatched `TOTALDEMAND` in the non-intervention run, cut the ranking into 1000 equal-count strata, and draw one interval uniformly from each stratum with a fixed seed. Every demand decile is therefore represented by exactly 100 intervals.
+
+```{julia}
+#| label: fig-ldc
+#| fig-cap: "Load duration curve of 2025 total system demand (100 000+ five-minute intervals) with the 1000 sampled intervals, one per equal-count stratum. The sample follows the curve by construction, including its steep upper tail."
+#| fig-width: 8
+#| fig-height: 4
+let
+    fig = Figure(size = (900, 420))
+    ax = Axis(fig[1, 1]; xlabel = "Rank (1 = highest demand)", ylabel = "System demand (MW)")
+    step = 25
+    lines!(ax, ldc.ldc_rank[1:step:end], ldc.system_demand_mw[1:step:end]; color = :gray40, linewidth = 2, label = "All 2025 intervals")
+    smp = rd("ldc_sample.csv")
+    scatter!(ax, smp.ldc_rank, smp.system_demand_mw; color = (:crimson, 0.55), markersize = 5, label = "Sampled (n = $(nrow(smp)))")
+    axislegend(ax; position = :rt)
+    fig
+end
+```
+
+Eleven of the first draw (1.1%) fell on 2025-09-30 and 2025-10-01, where AEMO's September `DISPATCHLOAD` and `DISPATCH_MNSPBIDTRK` archive ends at 2025-09-30 04:00 (see @sec-data). They were replaced by new draws from the same strata on other trading days, so the final sample still has exactly one interval per stratum.
+
+## Execution
+
+The 1000 intervals were grouped by trading day into six shards and solved by six concurrent worker processes on one Apple M5 machine (10 cores, 32 GB). Each shard is a separate batch-runner process that starts a fresh Julia worker per trading day, builds a system covering one interval, builds the PSI decision models, solves, extracts results and compares them to the published tables, then discards the simulation folder. Intervals are independent: none starts from another's solution, only from AEMO's observed initial state. This is the same independent-solve protocol as the nempy benchmark. The run took about 8.5 hours of wall time.
+
+## Comparison metrics
+
+All comparisons are signed, solved minus published. Energy prices are compared with the regional reference price before post-dispatch adjustment (`ROP`), as nempy does. We also compare FCAS prices by service and region, dispatch targets (`TOTALCLEARED`) by unit, and interconnector flow and losses. Error summaries use the mean, median, 5th and 95th percentiles (the statistics nempy reports), plus mean absolute error and the share of values that agree to within 0.001 (prices, in \$/MWh) or 0.01 (flows, MW).
+
+# Results: agreement with NEMDE
+
+## Energy prices
+
+```{julia}
+#| label: tbl-nempy
+#| tbl-cap: "Signed ROP error (solved minus published, \\$/MWh). nempy's figures are from its published 1000-interval benchmark of 2024 H2 and a uniform sample, so the comparison is indicative, not like-for-like."
+let
+    stats(v) = (n = length(v), mean = mean(v), median = median(v), p5 = q(v, 0.05), p95 = q(v, 0.95), mae = mean(abs, v), max_abs = maximum(abs, v))
+    rows = DataFrame(
+        source = ["nempy (2024 H2, uniform)", "AEMSim (2025, LDC-stratified)"],
+        n = [missing, length(e)],
+        mean = [NEMPY.mean, mean(e)], median = [NEMPY.median, median(e)],
+        p5 = [NEMPY.p5, q(e, 0.05)], p95 = [NEMPY.p95, q(e, 0.95)],
+        mae = [missing, mean(ae)], max_abs = [missing, maximum(ae)],
+    )
+    for r in REGIONS
+        v = filter(isfinite, prices.error_rop[prices.REGIONID .== r])
+        push!(rows, (; source = "AEMSim, $r", n = length(v), mean = mean(v), median = median(v), p5 = q(v, 0.05), p95 = q(v, 0.95), mae = mean(abs, v), max_abs = maximum(abs, v)))
+    end
+    mapcols!(c -> [ismissing(x) ? missing : (x isa AbstractFloat ? round(x; sigdigits = 4) : x) for x in c], rows)
+    mdtable(rows)
+end
+```
+
+`{julia} pct(exact_share)` of the `{julia} fint(n_prices)` regional prices are within 0.001 \$/MWh of the published ROP, and the 5th and 95th percentiles are essentially zero (@tbl-nempy). The mean error is positive (`{julia} f3(mean(e))` \$/MWh) and driven by a handful of intervals; the median is exactly 0. nempy reports a mean of `{julia} NEMPY.mean` with a 5th to 95th percentile range of `{julia} NEMPY.p5` to `{julia} NEMPY.p95`; our percentile range is about three orders of magnitude narrower. We caution against reading this as a ranking: the nempy figures come from a different year, from a sample that under-represents high-demand periods, and nempy takes several inputs (for example the Basslink switch and some constraint right-hand sides) from the NEMDE solution file, which this replica does not.
+
+```{julia}
+#| label: fig-scatter
+#| fig-cap: "Published against solved ROP for the 5000 regional prices. Axes use a symmetric pseudo-log scale to show the $-1000$ floor, the bulk near zero and the scarcity tail together; the diagonal is perfect agreement."
+#| fig-width: 8
+#| fig-height: 6.5
+let
+    fig = Figure(size = (880, 700))
+    ax = Axis(fig[1, 1]; xlabel = "Published ROP (\$/MWh)", ylabel = "Solved ROP (\$/MWh)",
+        xscale = Makie.pseudolog10, yscale = Makie.pseudolog10, aspect = 1,
+        xticks = ([-1000, -100, -10, 0, 10, 100, 1000], string.([-1000, -100, -10, 0, 10, 100, 1000])),
+        yticks = ([-1000, -100, -10, 0, 10, 100, 1000], string.([-1000, -100, -10, 0, 10, 100, 1000])))
+    lo, hi = -1100, 20000
+    lines!(ax, [lo, hi], [lo, hi]; color = :black, linewidth = 1)
+    for r in REGIONS
+        d = prices[prices.REGIONID .== r, :]
+        scatter!(ax, d.ROP_published, d.ROP_solved; color = (REGION_COLOR[r], 0.55), markersize = 6, label = r)
+    end
+    axislegend(ax; position = :lt, nbanks = 1)
+    fig
+end
+```
+
+```{julia}
+#| label: fig-errdist
+#| fig-cap: "Distribution of the signed ROP error. (a) Histogram of the nonzero errors on a log count axis; the central bar holds the exact matches. (b) Empirical CDF of the absolute error; the dotted line marks the 0.001 \\$/MWh agreement threshold and the dashed lines the nempy 5th and 95th percentile magnitudes."
+#| fig-width: 10
+#| fig-height: 4
+let
+    fig = Figure(size = (1000, 420))
+    ax1 = Axis(fig[1, 1]; xlabel = "Signed ROP error (\$/MWh)", ylabel = "Regional prices (count)", yscale = log10, title = "(a)")
+    edges = range(-3, 3; length = 61)
+    h = fit(Histogram, clamp.(e, -3, 3), edges)
+    barplot!(ax1, [(edges[i] + edges[i + 1]) / 2 for i in 1:(length(edges) - 1)], max.(h.weights, 0.5); width = step(edges), color = (:steelblue, 0.85), fillto = 0.5)
+    ax2 = Axis(fig[1, 2]; xlabel = "Absolute ROP error (\$/MWh)", ylabel = "Share of prices with error ≤ x", xscale = log10, title = "(b)")
+    xs = sort(max.(ae, 1.0e-9))
+    lines!(ax2, xs, (1:length(xs)) ./ length(xs); linewidth = 2.5, color = :steelblue)
+    vlines!(ax2, [EXACT]; color = :gray40, linestyle = :dot)
+    vlines!(ax2, [abs(NEMPY.p5), NEMPY.p95]; color = :crimson, linestyle = :dash)
+    xlims!(ax2, 1.0e-9, 100)
+    ylims!(ax2, 0.9, 1.001)
+    fig
+end
+```
+
+@fig-errdist shows the shape of the residual. The distribution is a spike at zero with thin tails; the CDF reaches `{julia} pct(exact_share)` at the 0.001 \$/MWh agreement threshold and `{julia} pct(mean(ae .< 0.1), d = 2)` at 0.1 \$/MWh.
+
+```{julia}
+#| label: fig-timeseries
+#| fig-cap: "NSW1 ROP for the 1000 sampled intervals in chronological order, published and solved (top), and the solved-minus-published difference (bottom). This mirrors nempy's comparison of the historical NSW reference node price against its own, with the difference added."
+#| fig-width: 10
+#| fig-height: 5.5
+let
+    d = sort(prices[prices.REGIONID .== "NSW1", :], :SETTLEMENTDATE)
+    fig = Figure(size = (1000, 560))
+    ax1 = Axis(fig[1, 1]; ylabel = "NSW1 ROP (\$/MWh)", yscale = Makie.pseudolog10,
+        yticks = ([-1000, -100, 0, 100, 1000], string.([-1000, -100, 0, 100, 1000])))
+    scatter!(ax1, d.SETTLEMENTDATE, d.ROP_published; color = (:gray30, 0.8), markersize = 6, label = "Published (NEMDE)")
+    scatter!(ax1, d.SETTLEMENTDATE, d.ROP_solved; color = (:crimson, 0.7), markersize = 4, marker = :xcross, label = "Solved (AEMSim)")
+    axislegend(ax1; position = :lt)
+    ax2 = Axis(fig[2, 1]; ylabel = "Difference (\$/MWh)", xlabel = "Sampled interval (2025)", yscale = Makie.pseudolog10)
+    scatter!(ax2, d.SETTLEMENTDATE, d.error_rop; color = (:steelblue, 0.8), markersize = 5)
+    hlines!(ax2, [0]; color = :black, linewidth = 0.5)
+    linkxaxes!(ax1, ax2)
+    rowsize!(fig.layout, 2, Relative(0.35))
+    fig
+end
+```
+
+```{julia}
+#| label: fig-pduration
+#| fig-cap: "Price duration curve of the sampled intervals: the unweighted mean of the five regional ROPs per interval, ranked, published against solved. The curves are indistinguishable at this scale, including the scarcity tail."
+#| fig-width: 8
+#| fig-height: 4
+let
+    g = combine(groupby(prices, :SETTLEMENTDATE), :ROP_published => mean => :pub, :ROP_solved => mean => :sol)
+    sort!(g, :pub; rev = true)
+    fig = Figure(size = (900, 420))
+    ax = Axis(fig[1, 1]; xlabel = "Rank of sampled interval (1 = highest price)", ylabel = "Mean regional ROP (\$/MWh)", yscale = Makie.pseudolog10,
+        yticks = ([-1000, -100, -10, 0, 10, 100, 1000], string.([-1000, -100, -10, 0, 10, 100, 1000])))
+    lines!(ax, 1:nrow(g), g.pub; color = :gray30, linewidth = 4, label = "Published")
+    lines!(ax, 1:nrow(g), g.sol; color = :crimson, linewidth = 1.5, label = "Solved")
+    axislegend(ax; position = :rt)
+    fig
+end
+```
+
+### Accuracy across the demand range
+
+Because the sample is stratified, accuracy can be read per demand decile without reweighting.
+
+```{julia}
+#| label: fig-decile
+#| fig-cap: "Price agreement by demand decile (1 = highest-demand tenth of 2025). Left: share of regional prices within 0.001 \\$/MWh. Right: mean absolute error on a log axis. Error is not concentrated at either end of the curve; the largest means come from single intervals (text)."
+#| fig-width: 10
+#| fig-height: 4
+let
+    p = copy(prices)
+    p.decile = (p.stratum .- 1) .÷ 100 .+ 1
+    g = combine(groupby(p, :decile),
+        :error_rop => (v -> mean(abs.(v) .< EXACT)) => :exact,
+        :error_rop => (v -> mean(abs.(v))) => :mae,
+        :system_demand_mw => mean => :demand)
+    sort!(g, :decile)
+    fig = Figure(size = (1000, 400))
+    ax1 = Axis(fig[1, 1]; xlabel = "Demand decile (1 = highest)", ylabel = "Share within 0.001 \$/MWh", xticks = 1:10)
+    barplot!(ax1, g.decile, g.exact; color = :steelblue)
+    ylims!(ax1, 0.9, 1.0)
+    ax2 = Axis(fig[1, 2]; xlabel = "Demand decile (1 = highest)", ylabel = "Mean absolute ROP error (\$/MWh)", yscale = log10, xticks = 1:10)
+    barplot!(ax2, g.decile, g.mae; color = :crimson, fillto = 1.0e-5)
+    ylims!(ax2, 1.0e-5, 1)
+    fig
+end
+```
+
+```{julia}
+#| label: tbl-decile
+#| tbl-cap: "Price agreement by demand decile."
+let
+    p = copy(prices)
+    p.decile = (p.stratum .- 1) .÷ 100 .+ 1
+    g = combine(groupby(p, :decile),
+        :system_demand_mw => (v -> round(mean(v))) => :mean_demand_mw,
+        nrow => :n_prices,
+        :error_rop => (v -> round(100 * mean(abs.(v) .< EXACT); digits = 1)) => :pct_within_0_001,
+        :error_rop => (v -> round(mean(v); sigdigits = 3)) => :mean_error,
+        :error_rop => (v -> round(mean(abs.(v)); sigdigits = 3)) => :mae,
+        :error_rop => (v -> round(q(abs.(v), 0.99); sigdigits = 3)) => :abs_p99,
+        :error_rop => (v -> round(maximum(abs.(v)); sigdigits = 3)) => :max_abs)
+    mdtable(sort(g, :decile))
+end
+```
+
+### Accuracy by published price band
+
+```{julia}
+#| label: tbl-band
+#| tbl-cap: "Error by published price band. The high-price band is small (n = 52 prices) and is dominated by one interval (2025-06-18 18:20)."
+let
+    band(x) = x > 300 ? "> 300" : x >= 0 ? "0 to 300" : "< 0"
+    p = transform(prices, :ROP_published => ByRow(band) => :band)
+    g = combine(groupby(p, :band), nrow => :n, :error_rop => (v -> round(mean(v); sigdigits = 3)) => :mean_error,
+        :error_rop => (v -> round(mean(abs.(v)); sigdigits = 3)) => :mae,
+        :error_rop => (v -> round(median(abs.(v)); sigdigits = 3)) => :median_abs,
+        :error_rop => (v -> round(maximum(abs.(v)); sigdigits = 3)) => :max_abs)
+    mdtable(sort(g, :band))
+end
+```
+
+## Dispatch, FCAS and interconnector outcomes
+
+```{julia}
+#| output: false
+disp2 = filter(r -> isfin(r.TOTALCLEARED_published) && isfin(r.TOTALCLEARED_solved), disp)
+disp2.diff = disp2.TOTALCLEARED_solved .- disp2.TOTALCLEARED_published
+n_disp_total = nrow(disp)
+n_disp = nrow(disp2)
+disp_exact = mean(abs.(disp2.diff) .< 0.01)
+disp_1mw = mean(abs.(disp2.diff) .< 1.0)
+
+fc2 = filter(r -> isfin(r.ROP_published) && isfin(r.ROP_solved), fcas)
+fc2.diff = fc2.ROP_solved .- fc2.ROP_published
+fc_exact = mean(abs.(fc2.diff) .< EXACT)
+fc_worst = fc2[argmax(abs.(fc2.diff)), :]
+fc2x = filter(r -> r.SETTLEMENTDATE != fc_worst.SETTLEMENTDATE, fc2)
+fc_exact_x = mean(abs.(fc2x.diff) .< EXACT)
+
+ic2 = filter(r -> isfin(r.MWFLOW_published) && isfin(r.MWFLOW_solved), ic)
+ic2.fdiff = ic2.MWFLOW_solved .- ic2.MWFLOW_published
+ic2.ldiff = ic2.MWLOSSES_solved .- ic2.MWLOSSES_published
+```
+
+Beyond the energy price, the comparison covers `{julia} fint(n_disp)` paired unit-interval dispatch targets (`{julia} fint(n_disp_total - n_disp)` further rows lack a published or solved counterpart and are excluded rather than zero-filled), `{julia} fint(nrow(fc2))` FCAS prices and `{julia} fint(nrow(ic2))` interconnector flows.
+
+```{julia}
+#| label: fig-other
+#| fig-cap: "Absolute errors of (a) unit dispatch targets, (b) FCAS prices and (c) interconnector flows. Each panel shows the empirical CDF with a log x axis; errors below the plotting floor (1e-6) are shown at the floor and make up the initial vertical rise."
+#| fig-width: 11
+#| fig-height: 4
+let
+    fig = Figure(size = (1100, 420))
+    function cdf!(ax, v; kw...)
+        xs = sort(max.(abs.(v), 1.0e-6))
+        idx = unique(round.(Int, range(1, length(xs); length = min(length(xs), 4000))))
+        lines!(ax, xs[idx], idx ./ length(xs); linewidth = 2.5, kw...)
+    end
+    ax1 = Axis(fig[1, 1]; xscale = log10, xlabel = "|ΔMW| dispatch target", ylabel = "Share ≤ x", title = "(a) Dispatch")
+    cdf!(ax1, disp2.diff; color = :steelblue); ylims!(ax1, 0.9, 1.001); xlims!(ax1, 1.0e-6, 1000)
+    ax2 = Axis(fig[1, 2]; xscale = log10, xlabel = "|Δprice| (\$/MW)", title = "(b) FCAS price")
+    cdf!(ax2, fc2.diff; color = :darkorange); ylims!(ax2, 0.9, 1.001); xlims!(ax2, 1.0e-6, 1000)
+    ax3 = Axis(fig[1, 3]; xscale = log10, xlabel = "|ΔMW| flow", title = "(c) Interconnector flow")
+    cdf!(ax3, ic2.fdiff; color = :seagreen); ylims!(ax3, 0.5, 1.001); xlims!(ax3, 1.0e-6, 1000)
+    fig
+end
+```
+
+```{julia}
+#| label: tbl-fcas
+#| tbl-cap: "FCAS price agreement by service (all regions pooled). The last two columns repeat the mean and maximum absolute error with the single worst interval (2025-03-17 01:20, see text) removed."
+let
+    g = combine(groupby(fc2, :BIDTYPE), nrow => :n,
+        :diff => (v -> round(100 * mean(abs.(v) .< EXACT); digits = 2)) => :pct_within_0_001,
+        :diff => (v -> round(mean(abs.(v)); sigdigits = 3)) => :mae,
+        :diff => (v -> round(q(abs.(v), 0.99); sigdigits = 3)) => :abs_p99,
+        :diff => (v -> round(maximum(abs.(v)); sigdigits = 3)) => :max_abs)
+    gx = combine(groupby(fc2x, :BIDTYPE),
+        :diff => (v -> round(mean(abs.(v)); sigdigits = 3)) => :mae_without_worst,
+        :diff => (v -> round(maximum(abs.(v)); sigdigits = 3)) => :max_abs_without_worst)
+    mdtable(sort(leftjoin(g, gx; on = :BIDTYPE), :BIDTYPE))
+end
+```
+
+```{julia}
+#| label: tbl-ic
+#| tbl-cap: "Interconnector flow and loss agreement."
+let
+    g = combine(groupby(ic2, :INTERCONNECTORID), nrow => :n,
+        :fdiff => (v -> round(100 * mean(abs.(v) .< 0.01); digits = 1)) => :pct_flow_within_0_01MW,
+        :fdiff => (v -> round(mean(abs.(v)); sigdigits = 3)) => :flow_mae_mw,
+        :fdiff => (v -> round(q(abs.(v), 0.99); sigdigits = 3)) => :flow_abs_p99,
+        :ldiff => (v -> round(mean(abs.(v)); sigdigits = 3)) => :loss_mae_mw)
+    mdtable(sort(g, :INTERCONNECTORID))
+end
+```
+
+Dispatch targets agree to within 0.01 MW for `{julia} pct(disp_exact; d = 2)` of unit-intervals and to within 1 MW for `{julia} pct(disp_1mw; d = 2)`. FCAS prices agree to within 0.001 \$/MW for `{julia} pct(fc_exact; d = 2)` of price-intervals. One interval, `{julia} fc_worst.SETTLEMENTDATE`, accounts for the large regulation-service means in the table: TAS1 `RAISEREG` and `LOWERREG` solve to about 175,000 \$/MW against 8.27 and 2.26 published, the price of a violated regulation requirement (see @sec-sources). The interconnector tables show where the replica and NEMDE disagree physically: the flows and the dispatch outcomes of the few intervals discussed in @sec-sources.
+
+# Results: run time
+
+```{julia}
+#| output: false
+rt.solve_s = rt.execute_s
+parts = ["system_build_s", "simulation_build_s", "execute_s", "compare_s"]
+labels = ["System build", "Model build", "Solve (both runs)", "Compare"]
+means = [mean(rt[!, p]) for p in parts]
+total = mean(rt.total_s)
+wall_h = 8.5
+```
+
+## Where the time goes
+
+```{julia}
+#| label: tbl-runtime
+#| tbl-cap: "Per-interval run time in seconds (n = 1000 independent solves, six concurrent workers, one HiGHS thread each)."
+let
+    rows = DataFrame(phase = String[], mean = Float64[], median = Float64[], p95 = Float64[], p99 = Float64[], max = Float64[], share_of_total = Float64[])
+    for (p, l) in zip(parts, labels)
+        v = rt[!, p]
+        push!(rows, (l, mean(v), median(v), q(v, 0.95), q(v, 0.99), maximum(v), mean(v) / total))
+    end
+    push!(rows, ("Total", total, median(rt.total_s), q(rt.total_s, 0.95), q(rt.total_s, 0.99), maximum(rt.total_s), 1.0))
+    mapcols!(c -> c isa Vector{Float64} ? round.(c; sigdigits = 4) : c, rows)
+    mdtable(rows)
+end
+```
+
+A full independent interval costs `{julia} f1(total)` s on average. Constructing the system (`{julia} f1(means[1])` s) and the PSI decision models (`{julia} f1(means[2])` s) accounts for `{julia} pct((means[1] + means[2]) / total, d = 0)` of that; the solve itself, which includes both fast-start runs, result extraction and the dual pass, takes `{julia} f1(means[3])` s on average but only `{julia} f1(median(rt.execute_s))` s at the median. Comparison against the published tables is negligible. The median interval takes `{julia} f1(med_total)` s in total. The mean is inflated by `{julia} n_stall` intervals (`{julia} pct(n_stall / nrow(rt))`) that spend more than five minutes (up to 35) in a single phase (@tbl-runtime): `{julia} stall_by_phase[1]` in system build, `{julia} stall_by_phase[2]` in model build, `{julia} stall_by_phase[3]` in the solve and `{julia} stall_by_phase[4]` in the comparison. Because the stalls are spread over every phase, they look like a machine-level event, not an optimiser effect; we have not established the cause.
+
+```{julia}
+#| label: fig-runtime
+#| fig-cap: "(a) Mean per-interval time by phase. (b) Histogram of the solve time (log x axis); the long right tail is a few slow intervals. (c) Empirical CDF of total time per interval. All with six workers sharing the machine."
+#| fig-width: 11
+#| fig-height: 4
+let
+    fig = Figure(size = (1100, 420))
+    ax1 = Axis(fig[1, 1]; yticks = (1:4, reverse(labels)), xlabel = "Mean seconds per interval", title = "(a)")
+    barplot!(ax1, 1:4, reverse(means); direction = :x, color = reverse(Makie.wong_colors()[1:4]))
+    for (i, m) in enumerate(reverse(means))
+        text!(ax1, m, i; text = " $(f1(m)) s", align = (:left, :center), fontsize = 12)
+    end
+    xlims!(ax1, 0, maximum(means) * 1.3)
+    ax2 = Axis(fig[1, 2]; xlabel = "Solve time (s)", ylabel = "Intervals", xscale = log10, title = "(b)")
+    edges = 10 .^ range(log10(max(minimum(rt.execute_s), 1)), log10(maximum(rt.execute_s)); length = 45)
+    h = fit(Histogram, rt.execute_s, edges)
+    barplot!(ax2, sqrt.(edges[1:(end - 1)] .* edges[2:end]), h.weights; width = diff(edges), gap = 0, color = (:steelblue, 0.85))
+    vlines!(ax2, [median(rt.execute_s), q(rt.execute_s, 0.95)]; color = [:black, :crimson], linestyle = :dash)
+    ax3 = Axis(fig[1, 3]; xlabel = "Total time per interval (s)", ylabel = "Share ≤ x", xscale = log10, title = "(c)")
+    xs = sort(rt.total_s)
+    lines!(ax3, xs, (1:length(xs)) ./ length(xs); linewidth = 2.5, color = :steelblue)
+    fig
+end
+```
+
+```{julia}
+#| label: fig-demand-time
+#| fig-cap: "Solve time against system demand for the 1000 intervals (log y axis). The line joins the median in each demand decile: solve time falls from about 51 s in the lowest-demand decile to about 29 s in the highest. Ten intervals take between 9 and 35 minutes, at all demand levels."
+#| fig-width: 8
+#| fig-height: 4.5
+let
+    fig = Figure(size = (900, 470))
+    ax = Axis(fig[1, 1]; xlabel = "System demand (MW)", ylabel = "Solve time (s)", yscale = log10)
+    scatter!(ax, rt.system_demand_mw, rt.execute_s; color = (:steelblue, 0.45), markersize = 6)
+    rt.decile = (rt.stratum .- 1) .÷ 100 .+ 1
+    g = sort(combine(groupby(rt, :decile), :system_demand_mw => mean => :x, :execute_s => median => :y), :x)
+    lines!(ax, g.x, g.y; color = :crimson, linewidth = 3)
+    scatter!(ax, g.x, g.y; color = :crimson, markersize = 9)
+    fig
+end
+```
+
+```{julia}
+#| label: fig-mip-dual
+#| fig-cap: "Solver-reported MIP time against the wall time of the solve phase, log-log. Typical intervals spend 1 to 60 s in HiGHS within a 20 to 100 s solve phase; most of the slow outliers (top of the plot) spend little time in the solver. Each point is an interval; the dotted line is equality."
+#| fig-width: 7
+#| fig-height: 5
+let
+    d = filter(r -> isfin(r.timed_solve_time), rt)
+    fig = Figure(size = (760, 520))
+    ax = Axis(fig[1, 1]; xlabel = "Timed solver MIP time (s)", ylabel = "Solve-phase wall time (s)", xscale = log10, yscale = log10)
+    scatter!(ax, max.(d.timed_solve_time, 1.0e-2), d.execute_s; color = (:steelblue, 0.5), markersize = 6)
+    lines!(ax, [1.0e-2, 1.0e3], [1.0e-2, 1.0e3]; color = :black, linestyle = :dot)
+    fig
+end
+```
+
+```{julia}
+#| output: false
+slow = sort(rt, :execute_s; rev = true)
+s1 = slow[1, :]
+mip_mean = mean(skipmissing(rt.timed_solve_time))
+dual_mean = mean(skipmissing(rt.timed_calculate_dual_variables))
+```
+
+The mean MIP time reported by the solver is `{julia} f1(mip_mean)` s and the mean dual solve `{julia} f2(dual_mean)` s, so in a typical interval the optimisation is a small part of the solve phase (`{julia} f1(means[3])` s mean, `{julia} f1(median(rt.execute_s))` s median); the rest is model update, result extraction and writing. The slowest interval, `{julia} s1.interval` with `{julia} fint(s1.execute_s)` s of solve-phase wall time, reports `{julia} f1(s1.timed_solve_time)` s inside the solver, so that time was not spent in HiGHS. This is not true of every slow interval: one of the six slowest, 2025-02-15 06:25, spent 539 s in the MIP itself.
+
+```{julia}
+#| label: tbl-slow
+#| tbl-cap: "The slowest solve phases. Solver-reported times are in the last two columns; five of the six spent under 20 s in the MIP."
+mdtable(select(first(slow, 6), :interval, :system_demand_mw, :execute_s, :timed_solve_time, :timed_calculate_dual_variables))
+```
+
+## Throughput and what it means for use
+
+Six workers delivered `{julia} f2(nrow(rt) / (wall_h * 60))` intervals per minute (`{julia} fint(nrow(rt))` intervals in about `{julia} wall_h` hours), a per-interval cost of `{julia} f1(total)` s for each worker slot. Two observations qualify this figure.
+
+First, the cost is dominated by building rather than solving, because each interval here builds a fresh system and model. This protocol is deliberately the most expensive way to use the code: it pays the full construction cost once per interval so that intervals are statistically independent. In the whole-day mode, a single system and sequence of decision models are built once and stepped through the day with parameter updates, and the same replica solved a 288-interval trading day (2024-12-15) in about 1105 s of wall time in a single process, about 3.8 s per interval, over an uncontended machine. That figure comes from an earlier, separate run, not from the benchmark above, and is not a like-for-like comparison, but it shows the order of magnitude of the amortised cost.
+
+Second, six concurrent processes share one machine and memory bandwidth, so per-process times here are inflated relative to a single uncontended process (our first single-process smoke test took about 50 s per interval). Each worker held about 2.4 to 3.1 GB at peak; six workers used roughly 12 to 15 GB in total with no swapping.
+
+# Sources of difference from NEMDE {#sec-sources}
+
+`{julia} nint_diff` of the `{julia} fint(n_int)` intervals (`{julia} pct(nint_diff / n_int)`) have at least one regional price that differs from the published ROP by more than 0.001 \$/MWh. To understand them we classify each by whether the dispatch also differs. If every unit's dispatch target and every interconnector flow matches NEMDE but the price does not, the primal solution is the same and the difference must come from the dual: the model is degenerate at that point and a different valid price vector was selected. If the dispatch also differs, the primal solutions differ.
+
+```{julia}
+#| output: false
+function interval_diag(prices, disp2, ic2)
+    pmax = combine(groupby(prices, :SETTLEMENTDATE), :error_rop => (v -> maximum(abs.(v))) => :max_price_err,
+        :system_demand_mw => first => :demand)
+    dmax = combine(groupby(disp2, :SETTLEMENTDATE), :diff => (v -> maximum(abs.(v))) => :max_dispatch_diff_mw)
+    fmax = combine(groupby(ic2, :SETTLEMENTDATE), :fdiff => (v -> maximum(abs.(v))) => :max_flow_diff_mw)
+    d = leftjoin(leftjoin(pmax, dmax; on = :SETTLEMENTDATE), fmax; on = :SETTLEMENTDATE)
+    return d
+end
+diag = interval_diag(prices, disp2, ic2)
+diag.class = map(eachrow(diag)) do r
+    r.max_price_err <= EXACT && return "match"
+    pd = coalesce(r.max_dispatch_diff_mw, 0.0)
+    fd = coalesce(r.max_flow_diff_mw, 0.0)
+    return (pd <= 0.5 && fd <= 0.5) ? "same dispatch, different price" : "different dispatch"
+end
+cls = combine(groupby(diag, :class), nrow => :intervals, :max_price_err => (v -> maximum(v)) => :largest_price_error)
+n_same = count(==("same dispatch, different price"), diag.class)
+n_diffd = count(==("different dispatch"), diag.class)
+```
+
+```{julia}
+#| label: tbl-classes
+#| tbl-cap: "Classification of the 1000 intervals. 'Same dispatch' means every matched unit is within 0.5 MW and every interconnector flow within 0.5 MW of NEMDE."
+mdtable(cls)
+```
+
+```{julia}
+#| label: fig-diag
+#| fig-cap: "Largest price error against the largest dispatch difference in each interval that disagrees on price (log-log). Points at the left edge match NEMDE's dispatch almost exactly and differ only in the dual; the large-error points that sit to the right have different dispatch."
+#| fig-width: 8
+#| fig-height: 5
+let
+    d = filter(r -> r.max_price_err > EXACT, diag)
+    fig = Figure(size = (880, 540))
+    ax = Axis(fig[1, 1]; xlabel = "Largest unit dispatch difference in the interval (MW, +0.001)", ylabel = "Largest |price error| in the interval (\$/MWh)", xscale = log10, yscale = log10)
+    scatter!(ax, coalesce.(d.max_dispatch_diff_mw, 0.0) .+ 1.0e-3, d.max_price_err; color = (:crimson, 0.7), markersize = 9)
+    vlines!(ax, [0.5]; color = :gray40, linestyle = :dash)
+    fig
+end
+```
+
+```{julia}
+#| label: tbl-worst
+#| tbl-cap: "The fifteen intervals with the largest price error, with the largest dispatch and flow differences in the same interval."
+let
+    d = sort(filter(r -> r.max_price_err > EXACT, diag), :max_price_err; rev = true)
+    mdtable(first(select(d, :SETTLEMENTDATE, :max_price_err, :max_dispatch_diff_mw, :max_flow_diff_mw, :demand, :class), 15))
+end
+```
+
+## Family 1: ties in the offer stack leave the dual non-unique
+
+`{julia} n_same` intervals have the same dispatch as NEMDE but a different price. Most differ by well under 0.1 \$/MWh. Two do not: 2025-06-16 10:45 in South Australia (1.17 \$/MWh, where one unit's dispatch differs by 0.14 MW) and 2025-07-07 12:15 in Tasmania, where AEMSim's price is 190.04 \$/MWh and NEMDE's is 163.57 \$/MWh, a difference of 26.47 \$/MWh. We examine the larger one.
+
+Dispatch is identical for all 518 unit rows and the interconnector flows agree, so the difference is entirely in the dual. AEMO's published NEMDE case files for the interval (the loaded case and the price-setter file, both available on NEMWEB) show why. NEMDE's price setter output decomposes each regional price into the unit bands that would move if one more MW of demand were served:
+
+```{julia}
+#| label: tbl-pricesetter
+#| tbl-cap: "NEMDE price-setter entries for the TAS1 energy price in the interval ending 2025-07-07 12:15, from AEMO's published price-setter file. 'Increase' is the change in the unit's dispatch for one more MW of regional demand, 'RRNBandPrice' the band price referred to the regional reference node, and 'BandCost' their product. The costs sum to the published price."
+let
+    path = joinpath(RUN, "nemde_xml", "NEMPriceSetter_2025070709900.xml")
+    if isfile(path)
+        txt = read(path, String)
+        rows = DataFrame(unit = String[], market = String[], band = String[], increase = Float64[], band_price = Float64[], band_cost = Float64[])
+        for m in eachmatch(r"RegionID=\"TAS1\" Market=\"Energy\" Price=\"([\d.]+)\" Unit=\"([^\"]+)\" DispatchedMarket=\"([^\"]+)\" BandNo=\"(\d+)\" Increase=\"([-\d.]+)\" RRNBandPrice=\"([-\d.]+)\" BandCost=\"([-\d.]+)\"", txt)
+            push!(rows, (m[2], m[3], m[4], parse(Float64, m[5]), parse(Float64, m[6]), parse(Float64, m[7])))
+        end
+        push!(rows, ("Sum", "", "", NaN, NaN, sum(rows.band_cost)))
+        mdtable(rows)
+    else
+        Markdown.parse("NEMDE price-setter file not found under `$(RUN)/nemde_xml`.")
+    end
+end
+```
+
+The Basslink interconnector (`T-V-MNSP1`) is a price setter on the TAS1-side offer band at 57.42 \$/MWh. Its TAS1 offer holds 55 MW at band 4 and 50 MW at band 5, so the cumulative offer through band 5 ends exactly at 105 MW (band 6 offers a further 333 MW at a higher price). NEMDE's solution has the flow at $-104.99987$ MW, just inside band 5 by 0.00013 MW, so band 5 is the marginal band and sets the price. AEMSim's flow is $-105.0$ MW: exactly the band edge. At the edge both the lower band and the next source (a Tasmanian generator whose band begins at 190.04 \$/MWh) are valid marginal sources, the dual is not unique, and HiGHS returned a different vertex from NEMDE's.
+
+The same interval shows the same pattern in a second market. TAS1 `RAISEREG` is 7.24 \$/MW in AEMSim against 6.24 \$/MW published. NEMDE's price-setter file names `TUNGATIN` at band 3 (6.24), and that unit clears 22 MW against a 22 MW band: again exactly the band edge, and again NEMDE reports the lower band. AEMO's constraint FAQ specifies pro-rata tie-breaking for price-tied *energy* bands and states that it does not apply to FCAS [@aemo_constraint_faq], so the FCAS case at least has no specified rule.
+
+Two cautions apply. First, this is one interval: we have not yet shown that NEMDE resolves every band-edge tie to the lower band, and other intervals in this family have prices that are *lower* than published (for example 2025-06-16 SA1, 2025-07-26 TAS1, 2025-11-01 QLD1), so no single direction of bias explains them. Second, we do not know why NEMDE lands 0.00013 MW inside the band; it may be solver tolerance rather than a rule.
+
+## Family 2: genuinely different dispatch
+
+`{julia} n_diffd` intervals have a dispatch difference above 0.5 MW in some unit or a flow difference above 0.5 MW. These include the largest price errors, and we have not diagnosed them to the same depth as the tie in family 1. The facts are:
+
+- **2025-06-18 18:20.** The largest error in the sample: VIC1, NSW1, SA1 and QLD1 ROPs are 33 to 57 \$/MWh above published, at published prices of about 590 to 1000 \$/MWh and a system demand of 32.0 GW (the second-highest in the sample). The largest unit difference is 9.5 MW (`CAPBES1`, a battery) and the largest interconnector flow difference 2.3 MW. This is a scarcity interval, where small changes in which constraints violate or which FCAS requirements are met move prices.
+- **2025-03-06 18:40.** `BRAEMAR6` differs by 154 MW although all interconnector flows match to 0.004 MW and the price error is 0.1 \$/MWh: an offer or limit that NEMDE treats differently, or an alternative optimum among equal-cost options.
+- **2025-02-21 23:35, 2025-06-26 21:00, 2025-06-14 18:20, 2025-12-31 20:30, 2025-11-12 17:50.** Unit differences of 13 to 28 MW and flow differences of 1 to 31 MW, with price errors between 0.6 and 3 \$/MWh.
+
+Without NEMDE's objective value in the published tables we cannot say whether these dispatches are equal-cost alternatives (a primal degeneracy) or whether the replica's feasible set differs from NEMDE's through an input, a constraint term or a tolerance. We list them as targets for case-by-case analysis against the loaded NEMDE case file, which carries the full input set and solution.
+
+## Family 2b: a violated FCAS requirement that the energy-price classification misses
+
+The classification above is by energy price, so it cannot see an FCAS-only difference. One interval stands out when the FCAS prices are compared: 2025-03-17 01:20. AEMSim violates both Tasmanian regulation requirement constraints (`F_T+LREG_0050` and `F_T+RREG_0050`, each by the full 50 MW) and therefore prices TAS1 `RAISEREG` and `LOWERREG` at the violated-requirement level, 175,008 and 175,002 \$/MW, against 8.27 and 2.26 published. Energy prices match NEMDE in all five regions (TAS1 is 355.02 in both) and the interval is not among the 37 price-differing intervals. The replica finds Tasmanian regulation capacity short where NEMDE does not; we have not found why. It is the only FCAS price error above 12 \$/MW in the sample, and it alone produces the regulation-service means in @tbl-fcas.
+
+## Family 3: gaps in the source data {#sec-data}
+
+AEMO's September 2025 `DISPATCHLOAD` and `DISPATCH_MNSPBIDTRK` archive files end at 2025-09-30 04:00. NEMWEB lists only a first file for that month, and its last record, followed by a normal end-of-report footer, is the 04:00 interval; the remainder of the month's last day is absent from the source. This is not a download fault. Eleven of the first draw (1.1%) fell on the affected trading days and could not be built; the benchmark's resampling step replaces failed intervals from the same stratum on other days. We mention it because any validation against the MMSDM archive inherits its gaps, and because the pipeline fails loudly on the missing rows instead of filling them.
+
+## Differences that are not model error
+
+Three methodological points affect any comparison of this kind.
+
+- **Price definition.** We compare the solved price with the published ROP, the regional reference price before post-dispatch adjustment, as nempy does, and not the settled RRP, which includes scaling and capping.
+- **Tolerance.** The agreement threshold of 0.001 \$/MWh is far above solver precision. HiGHS is run at a relative MIP gap of $10^{-9}$; we do not know the tolerances NEMDE's solver uses. Differences of the order of $10^{-4}$ \$/MWh to $10^{-2}$ \$/MWh should not be read as model error.
+- **Unmatched rows.** A small share of unit rows exist in only one side of the comparison (for example units without a published `TOTALCLEARED`); they are excluded and counted.
+
+## Comparison with nempy's benchmark
+
+nempy's benchmark reports a mean signed error of `{julia} NEMPY.mean` \$/MWh with a median of 0 and 5th to 95th percentiles of `{julia} NEMPY.p5` and `{julia} NEMPY.p95` on 1000 uniform intervals of 2024 H2. Our numbers are lower in the mean, with a far tighter percentile range. The two are not like-for-like for four reasons: (i) a different year and a different regulatory context (five-minute settlement, new FCAS markets, different constraint equations); (ii) uniform against demand-stratified sampling; (iii) nempy takes some inputs from the NEMDE case file where this replica rebuilds them from MMSDM; (iv) differences in formulation and solver, which affect how dual degeneracy is resolved. The most defensible conclusion is the weaker one: a replica built purely from the public MMSDM tables reproduces NEMDE's prices to within 0.001 \$/MWh in about 99% of regional prices and diverges materially in a small number of well-characterised situations.
+
+# Relation to the design of PowerSimulations.jl
+
+The benchmark exercises the whole stack, and the way the replica is expressed in PSI is part of why it is tractable.
+
+```{mermaid}
+flowchart LR
+    A[NEMWEB MMSDM archives] --> B[Data package: populate]
+    B --> C[(Hive parquet cache, DuckDB)]
+    C --> D["AEM: nem_system(NEMDEConfiguration)"]
+    D --> E[PSY System: stock devices + NEMUnitData attributes + time series]
+    E --> F["AEMSim: template_nemde / DecisionModel(NEMDispatchProblem)"]
+    F --> G[PSI + JuMP + HiGHS]
+    G --> H[Results readers]
+    H --> I[Comparison with published NEMDE outcomes]
+    C --> I
+```
+
+**Separation of inputs and model.** The root package writes every NEMDE input once, in `nem_system`, as typed attributes and time series on stock PowerSystems.jl devices; the simulation package only reads them. A device is a NEMDE unit when it carries a `NEMUnitData` supplemental attribute, not because of its type, so the same `System` can hold conventional units, batteries, wind and solar, hydro and scheduled loads. PSI's separation between the `System` (data), the `ProblemTemplate` (which formulation applies to which device type and which services and network model are used) and the `DecisionModel` (the optimisation problem) is what lets NEMDE's formulation be expressed as device, service and constraint formulations without special-casing the data layer.
+
+**NEM-specific formulations as PSI extensions.** NEMDE is not a standard unit-commitment: offers are price bands with an additional availability and ramp envelope, FCAS enablement follows trapezia coupled to energy through joint capacity and ramp constraints, losses are modelled piecewise and referred to the regional reference node, tie-breaking constraints share price-tied bands, thousands of generic constraints carry constraint violation penalty factors, and fast-start units follow an inflexibility profile in a two-run solve. Each of these is an `AbstractNEMDispatch` device formulation, a service or a constraint formulation registered through the template, and the keyword builder `template_nemde` assembles them. Because they are ordinary PSI constructs, results come back through PSI's results interface and the same machinery supports closed-loop simulation, in which each interval starts from the previous solution instead of AEMO's observed state.
+
+**Fit with PSI's execution model.** The independent-interval protocol used here is a one-step simulation per interval; the whole-day and closed-loop modes use a multi-step `Simulation`. The measured construction-versus-solve split shows the cost of PSI's strength and of the protocol: building a model is expensive relative to solving a five-minute dispatch, so the amortised multi-step mode, in which parameters update in place, is the right way to produce many consecutive intervals. The benchmark's per-interval build is the price of statistical independence, not the cost of the intended use.
+
+**Dependencies and portability.** The simulation package currently depends on a pinned fork of PowerSimulations (and the root package on forks of InfrastructureSystems and HDF5). The simulation package cannot be registered until the fork's changes are released upstream, which bounds how far the replica is portable today.
+
+# Reproducibility {.unnumbered}
+
+```{julia}
+#| echo: false
+let
+    o = manifest["options"]
+    println("Run folder:    ", RUN)
+    println("Created:       ", manifest["created"])
+    println("Julia:         ", manifest["julia"])
+    println("Git commit:    ", manifest["git_commit"], " (the benchmark scripts were uncommitted)")
+    println("Year / seed:   ", o["year"], " / ", o["seed"])
+    println("Workers:       ", o["workers"], " (HiGHS threads each: ", o["solver-threads"], ")")
+end
+```
+
+The benchmark is a single command, which populates the cache, draws the load-duration-stratified sample, solves it in parallel shards, replaces failed intervals, and writes the analysis files that this notebook reads:
+
+```sh
+julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/nempy_benchmark.jl \
+    --populate true --workers 6 --output "$HOME/aem_validation/ldc-2025"
+# failed intervals (source gaps) are redrawn and solved with:
+julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/nempy_benchmark.jl \
+    --resample true --workers 6 --output "$HOME/aem_validation/ldc-2025"
+# this report:
+quarto render benchmarking/report/ldc_benchmark.qmd
+```
+
+Set `AEM_BENCHMARK_RUN` to render the notebook against another run folder.
