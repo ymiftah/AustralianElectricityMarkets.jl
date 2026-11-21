@@ -550,6 +550,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `read_bids`, `read_offers` and `read_fcas_bids` join period offers to their price bands in a single DuckDB query: `PRICEBANDARRAY` is no longer fetched by a second query and inserted row by row, and the `in_force` fast-start lookup is an ASOF query over the distinct offer keys. Outputs are unchanged; `read_offers` over six hours of the real 2026-03-10 trading day runs in 0.76 s instead of 0.96 s. Each row now owns its `PRICEBANDARRAY` vector instead of sharing one per day offer.
+
 - The NEMDE HiGHS relative MIP gap is `1e-9` (was `1e-8`) in `NEMDE_HIGHS_OPTIONS`, the batch runner and the baseline comparison; the absolute gap stays `1e-10`. At `1e-8` some intervals stopped short of the optimum with an interconnector on a loss breakpoint, mispricing the region by up to 4 $/MWh.
 - AEMSim owns the coefficient and bound parameter types it used from PowerSimulations: `NEMConstraintCoefficientParameter` and `NEMConstraintBoundParameter`, stored as `Float64` in every build mode. The five concrete parameter types keep their names, so result keys are unchanged. AEMSim no longer uses the fork's `ConstraintCoefficientParameter`, `ConstraintBoundParameter` or `NetworkModel` `slack_cost`.
 

@@ -280,109 +280,119 @@ function _massage_bids(
         keep_bid_type::Bool = false, period_columns::AbstractVector{<:AbstractString} = String[],
         extra_price_columns::AbstractVector{<:AbstractString} = String[], in_force::Bool = false,
     )
-    period_source = read_hive(db, :BIDPEROFFER_D, (start_date - Day(1), end_date + Day(1)))
-    band_columns = _band_columns(_table_schema(db, period_source), "BANDAVAIL")
-    quantities = ["MAXAVAIL"; band_columns]
-    isempty(period_columns) && !in_force || isnothing(resolution) || throw(
-        ArgumentError("additional period columns require native resolution"),
-    )
-    lookup_columns = in_force ? ["LASTCHANGED"] : String[]
-    period_sql, params = _period_offers_sql(
-        db, bid_types, start_date, end_date, resolution; columns = [quantities; period_columns; lookup_columns],
-    )
+    (isempty(period_columns) && !in_force) || isnothing(resolution) ||
+        throw(ArgumentError("additional period columns require native resolution"))
+    window = (start_date - Day(1), end_date + Day(1))
+    period_source = read_hive(db, :BIDPEROFFER_D, window)
+    price_source = read_hive(db, :BIDDAYOFFER_D, window)
+    bid_types_sql = _bid_type_list(bid_types)
+    # Explicit band lists, since `COLUMNS(regex)` follows file column order rather than band number.
+    band_avail = join(_band_columns(_table_schema(db, period_source), "BANDAVAIL"), ", ")
+    price_bands = join(_band_columns(_table_schema(db, price_source), "PRICEBAND"), ", ")
     bucket = isnothing(resolution) ? "INTERVAL_DATETIME" : _ceil_timestamp_sql("INTERVAL_DATETIME", resolution)
-    period = if isnothing(resolution)
-        "SELECT * FROM latest_period"
-    else
-        averages = join(("COALESCE(avg($c), 'NaN'::DOUBLE) AS $c" for c in quantities), ", ")
-        """
-        SELECT SETTLEMENTDATE, $bucket AS INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE, $averages
-        FROM latest_period GROUP BY ALL
-        """
-    end
-    price_source = read_hive(db, :BIDDAYOFFER_D, (start_date - Day(1), end_date + Day(1)))
-    price_columns = _band_columns(_table_schema(db, price_source), "PRICEBAND")
-    band_array = join(("p.$c" for c in band_columns), ", ")
-    price_selection = join(["MINIMUMLOAD", "DAILYENERGYCONSTRAINT", extra_price_columns...], ", ")
-    period_projection = join((", p.$c" for c in period_columns))
-    bid_type_column = ", p.BIDTYPE"
-    replaced = in_force ? Set(["MINIMUMLOAD", "T1", "T2", "T3", "T4"]) : Set{String}()
-    day_column(c) = c in replaced ? "CASE WHEN f.DUID IS NULL THEN d.$c ELSE f.$c END AS $c" : "d.$c"
-    extra_projection = join((", " * day_column(c) for c in extra_price_columns))
-    append!(params, _offer_days(start_date, end_date))
-    in_force_sql, in_force_join = if in_force
-        append!(params, _offer_days(start_date, end_date))
-        # The version in force is the latest whose OFFERDATE is at or before the period offer's LASTCHANGED.
-        asof_join = """ASOF LEFT JOIN versions f ON f.SETTLEMENTDATE = p.SETTLEMENTDATE AND f.DUID = p.DUID
-        AND f.DIRECTION = p.DIRECTION AND f.BIDTYPE = p.BIDTYPE AND p.LASTCHANGED >= f.OFFERDATE"""
-        _day_offer_versions_sql(db, start_date, end_date), asof_join
-    else
-        "", ""
-    end
-    append!(params, (start_date, end_date))
+    missing_value = isnothing(resolution) ? "NULL" : "'NaN'::DOUBLE"
+    period_extra = join((", $c" for c in [period_columns; in_force ? ["LASTCHANGED"] : String[]]))
+    price_extra = join((", $c" for c in extra_price_columns))
+    days = _offer_days(start_date, end_date)
+    lower = isnothing(resolution) ? start_date : start_date - resolution
+
     bids = _query(
         db,
         """
-        WITH latest_period AS ($period_sql),
-             period AS ($period),
-             prices AS (
-                 SELECT SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE, $price_selection
-                 FROM $price_source
-                 WHERE BIDTYPE IN ($(_bid_type_list(bid_types))) AND SETTLEMENTDATE BETWEEN ? AND ?
-                 QUALIFY row_number() OVER (
-                     PARTITION BY SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE ORDER BY VERSIONNO DESC
-                 ) = 1
-             )$in_force_sql
-        SELECT p.SETTLEMENTDATE, p.DUID, p.DIRECTION, p.INTERVAL_DATETIME,
-               list_value($band_array) AS BANDAVAILARRAY,
-               p.MAXAVAIL, $(day_column("MINIMUMLOAD")), d.DAILYENERGYCONSTRAINT $extra_projection $bid_type_column $period_projection,
+        WITH latest_period AS (
+            SELECT SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE,
+                   MAXAVAIL, $band_avail $period_extra
+            FROM $period_source
+            WHERE BIDTYPE IN ($bid_types_sql) AND SETTLEMENTDATE BETWEEN ? AND ?
+              AND INTERVAL_DATETIME >= ? AND INTERVAL_DATETIME < ?
+            QUALIFY row_number() OVER (
+                PARTITION BY SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE ORDER BY VERSIONNO DESC
+            ) = 1
+        ),
+        period AS (
+            SELECT SETTLEMENTDATE, $bucket AS INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE $period_extra,
+                   COALESCE(avg(COLUMNS('^(MAXAVAIL|BANDAVAIL\\d+)\$')), $missing_value)
+            FROM latest_period
+            GROUP BY ALL
+        ),
+        prices AS (
+            SELECT SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE, MINIMUMLOAD, DAILYENERGYCONSTRAINT $price_extra,
+                   list_value($price_bands) AS PRICEBANDARRAY
+            FROM $price_source
+            WHERE BIDTYPE IN ($bid_types_sql) AND SETTLEMENTDATE BETWEEN ? AND ?
+            QUALIFY row_number() OVER (
+                PARTITION BY SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE ORDER BY VERSIONNO DESC
+            ) = 1
+        )
+        SELECT SETTLEMENTDATE, DUID, DIRECTION, INTERVAL_DATETIME, PRICEBANDARRAY,
+               list_value($band_avail) AS BANDAVAILARRAY,
+               MAXAVAIL, MINIMUMLOAD, DAILYENERGYCONSTRAINT $price_extra, BIDTYPE $period_extra,
                d.DUID IS NULL AS MISSING_PRICE
         FROM period p
         LEFT JOIN prices d USING (SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE)
-        $in_force_join
-        WHERE p.INTERVAL_DATETIME >= ? AND p.INTERVAL_DATETIME < ?
-        ORDER BY p.SETTLEMENTDATE, p.INTERVAL_DATETIME, p.DUID, p.DIRECTION, p.BIDTYPE
+        WHERE INTERVAL_DATETIME >= ? AND INTERVAL_DATETIME < ?
+        ORDER BY SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE
         """,
-        params,
+        [days; lower; end_date; days; start_date; end_date],
     )
-    missing_duids = sort!(unique(bids.DUID[bids.MISSING_PRICE]))
+
+    missing_duids = @chain bids begin
+        subset(:MISSING_PRICE)
+        unique(_.DUID)
+        sort
+    end
     isempty(missing_duids) || throw(
         ArgumentError(
             "missing price bids for period offers: $(join(missing_duids, ", ")); populate BIDDAYOFFER_D for the referenced trading days",
         ),
     )
-    # The price bands are one vector per trading day offer, so every row of that offer shares it.
-    bands = _query(
-        db,
-        """
-        SELECT SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE, list_value($(join(price_columns, ", "))) AS PRICEBANDARRAY
-        FROM $price_source
-        WHERE BIDTYPE IN ($(_bid_type_list(bid_types))) AND SETTLEMENTDATE BETWEEN ? AND ?
-        QUALIFY row_number() OVER (
-            PARTITION BY SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE ORDER BY VERSIONNO DESC
-        ) = 1
-        """,
-        _offer_days(start_date, end_date),
-    )
-    price_bands = Dict((row.SETTLEMENTDATE, row.DUID, row.DIRECTION, row.BIDTYPE) => row.PRICEBANDARRAY for row in eachrow(bands))
-    day_offers = zip(bids.SETTLEMENTDATE, bids.DUID, bids.DIRECTION, bids.BIDTYPE)
-    insertcols!(bids, 5, :PRICEBANDARRAY => eltype(bands.PRICEBANDARRAY)[price_bands[k] for k in day_offers])
+    in_force && _apply_in_force!(db, bids, start_date, end_date)
     keep_bid_type || select!(bids, Not(:BIDTYPE))
     return select!(bids, Not(:MISSING_PRICE))
 end
 
 
-# The `versions` CTE, prefixed with a comma: the fast-start columns of each energy `BIDDAYOFFER` version, by
-# `OFFERDATE`. Takes the trading-day bounds as two positional parameters.
-function _day_offer_versions_sql(db, start_date, end_date)
+const _OFFER_KEYS = [:SETTLEMENTDATE, :DUID, :DIRECTION, :BIDTYPE]
+const _IN_FORCE_COLUMNS = ["MINIMUMLOAD", "T1", "T2", "T3", "T4"]
+
+# Replaces `MINIMUMLOAD` and `T1` to `T4` of energy rows with the `BIDDAYOFFER` version in force at each
+# row's `LASTCHANGED`, then drops `LASTCHANGED`.
+function _apply_in_force!(db, bids, start_date, end_date)
     source = read_hive(db, :BIDDAYOFFER, (start_date - Day(1), end_date + Day(1)))
-    return """,
-    versions AS (
-        SELECT SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE, OFFERDATE, MINIMUMLOAD, T1, T2, T3, T4
-        FROM $source
-        WHERE BIDTYPE = 'ENERGY' AND SETTLEMENTDATE BETWEEN ? AND ?
-        QUALIFY row_number() OVER (
-            PARTITION BY SETTLEMENTDATE, DUID, DIRECTION, OFFERDATE ORDER BY VERSIONNO DESC
-        ) = 1
-    )"""
+    offer_keys = unique(select(bids, [_OFFER_KEYS; :LASTCHANGED]))
+    versions = _with_registered(db, offer_keys, "offer_keys") do
+        _query(
+            db,
+            """
+            WITH versions AS (
+                SELECT SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE, OFFERDATE, MINIMUMLOAD, T1, T2, T3, T4
+                FROM $source
+                WHERE BIDTYPE = 'ENERGY' AND SETTLEMENTDATE BETWEEN ? AND ?
+                QUALIFY row_number() OVER (
+                    PARTITION BY SETTLEMENTDATE, DUID, DIRECTION, OFFERDATE ORDER BY VERSIONNO DESC
+                ) = 1
+            )
+            SELECT k.*, f.MINIMUMLOAD AS MINIMUMLOAD_in_force, f.T1 AS T1_in_force, f.T2 AS T2_in_force,
+                   f.T3 AS T3_in_force, f.T4 AS T4_in_force, true AS IN_FORCE
+            FROM offer_keys k
+            ASOF JOIN versions f
+                ON f.SETTLEMENTDATE = k.SETTLEMENTDATE AND f.DUID = k.DUID AND f.DIRECTION = k.DIRECTION
+               AND f.BIDTYPE = k.BIDTYPE AND k.LASTCHANGED >= f.OFFERDATE
+            """,
+            _offer_days(start_date, end_date),
+        )
+    end
+    replaced = filter(c -> hasproperty(bids, c), _IN_FORCE_COLUMNS)
+    @chain bids begin
+        leftjoin!(versions; on = [_OFFER_KEYS; :LASTCHANGED])
+        transform!(
+            [
+                [c, "$(c)_in_force", "IN_FORCE"] =>
+                    ByRow((day, version, found) -> coalesce(found, false) ? version : day) => c
+                    for c in replaced
+            ]...,
+        )
+        select!(Not(["LASTCHANGED"; "IN_FORCE"; _IN_FORCE_COLUMNS .* "_in_force"]))
+    end
+    return bids
 end
