@@ -1,0 +1,106 @@
+# The second forecast must be served from the model cache even when its HDF5 file is unavailable.
+function _objective_cache_system()
+    sys = fcas_toy_system()
+    gc = PSY.get_component(GenericConstraint, sys, "F_REG")
+    name = AustralianElectricityMarkets.NEM_CONSTRAINT_SERIES.invoked
+    PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, gc, name)
+    AustralianElectricityMarkets.replace_single_series!(
+        sys, gc, AustralianElectricityMarkets.single_series(name, TOY_START, [1.0, 0.0, 0.0], TOY_RESOLUTION),
+    )
+    PSY.transform_single_time_series!(sys, TOY_RESOLUTION, TOY_RESOLUTION)
+    return sys
+end
+
+function _update_objective_cache_parameters!(model, keys, execution_count)
+    container = PSI.get_optimization_container(model)
+    objective = PSI.get_objective_expression(container)
+    PSI.reset_variant_terms(objective)
+    PSI.set_synchronized_status!(objective, false)
+    PSI.set_execution_count!(model, execution_count)
+    input = PSI.DatasetContainer{PSI.InMemoryDataset}()
+    for key in keys
+        PSI.update_container_parameter_values!(container, model, key, input)
+    end
+    return
+end
+
+@testset "disk-backed objective updates reuse forecasts and retain second-step values" begin
+    for cached in (true, false)
+        mktempdir() do folder
+            sys = _objective_cache_system()
+            @test !PSY.stores_time_series_in_memory(sys)
+            template = problem_template(sys)
+            model = PSI.DecisionModel(
+                template, sys; horizon = TOY_RESOLUTION, resolution = TOY_RESOLUTION,
+                interval = TOY_RESOLUTION, initial_time = TOY_START,
+                optimizer = PSI.optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
+                time_series_cache_size = cached ? 1024 * 1024 : 0,
+            )
+            PSI.get_ext(PSI.get_settings(model))["market_price_cap"] = 12345.0
+            @test PSI.build!(model; output_dir = joinpath(folder, "model")) == PSI.ModelBuildStatus.BUILT
+            container = PSI.get_optimization_container(model)
+            keys = [k for k in Base.keys(PSI.get_parameters(model)) if PSI.IS.Optimization.get_entry_type(k) === AEMS.GenericConstraintInvocationParameter]
+            invoked_key = only(keys)
+            _update_objective_cache_parameters!(model, keys, 0)
+            @test PSI.get_parameter_column_refs(PSI.get_parameter(container, invoked_key), "F_REG")[1] == 1.0
+            slack = PSI.get_variable(container, GenericConstraintSlackDown(), GenericConstraint)["F_REG", 1]
+            gc = PSY.get_component(GenericConstraint, sys, "F_REG")
+            penalty = PSI.get_base_power(container) * interval_cost_coefficient(AustralianElectricityMarkets.constraint_cvp_factor(gc), PSI.get_resolution(container))
+            # The slack is priced at the cap as an invariant term only, before and after the update.
+            priced() = PSI.JuMP.coefficient(PSI.get_invariant_terms(PSI.get_objective_expression(container)), slack) == 12345.0 * penalty &&
+                PSI.JuMP.coefficient(PSI.get_variant_terms(PSI.get_objective_expression(container)), slack) == 0.0
+            @test priced()
+            storage = PSI.IS.get_time_series_storage(PSY.get_component(ThermalStandard, sys, TOY_CHEAP))
+            path = storage.file_path
+            cached && mv(path, path * ".hidden")
+            try
+                _update_objective_cache_parameters!(model, keys, 1)
+                @test PSI.get_parameter_column_refs(PSI.get_parameter(container, invoked_key), "F_REG")[1] == 0.0
+                @test priced()
+                @test cached || isempty(PSI.get_time_series_cache(model))
+            finally
+                cached && mv(path * ".hidden", path)
+            end
+        end
+    end
+end
+
+@testset "structured caches bound history and refill with current values" begin
+    sys = fcas_toy_system()
+    template = problem_template(sys)
+    PSY.clear_time_series!(sys)
+    device = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
+    curves = [_toy_offer([(10.0, Float64(i))]) for i in 1:60]
+    PSY.add_time_series!(sys, device, AustralianElectricityMarkets.single_series("variable_cost", TOY_START, curves, TOY_RESOLUTION))
+    curve_name = AustralianElectricityMarkets._fcas_offer_series_name(device, BidType.RAISEREG, false)
+    PSY.add_time_series!(sys, device, AustralianElectricityMarkets.single_series(curve_name, TOY_START, curves, TOY_RESOLUTION))
+    PSY.transform_single_time_series!(sys, TOY_RESOLUTION, TOY_RESOLUTION)
+    model = PSI.DecisionModel(
+        template, sys;
+        initial_time = TOY_START, horizon = TOY_RESOLUTION, resolution = TOY_RESOLUTION,
+        interval = TOY_RESOLUTION,
+    )
+    read_energy(start) = PSI.get_time_series_values!(PSY.DeterministicSingleTimeSeries, model, device, "variable_cost", start, 1)
+    # Sampled steps where the energy and FCAS reads, the cache key or the cache size are wrong.
+    wrong = Int[]
+    for i in 1:60
+        start = TOY_START + (i - 1) * TOY_RESOLUTION
+        energy = read_energy(start)
+        forecast = PSI.get_time_series_values!(
+            PSI.get_default_time_series_type(PSI.get_optimization_container(model)), model, device, curve_name, start,
+            length(PSI.get_time_steps(PSI.get_optimization_container(model)));
+            interval = PSI.get_interval(PSI.get_settings(model)), ignore_scaling_factors = true,
+        )
+        if i in (1, 24, 25, 48, 49, 60)
+            caches = PSI.get_time_series_cache(model)
+            PSY.get_y_coords(only(energy)) == [Float64(i)] && PSY.get_y_coords(only(forecast)) == [Float64(i)] &&
+                any(k -> k isa PSI.IS.TimeSeriesCacheKey && k.name == "variable_cost", keys(caches)) &&
+                all(c -> Base.summarysize(PSI.IS._get_time_series(c)) < 100_000, values(caches)) &&
+                PSY.get_y_coords(only(read_energy(start))) == [Float64(i)] || push!(wrong, i)
+        end
+    end
+    @test isempty(wrong)
+    @test_throws PSI.IS.InvalidValue read_energy(TOY_START)
+    PSI.empty_time_series_cache!(model)
+    @test PSY.get_y_coords(only(read_energy(TOY_START))) == [1.0]
+end

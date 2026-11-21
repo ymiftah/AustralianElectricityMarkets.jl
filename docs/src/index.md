@@ -17,11 +17,16 @@ This package provides a set of tools to fetch, cache, and process data from AEMO
 
 ## Installation
 
-To install the package, open the Julia REPL and run:
+To install the packages, open the Julia REPL and run the following. `AustralianElectricityMarketsSimulations`
+is needed only to run NEMDE dispatch with PowerSimulations.jl.
 
 ```julia
 using Pkg
-Pkg.add("AustralianElectricityMarkets")
+Pkg.add([
+    "AustralianElectricityMarkets",
+    "AustralianElectricityMarketsData",
+    "AustralianElectricityMarketsSimulations",
+])
 ```
 
 ## Usage
@@ -30,6 +35,8 @@ Here is a basic example of how to use the package to read demand data:
 
 ```julia
 using AustralianElectricityMarkets
+using AustralianElectricityMarketsData: populate
+using Dates
 
 # Establish a database connection
 db = aem_connect();
@@ -37,12 +44,19 @@ db = aem_connect();
 # Download the data from the monthly archive, saving them locally
 # in parquet files
 # Only the data requirements for a RegionalNetworkConfiguration are downloaded.
-date_range = Date(2025, 1, 1):Date(2025, 1, 2)
-fetch_table_data(date_range, RegionalNetworkConfiguration())
+populate(
+    db, Date(2025, 1, 1), Date(2025, 1, 2);
+    tables = table_requirements(RegionalNetworkConfiguration()),
+)
 
-demand_df = read_demand(db)
+date_range = DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 2)
+demand_df = read_demand(db, date_range)
 println(demand_df)
 ```
+
+`read_demand(db, date_range)` returns aggregate timestamps from the start of the range up to,
+but excluding, its end. With a coarser `resolution`, it reads complete bins before averaging.
+Omit `date_range` to read all cached demand.
 
 And parsing the data into `PowerSystems.jl`
 
@@ -50,7 +64,7 @@ And parsing the data into `PowerSystems.jl`
 # Instantiate a System
 sys = nem_system(db, RegionalNetworkConfiguration())
 
-println(demand_df)
+println(sys)
 ```
 
 ## Features

@@ -1,0 +1,108 @@
+"""
+    get_skipped_constraints(sys) -> DataFrame
+
+The invoked constraint versions [`nem_system`](@ref) did not build into `sys`.
+
+# Arguments
+- `sys`: a `System` built by `nem_system`.
+
+# Returns
+A `DataFrame` with `constraint` (versioned name), `reason` (`:no_definition`, `:no_terms`,
+`:unknown_duid`, `:unknown_region` or `:unknown_interconnector`, the kind of the first
+unresolved term), `n_missing` (number of unresolved term keys of any kind) and `missing_keys`
+(those keys). Empty when nothing was skipped or no constraints were built into `sys`.
+"""
+function get_skipped_constraints(sys)
+    rows = get_build_report(sys).skipped_constraints
+    return DataFrame(;
+        constraint = String[r["constraint"] for r in rows],
+        reason = Symbol[Symbol(r["reason"]) for r in rows],
+        n_missing = Int[length(r["missing"]) for r in rows],
+        missing_keys = Vector{String}[String[k for k in r["missing"]] for r in rows],
+    )
+end
+
+
+"""
+    get_dropped_terms(sys) -> DataFrame
+
+The unit terms [`nem_system`](@ref) dropped from built constraints because their DUID is
+absent from `sys`.
+
+# Arguments
+- `sys`: a `System` built by `nem_system`.
+
+# Returns
+A `DataFrame` with `constraint` (versioned name), `kind`, `key`, `bid_type`, `factor` and `registered`
+(whether `DUDETAILSUMMARY` registers the unit at some interval of the build range; `true` when not
+recorded), one row per dropped term. Empty when nothing was dropped or no constraints were built into `sys`.
+"""
+function get_dropped_terms(sys)
+    rows = get_build_report(sys).dropped_terms
+    return DataFrame(;
+        constraint = String[r["constraint"] for r in rows],
+        kind = String[r["kind"] for r in rows],
+        key = String[r["key"] for r in rows],
+        bid_type = String[r["bid_type"] for r in rows],
+        factor = Float64[r["factor"] for r in rows],
+        registered = Bool[get(r, "registered", true) for r in rows],
+    )
+end
+
+
+"""
+    get_unavailable_constraints(sys) -> DataFrame
+
+The built constraints that the NEMDE inputs set unavailable, and why: `:never_invoked` when the constraint is
+invoked at no dispatch interval, `:no_available_device` when all its contributing devices are unavailable.
+
+# Arguments
+- `sys`: a `System` built by `nem_system`.
+
+# Returns
+A `DataFrame` with `constraint` (`String`) and `reason` (`Symbol`), sorted by constraint name. Empty when no
+constraint was made unavailable or no constraints were built into `sys`.
+"""
+function get_unavailable_constraints(sys)
+    rows = sort(get_build_report(sys).unavailable_constraints; by = r -> r["constraint"])
+    return DataFrame(;
+        constraint = String[r["constraint"] for r in rows],
+        reason = Symbol[Symbol(r["reason"]) for r in rows],
+    )
+end
+
+
+"""
+    get_missing_constraint_intervals(sys) -> Vector{DateTime}
+
+The dispatch intervals of the range [`nem_system`](@ref) ran over that had no invoked
+constraint in `DISPATCHCONSTRAINT`, so their generic constraints are absent from `sys`. They are
+stored with the [`NEMBuildReport`](@ref), so they survive a `System` JSON round-trip.
+
+# Arguments
+- `sys`: a `System` built by `nem_system`.
+
+# Returns
+A `Vector{DateTime}`, empty when every interval had invoked constraints or no constraints were built
+into `sys`.
+"""
+function get_missing_constraint_intervals(sys)
+    return get_build_report(sys).missing_constraint_intervals
+end
+
+
+"""
+    get_defaulted_constraint_weights(sys) -> Vector{String}
+
+The versioned names of the constraints [`nem_system`](@ref) built with the default
+`constraint_weight` of 1.0 because `GENCONDATA.GENERICCONSTRAINTWEIGHT` was NULL.
+
+# Arguments
+- `sys`: a `System` built by `nem_system`.
+
+# Returns
+A `Vector{String}`, empty when no weight was defaulted or no constraints were built into `sys`.
+"""
+function get_defaulted_constraint_weights(sys)
+    return get_build_report(sys).defaulted_constraint_weights
+end

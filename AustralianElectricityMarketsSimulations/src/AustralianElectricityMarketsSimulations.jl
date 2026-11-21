@@ -1,0 +1,135 @@
+module AustralianElectricityMarketsSimulations
+
+import AustralianElectricityMarkets
+using AustralianElectricityMarkets: _mnsp_bid, _MNSP_DIRECTIONS, BidType, ConstraintSense, FCASService,
+    FCAS_REGULATION_MARKETS, GenericConstraint, InterconnectorLossModel, InterconnectorTerm, EnergyTieBreak,
+    NEM_SERIES, NEM_TELEMETRY_SERIES, NEM_STATE_INPUT_SERIES, NEM_INTERCONNECTOR_SERIES, NEM_MNSP_SERIES,
+    NEM_MNSP_FIXED_LOAD_SERIES, NEM_CONSTRAINT_SERIES, NEMInterconnectorLimits, NEMInterconnectorRegistration,
+    InterconnectorKind, NEMMNSPLink, NEMMNSPObservedState, MNSPDirection, OfferSide, RegionTerm, UnitTerm,
+    TIE_BREAK_CVP_FACTOR, TIE_BREAK_SERVICE_NAME, DISPATCH_INTERVAL, UNIT_RAMP_CVP_FACTOR,
+    INTERCONNECTOR_FLOW_CVP_FACTOR, ENERGY_OFFER_CVP_FACTOR, ENERGY_UIGF_CVP_FACTOR, ENERGY_MAX_AVAIL_CVP_FACTOR,
+    AREA_BALANCE_CVP_FACTOR, FIXED_LOADING_CVP_FACTOR, MNSP_RAMP_CVP_FACTOR, MNSP_OFFER_CVP_FACTOR,
+    MNSP_AVAILABILITY_CVP_FACTOR, constraint_cvp_factor, energy_offer_series_name, offer_side, side_suffix,
+    tie_break_series_name, tie_groups, _tie_break_offers, _tie_break_active_bands, has_registration,
+    is_semi_scheduled, FCASBidDirection, fcas_bid_direction, fcas_series_name, fcas_service_name, get_bid_type,
+    get_defaulted_constraint_weights, get_devices, get_dropped_terms, get_duid, get_factor, get_interconnector,
+    get_missing_constraint_intervals, get_region, get_sense, get_skipped_constraints, get_terms,
+    get_unavailable_constraints, dispatch_intervals, loss_curve_vertex_values, is_non_scheduled_load, loss_segments,
+    nem_dispatch_devices, NEM_DISPATCH_DEVICE_TYPES, _nem_offer_cost, _energy_bid, _has_fixed_load_bid,
+    energy_offer_sides, FCAS_CAPACITY_CVP_FACTOR, FCAS_RAMPING_CVP_FACTOR, FCAS_MAXAVAIL_CVP_FACTOR,
+    FCAS_BDU_RAMPING_CVP_FACTOR, _financial_year_mpc, get_fcas_requirements, get_service, fixed_load_invoked,
+    FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, fcas_effective_series_name, fcas_ramping_series_name,
+    fcas_upper_regulation_service, fcas_offer_sides, _other_regulation, FAST_START_CVP_FACTOR, NEM_FAST_START_SERIES,
+    NEMUnitState, has_fast_start_profile, fast_start_unit_inputs, fast_start_end_state, fast_start_envelope,
+    fast_start_ramp_up_limit, fast_start_ramp_exempt
+using Chain
+using DataFrames: DataFrame, ByRow, combine, eachrow, groupby, leftjoin, nrow, rename, select, sort!, transform
+using Dates
+using HiGHS
+using JuMP
+using PowerSimulations
+using PowerSystems
+
+import PowerSimulations as PSI
+import PowerSystems as PSY
+
+# Reached through PSI/PSY rather than declared as direct dependencies, so they cannot version-skew
+# from the pinned PowerSimulations.
+const IS = PSY.IS
+const PM = PSI.PM
+
+include("time_basis.jl")
+
+include("offers/derivation.jl")
+
+include("types/parameter_targets.jl")
+include("types/unit_slacks.jl")
+include("types/unit_constraints.jl")
+include("types/constraint_formulations.jl")
+include("types/dispatch.jl")
+include("types/energy_limits.jl")
+include("types/fixed_loads.jl")
+include("types/energy_offers.jl")
+include("types/tie_break.jl")
+include("types/interconnector_losses.jl")
+include("types/mnsp.jl")
+include("types/mnsp_limits.jl")
+include("types/state.jl")
+include("types/fast_start.jl")
+
+include("formulations/slacks.jl")
+include("formulations/parameter_targets.jl")
+include("formulations/generic_constraints.jl")
+include("formulations/penalty_costs.jl")
+include("checks/nem_constraints.jl")
+include("formulations/dispatch.jl")
+include("formulations/energy_limits.jl")
+include("formulations/fixed_loads.jl")
+include("formulations/energy_offers.jl")
+include("checks/dispatch_envelope.jl")
+include("formulations/storage.jl")
+include("formulations/tie_break.jl")
+include("formulations/interconnector_losses.jl")
+include("formulations/mnsp.jl")
+include("formulations/mnsp_limits.jl")
+include("psi_compat.jl")
+include("formulations/fcas.jl")
+include("checks/fcas.jl")
+include("checks/nemde_inputs.jl")
+include("checks/template.jl")
+include("templates/template_nemde.jl")
+include("problems/optimizer.jl")
+include("problems/nem_dispatch.jl")
+include("formulations/closed_loop.jl")
+include("formulations/fast_start.jl")
+include("problems/dispatch_sequence.jl")
+include("results/read_results.jl")
+include("results/solved.jl")
+include("results/violations.jl")
+include("results/comparison.jl")
+include("results/interconnector_losses.jl")
+
+
+export FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, fcas_effective_series_name, fcas_ramping_series_name,
+    fcas_upper_regulation_service, fcas_offer_sides
+export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient, trading_day_steps, dispatch_chunks
+export NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys, template_skipped_constraints
+export template_energy_only, template_interconnected, template_losses, template_fcas, template_constraints
+export AbstractNEMDispatchProblem, NEMDispatchProblem, NEMClosedLoopDispatchProblem, nemde_optimizer, NEMDE_HIGHS_OPTIONS
+export nem_dispatch_sequence, FAST_START_COMMITMENT_NAME, FastStartModeTimeSeriesParameter,
+    FastStartCommitmentTargetParameter
+export EnergyOfferBandVariable, EnergyBandWidthParameter
+export EnergyLimitTimeSeriesParameter
+export FixedLoadTimeSeriesParameter, FixedLoadInvokedTimeSeriesParameter
+export NEMUnitSlack, NEMUnitConstraint, AreaBalanceSlack
+export NEMConstraintLHS, NEMConstraintLimit,
+    NEMConstraintRHSParameter, LinearFactorLimit, FCASMarket
+export GenericConstraintSlackUp, GenericConstraintSlackDown,
+    GenericConstraintInvocationParameter
+export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,
+    FCASJointCapacityLHS, FCASJointCapacityConstraint, FCASUnitConstraint, FCASSlack,
+    FCASOfferBandVariable, FCASOfferLimitParameter, FCASBandWidthParameter, FCASUpperSlopeParameter,
+    FCASLowerSlopeParameter, FCASRampingLimitParameter,
+    InterconnectorFlowSlack
+export check_fcas_services, check_dispatch_envelope
+export read_solved_interval, read_constraint_violations
+export compare_intervals, comparison_summary, read_interconnector_loss_gaps
+export AbstractNEMDispatch, NEMDispatch,
+    RampRateTimeSeriesParameter,
+    InitialPowerTimeSeriesParameter, NEMInitialPower, NEMInitialFlow
+export nem_dispatch_participants, set_nem_dispatch_models!
+export TieBreakScaleParameter, TieBreakMarket, TieBreakSlackUp,
+    TieBreakSlackDown, TieBreakConstraint
+export NEMInterconnectorLoss, NEMInterconnectorLossless, InterconnectorLossVariable, InterconnectorLossSegmentVariable,
+    InterconnectorLossConstraint, InterconnectorLossSegmentFullVariable,
+    LossDemandCoefficientParameter
+export MNSPLinkFlowVariable, MNSPLinkConstraint, MNSPLinkDirectionVariable,
+    MNSPLinkLossVariable, MNSPLinkBandVariable, MNSPBandWidthParameter,
+    MNSPMaxAvailParameter
+
+export MNSPOperatingParameter, MNSPSlack
+
+
+include("precompile.jl")
+
+end

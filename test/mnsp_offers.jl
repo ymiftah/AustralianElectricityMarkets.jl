@@ -1,0 +1,177 @@
+# A local copy adds metered MNSP starting flows without changing the shared fixture.
+const AEM_TEST_MNSP_HIVE_DIR = joinpath(mktempdir(), "hive")
+cp(AEM_TEST_HIVE_DIR, AEM_TEST_MNSP_HIVE_DIR)
+let db = DuckDB.DB()
+    rows = DataFrame(
+        SETTLEMENTDATE = repeat([DateTime(2025, 1, 1, 11, 55), DateTime(2025, 1, 1, 12)], 2),
+        INTERCONNECTORID = fill("IC2", 4), METEREDMWFLOW = [125.0, -75.0, -125.0, 75.0],
+        INTERVENTION = [0, 0, 1, 1], MWFLOW = fill(999.0, 4), EXPORTLIMIT = fill(500.0, 4), IMPORTLIMIT = fill(-500.0, 4),
+    )
+    DuckDB.register_data_frame(db, rows, "mnsp_flow")
+    file = joinpath(AEM_TEST_MNSP_HIVE_DIR, "DISPATCHINTERCONNECTORRES", "archive_month=2025-01", "mnsp.parquet")
+    mkpath(dirname(file))
+    DuckDB.execute(db, "COPY mnsp_flow TO '$file' (FORMAT PARQUET)")
+    DuckDB.close(db)
+end
+
+# The bid of an MNSP interchange for `direction`, and the values of one of its keys.
+function _mnsp_bid(ic, direction::AbstractString)
+    dir = direction == "forward" ? AustralianElectricityMarkets.MNSPDirection.FORWARD : AustralianElectricityMarkets.MNSPDirection.REVERSE
+    return only(b for b in get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPBid, ic) if b.direction == dir)
+end
+
+_key_values(ic, key; start = DateTime(2025, 1, 1, 11, 55), n = 2) = PowerSystems.IS.get_time_series_values(ic, key; start_time = start, len = n)
+
+@testset "MNSP offers" begin
+    using AustralianElectricityMarkets
+    using PowerSystems
+    using Dates
+
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_MNSP_HIVE_DIR, filesystem = "file"))
+    sys = nem_system(db, RegionalNetworkConfiguration())
+    range = DateTime(2025, 1, 1, 11, 55):Minute(5):DateTime(2025, 1, 1, 12, 5)
+
+    @testset "offers attach to the link's interconnector with direction and TLFs" begin
+        @test set_mnsp_offers!(sys, db, range) == ["IC2"]
+        @test set_mnsp_offers!(sys, db, range) == ["IC2"]  # idempotent: series are replaced
+        ic = get_component(AreaInterchange, sys, "IC2")
+        @test get_name(get_from_area(ic)) == "NSW1"
+        # Interval 11:55 carries the first offer (MAXAVAIL 594), 12:00 the rebid (400).
+        forward = _mnsp_bid(ic, "forward")
+        avail = _key_values(ic, forward.max_avail)
+        @test avail == [594.0, 400.0]
+        curves = _key_values(ic, forward.offer_curves)
+        # Every band is kept, so step k is PRICEBAND<k>; empty bands have zero width.
+        @test get_x_coords(curves[1]) == [0.0, 0.0, 100.0, 200.0, 300.0, 400.0, 494.0, 494.0, 494.0, 494.0, 494.0]
+        @test get_y_coords(curves[1]) == [0.01, 40.0, 61.0, 75.0, 89.0, 104.0, 114.0, 200.0, 450.0, 20300.0]
+        @test get_x_coords(curves[2]) == [0.0, 0.0, 100.0, 200.0, 300.0, 400.0, 400.0, 400.0, 400.0, 400.0, 400.0]
+        @test get_y_coords(curves[2]) == [0.01, 80.0, 61.0, 75.0, 89.0, 104.0, 114.0, 200.0, 450.0, 20300.0]
+        links = get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPLink, ic)
+        @test only(l for l in links if l.direction == AustralianElectricityMarkets.MNSPDirection.FORWARD).link_id == "BLNKTAS"
+        reverse_link = only(l for l in links if l.direction == AustralianElectricityMarkets.MNSPDirection.REVERSE)
+        @test reverse_link.link_id == "BLNKVIC"
+        @test reverse_link.from_region_tlf == 0.9907
+        observed = only(get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPObservedState, ic))
+        @test _key_values(ic, observed.initial_flow) == [125.0, -75.0]
+        @test _key_values(ic, forward.ramp_up) == [200.0, 200.0]
+        @test isnothing(forward.fixed_load)  # FIXEDLOAD is NULL over the whole range
+    end
+
+    @testset "an MNSP over an uncached range fails instead of changing its formulation" begin
+        sys2 = nem_system(db, RegionalNetworkConfiguration())
+        later = DateTime(2030, 1, 1):Minute(5):DateTime(2030, 1, 1, 0, 10)
+        @test_throws r"DISPATCH_MNSPBIDTRK has no cached partition" set_mnsp_offers!(sys2, db, later)
+        @test !has_time_series(get_component(AreaInterchange, sys2, "IC2"))
+    end
+
+    @test_throws ArgumentError set_mnsp_offers!(sys, db, DateTime(2025, 1, 1):Minute(30):DateTime(2025, 1, 1, 2))
+end
+
+@testset "MNSP input completeness" begin
+    range = DateTime(2025, 1, 1, 11, 55):Minute(5):DateTime(2025, 1, 1, 12, 5)
+    good_db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_MNSP_HIVE_DIR, filesystem = "file"))
+
+    for table in (:MNSP_DAYOFFER, :MNSP_BIDOFFERPERIOD, :DISPATCH_MNSPBIDTRK, :MNSP_INTERCONNECTOR, :DISPATCHINTERCONNECTORRES)
+        @testset "missing $table" begin
+            hive = joinpath(mktempdir(), "hive")
+            cp(AEM_TEST_MNSP_HIVE_DIR, hive)
+            rm(joinpath(hive, string(table)); recursive = true)
+            db = aem_connect(HiveConfiguration(hive_location = hive, filesystem = "file"))
+            sys = nem_system(good_db, RegionalNetworkConfiguration())
+            @test_throws r"not cached" set_mnsp_offers!(sys, db, range)
+            @test !has_time_series(get_component(AreaInterchange, sys, "IC2"))
+        end
+    end
+
+    cases = [
+        (:DISPATCH_MNSPBIDTRK, "DELETE FROM input WHERE LINKID = 'BLNKVIC'", r"requires exactly one offer for every interval"),
+        (:DISPATCH_MNSPBIDTRK, "DELETE FROM input WHERE SETTLEMENTDATE = TIMESTAMP '2025-01-01 12:00'", r"requires exactly one offer for every interval"),
+        (:DISPATCH_MNSPBIDTRK, "DELETE FROM input", r"DISPATCH_MNSPBIDTRK"),
+        (:MNSP_DAYOFFER, "UPDATE input SET PRICEBAND1 = NULL", r"invalid PRICEBAND1"),
+        (:MNSP_BIDOFFERPERIOD, "UPDATE input SET MAXAVAIL = NULL", r"invalid MAXAVAIL"),
+        (:MNSP_BIDOFFERPERIOD, "UPDATE input SET RAMPUPRATE = NULL", r"invalid RAMPUPRATE"),
+        (:MNSP_BIDOFFERPERIOD, "UPDATE input SET RAMPUPRATE = -1", r"invalid RAMPUPRATE"),
+        (:MNSP_BIDOFFERPERIOD, "UPDATE input SET FIXEDLOAD = -1", r"invalid FIXEDLOAD"),
+        (:DISPATCHINTERCONNECTORRES, "UPDATE input SET METEREDMWFLOW = NULL", r"metered flow"),
+        (:MNSP_BIDOFFERPERIOD, "UPDATE input SET BANDAVAIL1 = NULL", r"invalid BANDAVAIL1"),
+        (:MNSP_INTERCONNECTOR, "UPDATE input SET FROM_REGION_TLF = NULL", r"invalid FROM_REGION_TLF"),
+        (:MNSP_INTERCONNECTOR, "UPDATE input SET TO_REGION_TLF = 0", r"invalid TO_REGION_TLF"),
+        (:MNSP_INTERCONNECTOR, "DELETE FROM input WHERE LINKID = 'BLNKVIC'", r"requires two registered directional links"),
+        (:INTERCONNECTORCONSTRAINT, "UPDATE input SET ICTYPE = NULL WHERE INTERCONNECTORID = 'IC2'", r"IC2 has no valid ICTYPE"),
+        (:INTERCONNECTORCONSTRAINT, "UPDATE input SET ICTYPE = 'OTHER' WHERE INTERCONNECTORID = 'IC2'", r"IC2 has no valid ICTYPE"),
+        (
+            :INTERCONNECTORCONSTRAINT,
+            "INSERT INTO input SELECT * REPLACE (TIMESTAMP '2025-01-01 12:00:00' AS EFFECTIVEDATE, 2 AS VERSIONNO, 'REGULATED' AS ICTYPE) " *
+                "FROM input WHERE INTERCONNECTORID = 'IC2'",
+            r"ICTYPE differs between the first and last interval",
+        ),
+    ]
+    for (table, query, message) in cases
+        @testset "$query" begin
+            db = damaged_cache(AEM_TEST_MNSP_HIVE_DIR, table, query)
+            sys = nem_system(good_db, RegionalNetworkConfiguration())
+            @test_throws message set_mnsp_offers!(sys, db, range)
+            @test !has_time_series(get_component(AreaInterchange, sys, "IC2"))
+        end
+    end
+
+    @testset "a failed refresh preserves existing offers" begin
+        sys = nem_system(good_db, RegionalNetworkConfiguration())
+        set_mnsp_offers!(sys, good_db, range)
+        db = damaged_cache(AEM_TEST_MNSP_HIVE_DIR, :DISPATCH_MNSPBIDTRK, "DELETE FROM input WHERE LINKID = 'BLNKVIC'")
+        @test_throws r"requires exactly one offer for every interval" set_mnsp_offers!(sys, db, range)
+        ic = get_component(AreaInterchange, sys, "IC2")
+        @test _key_values(ic, _mnsp_bid(ic, "forward").max_avail) == [594.0, 400.0]
+    end
+
+    @testset "regulated standing data needs no MNSP bids or tables" begin
+        db = damaged_cache(AEM_TEST_MNSP_HIVE_DIR, :INTERCONNECTORCONSTRAINT, "UPDATE input SET ICTYPE = 'REGULATED'")
+        sys = nem_system(db, RegionalNetworkConfiguration())
+        @test isempty(set_mnsp_offers!(sys, db, range))
+        @test !has_time_series(get_component(AreaInterchange, sys, "IC2"))
+        rm(joinpath(db.config.hive_location, "MNSP_DAYOFFER"); recursive = true)
+        @test isempty(set_mnsp_offers!(nem_system(good_db, RegionalNetworkConfiguration()), db, range))
+    end
+
+end
+
+@testset "MNSP fixed load zero is an active instruction" begin
+    db = damaged_cache(AEM_TEST_MNSP_HIVE_DIR, :MNSP_BIDOFFERPERIOD, "UPDATE input SET FIXEDLOAD = 0")
+    sys = nem_system(db, RegionalNetworkConfiguration())
+    window = DateTime(2025, 1, 1, 11, 55):Minute(5):DateTime(2025, 1, 1, 12, 5)
+    set_mnsp_offers!(sys, db, window)
+    ic = get_component(AreaInterchange, sys, "IC2")
+    @test _key_values(ic, _mnsp_bid(ic, "forward").fixed_load) == [0.0, 0.0]  # zero is an active loading
+end
+
+@testset "MNSP starting flow follows the selected dispatch run" begin
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_MNSP_HIVE_DIR, filesystem = "file"))
+    sys = nem_system(db, RegionalNetworkConfiguration())
+    window = DateTime(2025, 1, 1, 11, 55):Minute(5):DateTime(2025, 1, 1, 12, 5)
+    set_mnsp_offers!(sys, db, window; intervention = 1)
+    ic = get_component(AreaInterchange, sys, "IC2")
+    observed = only(get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPObservedState, ic))
+    @test _key_values(ic, observed.initial_flow) == [-125.0, 75.0]
+end
+
+@testset "MNSP fixed loading is NaN at NULL intervals" begin
+    db = damaged_cache(AEM_TEST_MNSP_HIVE_DIR, :MNSP_BIDOFFERPERIOD, "UPDATE input SET FIXEDLOAD = 4 WHERE PERIODID = 95")
+    sys = nem_system(db, RegionalNetworkConfiguration())
+    window = DateTime(2025, 1, 1, 11, 55):Minute(5):DateTime(2025, 1, 1, 12, 5)
+    set_mnsp_offers!(sys, db, window)
+    forward = _mnsp_bid(get_component(AreaInterchange, sys, "IC2"), "forward")
+    raw = _key_values(get_component(AreaInterchange, sys, "IC2"), forward.fixed_load)
+    @test raw[1] == 4.0
+    @test isnan(raw[2])  # NULL at 12:00 is NaN, not zero
+end
+
+@testset "_mnsp_offer_curve keeps all ten bands so band k is PRICEBAND<k>" begin
+    AEM = AustralianElectricityMarkets
+    avail = [10.0, 0.0, 30.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    row = (; (Symbol("BANDAVAIL$i") => avail[i] for i in 1:10)..., (Symbol("PRICEBAND$i") => 100.0 * i for i in 1:10)...)
+    curve = AEM._mnsp_offer_curve(row)
+    @test diff(PowerSystems.get_x_coords(curve)) == avail
+    @test PowerSystems.get_y_coords(curve) == [100.0 * i for i in 1:10]
+    empty_row = (; (Symbol("BANDAVAIL$i") => 0.0 for i in 1:10)..., (Symbol("PRICEBAND$i") => 5.0 for i in 1:10)...)
+    @test PowerSystems.get_y_coords(AEM._mnsp_offer_curve(empty_row)) == fill(5.0, 10)
+end

@@ -11,8 +11,12 @@ The following points are the planned next steps in the development of this packa
 - [ ] Create a full network configuration with all lines (using GIS data) for AC/DC operation problems (work started in [nemdb](https://github.com/ymiftah/nemdb)).
 - [ ] Account for Commissioning / Decommissioning dates to model the system at different years.
 - [ ] Parse latest ISP assumptions for operation costs.
-- [ ] Extend PowerSimulations with constraints specific to the NEM (e.g. FCAS constraints, interconnector constraints).
-- [ ] Separate the AustralianElectricityMarketData module in its own package.
+- [x] Enforce the FCAS trapezium and joint capacity/ramping constraints (see [FCAS capability and co-optimisation](@ref nemde-fcas)) inside a `PowerSimulations.jl` dispatch problem, and interconnector constraints.
+- [x] Separate the data download and cache population into its own package, `AustralianElectricityMarketsData`.
+- [x] Run NEMDE dispatch on real intervals and compare with the published outcome (see [Running NEMDE dispatch](@ref run-nemde)).
+- [x] Closed-loop run, in which each interval starts from the previous solve (`NEMClosedLoopDispatchProblem`).
+- [x] Fast-start inflexibility profiles, dispatched in two runs per interval (see [Fast-start dispatch](@ref nemde-fast-start)).
+- [ ] Carry the fast-start end state from one interval to the next in a closed-loop run.
 
 ## Mid/Long-term
 

@@ -1,0 +1,192 @@
+using DataFrames, Statistics
+
+@testset "Historical regions and loss-reader keywords" begin
+    db = damaged_cache(
+        AEM_TEST_HIVE_DIR, :DISPATCHREGIONSUM,
+        "DELETE FROM input WHERE REGIONID = 'SNOWY1' AND SETTLEMENTDATE >= TIMESTAMP '2025-01-01 00:15'",
+    )
+    early = DateTime(2025, 1, 1, 0, 10)
+    late = DateTime(2025, 1, 1, 0, 20)
+    regions(df) = Set(vcat(df.REGIONFROM, df.REGIONTO))
+    @test "SNOWY1" in regions(read_interconnectors(db; as_of = early))
+    @test !("SNOWY1" in regions(read_interconnectors(db; as_of = late)))
+    @test !("SNOWY1" in regions(read_interconnectors(db)))
+    buses = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db; as_of = early)
+    @test "SNOWY1" in buses.region
+    late_buses = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db; as_of = late)
+    @test !("SNOWY1" in late_buses.region)
+    @test_throws ArgumentError read_interconnectors(db; as_of = Date(2024, 1, 1))
+    for reader in (
+            read_interconnector_loss_breakpoints, read_interconnector_demand_coefficients,
+            read_interconnector_loss_parameters,
+        )
+        @test isequal(reader(db; as_of = early), reader(db, early)) && isequal(reader(db; as_of = Date(early)), reader(db, Date(early)))
+    end
+end
+
+@testset "SQL ceiling preserves Julia bucket boundaries" begin
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR))
+    stamps = [
+        DateTime(2024, 12, 31, 23, 59), DateTime(2025, 1, 1),
+        DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 15),
+        DateTime(2025, 1, 1, 23, 59), DateTime(2025, 2, 1),
+    ]
+    reader = AustralianElectricityMarkets.Readers
+    DuckDB.register_data_frame(db.db, DataFrame(stamp = stamps), "bucket_stamps")
+    try
+        ceiled(resolution) = DataFrame(DuckDB.execute(db.db, "SELECT $(reader._ceil_timestamp_sql("stamp", resolution)) AS stamp FROM bucket_stamps")).stamp
+        @test all(r -> ceiled(r) == ceil.(stamps, r), (Millisecond(7), Minute(15), Day(3), Week(2), Month(2), Year(2)))
+        @test_throws ArgumentError reader._ceil_timestamp_sql("stamp", Minute(0))
+    finally
+        DuckDB.unregister_table(db.db, "bucket_stamps")
+    end
+end
+
+@testset "Demand aggregation reads only the requested intervention run" begin
+    # A physical-run (INTERVENTION = 1) duplicate of NSW1's 00:05 row, with 500 MW more demand.
+    db = damaged_cache(
+        AEM_TEST_HIVE_DIR, :DISPATCHREGIONSUM,
+        "INSERT INTO input SELECT * REPLACE (1 AS INTERVENTION, TOTALDEMAND + 500.0 AS TOTALDEMAND) " *
+            "FROM input WHERE REGIONID = 'NSW1' AND SETTLEMENTDATE = TIMESTAMP '2025-01-01 00:05'",
+    )
+    stamp = DateTime(2025, 1, 1, 0, 5)
+    nsw(df) = df.TOTALDEMAND[(df.REGIONID .== "NSW1") .& (df.SETTLEMENTDATE .== stamp)]
+    @test (nsw(read_demand(db)), nsw(read_demand(db; intervention = 1))) == ([1010.0], [1510.0])
+end
+
+@testset "Demand aggregation keeps nulls, charging and range boundaries" begin
+    db = damaged_cache(
+        AEM_TEST_HIVE_DIR, :DISPATCHREGIONSUM,
+        "UPDATE input SET INITIALSUPPLY = NULL WHERE REGIONID = 'NSW1'",
+    )
+    start = DateTime(2025, 1, 1)
+    df = read_demand(db, (start + Minute(7), start + Minute(31)); resolution = Minute(15))
+    nsw = df[df.REGIONID .== "NSW1", :]
+    @test nsw.SETTLEMENTDATE == [start + Minute(15), start + Minute(30)]
+    @test nsw.TOTALDEMAND == [1020.0, 1050.0]
+    @test all(isnan, nsw.LOSSDEMAND)
+    @test isempty(read_demand(db, (start + Day(1), start + Day(2))))
+end
+
+@testset "Bid aggregation preserves band order, directions and missing values" begin
+    db = damaged_cache(
+        AEM_TEST_HIVE_DIR, :BIDDAYOFFER_D,
+        "CREATE OR REPLACE TABLE input AS SELECT PRICEBAND10, * EXCLUDE (PRICEBAND10) FROM input",
+    )
+    db = damaged_cache(
+        db.config.hive_location, :BIDPEROFFER_D,
+        "CREATE OR REPLACE TABLE input AS SELECT BANDAVAIL10, * EXCLUDE (BANDAVAIL10) REPLACE (INTERVAL_DATETIME - INTERVAL '10 minutes' AS INTERVAL_DATETIME) FROM input",
+    )
+    db = damaged_cache(
+        db.config.hive_location, :BIDPEROFFER_D,
+        "UPDATE input SET BANDAVAIL1 = EXTRACT(MINUTE FROM INTERVAL_DATETIME), BANDAVAIL2 = NULL WHERE BIDTYPE = 'ENERGY'",
+    )
+    start = DateTime(2025, 1, 1)
+    bids = read_bids(db, (start - Minute(15), start + Minute(16)); resolution = Minute(15))
+    unit = sort(bids[bids.DUID .== "BW01", :], [:INTERVAL_DATETIME, :DIRECTION])
+    @test Set(unit.DIRECTION) == Set(["GEN", "LOAD"])
+    @test all(("GEN", "LOAD")) do direction
+        rows = unit[unit.DIRECTION .== direction, :]
+        return rows.INTERVAL_DATETIME == [start, start + Minute(15)] && rows.MAXAVAIL ≈ [101.0, 104.0] &&
+            rows.BANDAVAILARRAY[2][1] == 10.0 && isnan(rows.BANDAVAILARRAY[2][2]) && rows.PRICEBANDARRAY[2] == collect(51.0:60.0)
+    end
+    @test isempty(read_bids(db, (start + Day(1), start + Day(2))))
+    missing_prices = damaged_cache(
+        db.config.hive_location, :BIDDAYOFFER_D,
+        "DELETE FROM input WHERE DUID = 'BW01' AND DIRECTION = 'LOAD' AND BIDTYPE = 'ENERGY'",
+    )
+    @test_throws r"missing price bids.*BW01" read_bids(missing_prices, (start, start + Minute(16)); resolution = Minute(15))
+end
+
+@testset "Latest bid versions and aggregation policies remain distinct" begin
+    start = DateTime(2025, 1, 1)
+    range = (start + Minute(15), start + Minute(16))
+    db = damaged_cache(
+        AEM_TEST_HIVE_DIR, :BIDPEROFFER_D,
+        """
+        INSERT INTO input
+        SELECT * REPLACE (2 AS VERSIONNO, 222.0 AS MAXAVAIL)
+        FROM input WHERE BIDTYPE = 'ENERGY' AND DUID = 'BW01' AND DIRECTION = 'GEN'
+            AND INTERVAL_DATETIME = TIMESTAMP '2025-01-01 00:10'
+        """,
+    )
+    db = damaged_cache(
+        db.config.hive_location, :BIDDAYOFFER_D,
+        """
+        INSERT INTO input
+        SELECT * REPLACE (2 AS VERSIONNO, 123.0 AS PRICEBAND1)
+        FROM input WHERE BIDTYPE = 'ENERGY' AND DUID = 'BW01' AND DIRECTION = 'GEN'
+        """,
+    )
+    averaged = read_bids(db, range; resolution = Minute(15))
+    maximums = read_energy_bids(db, range; resolution = Minute(15))
+    gen(df) = only(eachrow(df[(df.DUID .== "BW01") .& (df.DIRECTION .== "GEN"), :]))
+    load(df) = only(eachrow(df[(df.DUID .== "BW01") .& (df.DIRECTION .== "LOAD"), :]))
+    @test gen(averaged).MAXAVAIL == 142.0
+    @test gen(maximums).MAXAVAIL == 222.0
+    @test gen(averaged).PRICEBANDARRAY[1] == 123.0
+    @test load(averaged).MAXAVAIL == 102.0
+    @test load(averaged).PRICEBANDARRAY[1] == 51.0
+    raw = read_bids(db, (start + Minute(10), start + Minute(11)))
+    @test gen(raw).MAXAVAIL == 222.0
+end
+
+@testset "Ceiled bids retain their trading-day price keys" begin
+    db = damaged_cache(
+        AEM_TEST_HIVE_DIR, :BIDPEROFFER_D,
+        """
+        CREATE OR REPLACE TABLE input AS
+        SELECT * REPLACE (
+            CASE WHEN INTERVAL_DATETIME = TIMESTAMP '2025-01-01 00:00'
+                THEN DATE '2024-12-31' ELSE DATE '2025-01-01' END AS SETTLEMENTDATE,
+            INTERVAL_DATETIME + INTERVAL '4 hours' AS INTERVAL_DATETIME
+        ) FROM input WHERE DUID = 'BW01' AND BIDTYPE = 'ENERGY'
+            AND INTERVAL_DATETIME <= TIMESTAMP '2025-01-01 00:05'
+        """,
+    )
+    db = damaged_cache(
+        db.config.hive_location, :BIDDAYOFFER_D,
+        """
+        INSERT INTO input SELECT * REPLACE (DATE '2024-12-31' AS SETTLEMENTDATE, 777.0 AS PRICEBAND1)
+        FROM input WHERE DUID = 'BW01' AND BIDTYPE = 'ENERGY'
+        """,
+    )
+    bids = read_bids(db, (DateTime(2025, 1, 1, 4), DateTime(2025, 1, 1, 4, 16)); resolution = Minute(15))
+    gen = sort(bids[bids.DIRECTION .== "GEN", :], :INTERVAL_DATETIME)
+    @test gen.INTERVAL_DATETIME == [DateTime(2025, 1, 1, 4), DateTime(2025, 1, 1, 4, 15)]
+    @test Date.(gen.SETTLEMENTDATE) == [Date(2024, 12, 31), Date(2025, 1, 1)]
+    @test first.(gen.PRICEBANDARRAY) == [777.0, 51.0]
+end
+
+@testset "FCAS readers preserve market and direction keys" begin
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR))
+    start = DateTime(2025, 1, 1)
+    types = [BidType.RAISE6SEC, BidType.RAISEREG]
+    bids = read_fcas_bids(db, (start + Minute(15), start + Minute(16)), types; resolution = Minute(15))
+    @test Set(bids.BIDTYPE) == Set(types)
+    battery = bids[bids.DUID .== "BW01", :]
+    @test nrow(battery) == 4
+    @test all(==(collect(51.0:60.0)), battery.PRICEBANDARRAY)
+    @test all(==(10), length.(battery.BANDAVAILARRAY))
+end
+
+@testset "Demand reads keep the raw rows of the widened window" begin
+    # Rows of 1 January before 02:00 move to a 2024-12 partition. The week-long bucket that contains
+    # them starts in January, so its raw rows reach back into the cached previous month.
+    db = damaged_cache(
+        AEM_TEST_HIVE_DIR, :DISPATCHREGIONSUM,
+        "UPDATE input SET archive_month = '2024-12' WHERE SETTLEMENTDATE < TIMESTAMP '2025-01-01 02:00'",
+    )
+    bucket = ceil(DateTime(2025, 1, 1, 4), Week(1))
+    window = (bucket, bucket + Hour(6))
+    inwindow(df) = filter(:SETTLEMENTDATE => t -> window[1] <= t < window[2], df)
+    sorted(df) = sort(df, [:SETTLEMENTDATE, :REGIONID])
+    expected = inwindow(read_demand(db; resolution = Week(1)))
+    @test !isempty(expected)
+    @test isequal(sorted(read_demand(db, window; resolution = Week(1))), sorted(expected))
+    uigf = AustralianElectricityMarkets.Readers._read_regional_renewable_uigf
+    # The reference window starts a month earlier, so it reads every cached partition the bucket needs.
+    expected_uigf = inwindow(uigf(db, (bucket - Month(1), window[2]); resolution = Week(1), intervention = 0))
+    @test !isempty(expected_uigf)
+    @test isequal(sorted(uigf(db, window; resolution = Week(1), intervention = 0)), sorted(expected_uigf))
+end

@@ -1,23 +1,3 @@
-const FUEL_MAPPING = Dict(
-    "Black Coal" => ThermalFuels.COAL,
-    "Brown Coal" => ThermalFuels.COAL,
-    "Gas" => ThermalFuels.NATURAL_GAS,
-    "Liquid Fuel" => ThermalFuels.DISTILLATE_FUEL_OIL,
-    "Water" => ThermalFuels.OTHER,
-    "Solar" => ThermalFuels.OTHER,
-    "Wind" => ThermalFuels.OTHER,
-)
-
-const FUEL_PRICES = Dict(
-    "Black Coal" => 9.0,
-    "Brown Coal" => 9.0,
-    "Gas" => 17.0,
-    "Liquid Fuel" => 13.0,
-    "Water" => 0.0,
-    "Solar" => 0.0,
-    "Wind" => 0.0,
-)
-
 const PM_MAPPING = Dict(
     "Steam Sub Critical" => PrimeMovers.ST,
     "Steam Super Critical" => PrimeMovers.ST,
