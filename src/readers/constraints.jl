@@ -164,21 +164,6 @@ function read_constraint_terms(db, gencon_versions, date_range)
     end
 end
 
-# Warns for each GENCONID whose (REGIONID, BIDTYPE) set differs between intervals of `df`, in one pass.
-function _warn_inconsistent_fcas_requirements(df::DataFrame)
-    P = Set{Tuple{eltype(df.REGIONID), eltype(df.BIDTYPE)}}
-    S = Dict{eltype(df.SETTLEMENTDATE), P}
-    pairs_by_stamp = Dict{eltype(df.GENCONID), S}()
-    for (id, t, region, bid_type) in zip(df.GENCONID, df.SETTLEMENTDATE, df.REGIONID, df.BIDTYPE)
-        push!(get!(P, get!(S, pairs_by_stamp, id), t), (region, bid_type))
-    end
-    for (id, stamps) in pairs_by_stamp
-        pair_sets = collect(values(stamps))
-        allequal(pair_sets) || @warn "GENCONID $id governs a different (REGIONID, BIDTYPE) set at different intervals in this range; using the union." pair_sets
-    end
-    return
-end
-
 """
     read_constraint_fcas_requirements(db, date_range; intervention = 0)
 
@@ -190,27 +175,26 @@ Long-format `DataFrame`. Throws `ArgumentError` when neither `DISPATCH_FCAS_REQ`
 `DISPATCH_FCAS_REQ_CONSTRAINT` is cached.
 """
 function read_constraint_fcas_requirements(db, date_range; intervention::Integer = 0)
-    start_date = first(date_range)
-    end_date = last(date_range)
-    union_sql, params = _fcas_req_union_sql(db, start_date, end_date, intervention)
-    df = _query(
-        db,
-        """
-        SELECT DISTINCT SETTLEMENTDATE, GENCONID, REGIONID, BIDTYPE
-        FROM ($union_sql)
-        """,
-        params,
-    )
-    subset!(df, :SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
-    subset!(df, :BIDTYPE => ByRow(in(string.(FCAS_BID_TYPES))))
-
-    _warn_inconsistent_fcas_requirements(df)
-
-    result = unique(select(df, :GENCONID, :REGIONID, :BIDTYPE))
-    transform!(result, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
-    return result
+    governed = @chain _fcas_requirement_rows(db, first(date_range), last(date_range), intervention) begin
+        select(:SETTLEMENTDATE, :GENCONID, :REGIONID, :BIDTYPE)
+        unique
+    end
+    inconsistent = @chain governed begin
+        groupby([:GENCONID, :SETTLEMENTDATE])
+        combine([:REGIONID, :BIDTYPE] => ((r, b) -> Ref(Set(zip(r, b)))) => :pairs)
+        groupby(:GENCONID)
+        combine(:pairs => (p -> Ref(unique(p))) => :pair_sets)
+        subset(:pair_sets => ByRow(sets -> length(sets) > 1))
+    end
+    for row in eachrow(inconsistent)
+        @warn "GENCONID $(row.GENCONID) governs a different (REGIONID, BIDTYPE) set at different intervals in this range; using the union." pair_sets = row.pair_sets
+    end
+    return @chain governed begin
+        select(:GENCONID, :REGIONID, :BIDTYPE)
+        unique
+        transform!(:BIDTYPE => ByRow(BidType) => :BIDTYPE)
+    end
 end
-
 
 # Upper bound for pruning the versioned reference tables. A version effective *after* the
 # newest one NEMDE invoked can never satisfy the exact-equality join, and because each
@@ -232,64 +216,4 @@ function _require_invoked(gencon_versions)
         ),
     )
     return
-end
-
-"""
-    _fcas_req_union_sql(db, start_date, end_date, intervention) -> (sql_fragment, params)
-
-A `SELECT`-able fragment unioning `DISPATCH_FCAS_REQ` (to 2025-05) and
-`DISPATCH_FCAS_REQ_CONSTRAINT` (from 2025-06) under the old column names `SETTLEMENTDATE`,
-`GENCONID`, `REGIONID`, `BIDTYPE`, `MARGINALVALUE`, `GENCONEFFECTIVEDATE` and `GENCONVERSIONNO`.
-The last two are `NULL` for `DISPATCH_FCAS_REQ_CONSTRAINT` rows, and `intervention` filters
-`DISPATCH_FCAS_REQ` only. A table with no cached partition contributes no rows; throws an
-`ArgumentError` when neither is cached.
-"""
-function _fcas_req_union_sql(db, start_date, end_date, intervention::Integer)
-    _check_intervention(intervention)
-    branches = String[]
-    params = Any[]
-
-    if _cached_in_range(db, :DISPATCH_FCAS_REQ, (start_date, end_date))
-        table = read_hive(db, :DISPATCH_FCAS_REQ, (start_date, end_date))
-        schema = _table_schema(db, table)
-        rows, rows_params = _run_rows(
-            table, schema, intervention, "SETTLEMENTDATE", "SETTLEMENTDATE BETWEEN ? AND ?", [start_date, end_date],
-        )
-        push!(
-            branches,
-            """
-            SELECT SETTLEMENTDATE, GENCONID, REGIONID, BIDTYPE,
-                   TRY_CAST(MARGINALVALUE AS DOUBLE) AS MARGINALVALUE,
-                   GENCONEFFECTIVEDATE, GENCONVERSIONNO
-            FROM $rows
-            """,
-        )
-        append!(params, rows_params)
-    end
-
-    if _cached_in_range(db, :DISPATCH_FCAS_REQ_CONSTRAINT, (start_date, end_date))
-        table = read_hive(db, :DISPATCH_FCAS_REQ_CONSTRAINT, (start_date, end_date))
-        push!(
-            branches,
-            """
-            SELECT INTERVAL_DATETIME AS SETTLEMENTDATE, CONSTRAINTID AS GENCONID,
-                   REGIONID, BIDTYPE,
-                   TRY_CAST(MARGINALVALUE AS DOUBLE) AS MARGINALVALUE,
-                   CAST(NULL AS DATE) AS GENCONEFFECTIVEDATE,
-                   CAST(NULL AS INTEGER) AS GENCONVERSIONNO
-            FROM $table
-            WHERE INTERVAL_DATETIME BETWEEN ? AND ?
-            """,
-        )
-        push!(params, start_date, end_date)
-    end
-
-    isempty(branches) && throw(
-        ArgumentError(
-            "Neither DISPATCH_FCAS_REQ nor DISPATCH_FCAS_REQ_CONSTRAINT is cached: run " *
-                "`populate(db, :DISPATCH_FCAS_REQ, ...)` or `populate(db, :DISPATCH_FCAS_REQ_CONSTRAINT, ...)` " *
-                "first (AEMO switched tables at the 2025-05/2025-06 boundary; which one you need depends on the date range).",
-        ),
-    )
-    return join(branches, "\nUNION ALL\n"), params
 end

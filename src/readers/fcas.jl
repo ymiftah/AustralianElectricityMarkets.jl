@@ -16,77 +16,118 @@ else the pricing run. Throws an `ArgumentError` when neither `DISPATCH_FCAS_REQ`
 `DISPATCH_FCAS_REQ_CONSTRAINT` is cached.
 """
 function read_fcas_requirements(db, date_range; intervention::Integer = 0)
-    start_date = first(date_range)
-    end_date = last(date_range)
-    constraint_table = read_hive(db, :DISPATCHCONSTRAINT, (start_date, end_date))
-    gencon_table = read_hive(db, :GENCONDATA)
-    constraint_schema = _table_schema(db, constraint_table)
-    req_union_sql, params = _fcas_req_union_sql(db, start_date, end_date, intervention)
-    constraint_rows, constraint_params = _run_rows(
-        constraint_table, constraint_schema, intervention, "SETTLEMENTDATE",
-        "SETTLEMENTDATE BETWEEN ? AND ?", [start_date, end_date],
-    )
-    append!(params, constraint_params)
-    df = _query(
-        db,
-        """
-        WITH req AS (
-            SELECT *
-            FROM ($req_union_sql)
+    start_date, end_date = first(date_range), last(date_range)
+    requirements = _fcas_requirement_rows(db, start_date, end_date, intervention)
+    constraints = read_hive(db, :DISPATCHCONSTRAINT, (start_date, end_date))
+    gencon = read_hive(db, :GENCONDATA)
+    df = _with_registered(db, requirements, "fcas_requirement_rows") do
+        return _query(
+            db,
+            """
+            WITH req AS (
+                SELECT * FROM fcas_requirement_rows
+                QUALIFY row_number() OVER (
+                    PARTITION BY SETTLEMENTDATE, GENCONID, REGIONID, BIDTYPE
+                    ORDER BY GENCONEFFECTIVEDATE DESC NULLS LAST
+                ) = 1
+            ),
+            run AS (
+                SELECT * FROM $constraints
+                WHERE SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ?
+                QUALIFY COALESCE(INTERVENTION, 0) = CASE WHEN ? = 0 THEN 0
+                    ELSE max(COALESCE(INTERVENTION, 0)) OVER (PARTITION BY SETTLEMENTDATE) END
+            ),
+            constraint_rhs AS (
+                SELECT SETTLEMENTDATE, CONSTRAINTID, RHS, LHS
+                FROM run
+                QUALIFY row_number() OVER (PARTITION BY SETTLEMENTDATE, CONSTRAINTID ORDER BY archive_month DESC) = 1
+            ),
+            gencon AS (
+                SELECT GENCONID, EFFECTIVEDATE, VERSIONNO, DESCRIPTION, CONSTRAINTTYPE
+                FROM $gencon
+                QUALIFY row_number() OVER (
+                    PARTITION BY GENCONID, EFFECTIVEDATE, VERSIONNO ORDER BY archive_month DESC
+                ) = 1
+            )
+            SELECT
+                req.SETTLEMENTDATE, req.REGIONID, req.BIDTYPE, req.GENCONID,
+                TRY_CAST(c.RHS AS DOUBLE) AS REQUIREMENT, TRY_CAST(c.LHS AS DOUBLE) AS LHS,
+                req.MARGINALVALUE, g.DESCRIPTION, g.CONSTRAINTTYPE
+            FROM req
+            INNER JOIN constraint_rhs c
+                ON c.SETTLEMENTDATE = req.SETTLEMENTDATE AND c.CONSTRAINTID = req.GENCONID
+            -- DISPATCH_FCAS_REQ rows join their exact GENCONDATA version; DISPATCH_FCAS_REQ_CONSTRAINT
+            -- rows carry none, so they take the latest version effective at the interval.
+            LEFT JOIN gencon g
+                ON g.GENCONID = req.GENCONID
+                   AND (
+                       (req.GENCONEFFECTIVEDATE IS NOT NULL
+                            AND g.EFFECTIVEDATE = req.GENCONEFFECTIVEDATE
+                            AND g.VERSIONNO = req.GENCONVERSIONNO)
+                       OR (req.GENCONEFFECTIVEDATE IS NULL AND g.EFFECTIVEDATE <= req.SETTLEMENTDATE)
+                   )
             QUALIFY row_number() OVER (
-                PARTITION BY SETTLEMENTDATE, GENCONID, REGIONID, BIDTYPE
-                ORDER BY GENCONEFFECTIVEDATE DESC NULLS LAST
+                PARTITION BY req.SETTLEMENTDATE, req.GENCONID, req.REGIONID, req.BIDTYPE
+                ORDER BY g.EFFECTIVEDATE DESC NULLS LAST, g.VERSIONNO DESC NULLS LAST
             ) = 1
-        ),
-        constraint_rhs AS (
-            SELECT SETTLEMENTDATE, CONSTRAINTID, RHS, LHS
-            FROM $constraint_rows
-            QUALIFY row_number() OVER (
-                PARTITION BY SETTLEMENTDATE, CONSTRAINTID
-                ORDER BY archive_month DESC
-            ) = 1
-        ),
-        gencon AS (
-            SELECT GENCONID, EFFECTIVEDATE, VERSIONNO, DESCRIPTION, CONSTRAINTTYPE
-            FROM $gencon_table
-            QUALIFY row_number() OVER (
-                PARTITION BY GENCONID, EFFECTIVEDATE, VERSIONNO ORDER BY archive_month DESC
-            ) = 1
+            ORDER BY req.SETTLEMENTDATE, req.REGIONID, req.BIDTYPE, req.GENCONID
+            """,
+            [start_date, end_date, intervention],
         )
-        SELECT
-            req.SETTLEMENTDATE, req.REGIONID, req.BIDTYPE, req.GENCONID,
-            TRY_CAST(c.RHS AS DOUBLE) AS REQUIREMENT, TRY_CAST(c.LHS AS DOUBLE) AS LHS,
-            TRY_CAST(req.MARGINALVALUE AS DOUBLE) AS MARGINALVALUE,
-            g.DESCRIPTION, g.CONSTRAINTTYPE
-        FROM req
-        INNER JOIN constraint_rhs c
-            ON c.SETTLEMENTDATE = req.SETTLEMENTDATE AND c.CONSTRAINTID = req.GENCONID
-        -- Exact-version join on the old table's GENCONEFFECTIVEDATE/GENCONVERSIONNO pair;
-        -- DISPATCH_FCAS_REQ_CONSTRAINT dropped both, so post-2025-05 rows fall back to the
-        -- latest version effective at the interval. DESCRIPTION/CONSTRAINTTYPE are
-        -- cosmetic enrichment, so a looser match is acceptable here - it is NOT acceptable
-        -- for LHS term joins, which stay exact-equality (see read_constraint_terms).
-        LEFT JOIN gencon g
-            ON g.GENCONID = req.GENCONID
-               AND (
-                   (req.GENCONEFFECTIVEDATE IS NOT NULL
-                        AND g.EFFECTIVEDATE = req.GENCONEFFECTIVEDATE
-                        AND g.VERSIONNO = req.GENCONVERSIONNO)
-                   OR (req.GENCONEFFECTIVEDATE IS NULL AND g.EFFECTIVEDATE <= req.SETTLEMENTDATE)
-               )
-        QUALIFY row_number() OVER (
-            PARTITION BY req.SETTLEMENTDATE, req.GENCONID, req.REGIONID, req.BIDTYPE
-            ORDER BY g.EFFECTIVEDATE DESC NULLS LAST, g.VERSIONNO DESC NULLS LAST
-        ) = 1
-        ORDER BY req.SETTLEMENTDATE, req.REGIONID, req.BIDTYPE
-        """,
-        params,
+    end
+    return transform!(df, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
+end
+
+
+# The FCAS rows of `DISPATCH_FCAS_REQ` (to 2025-05) and `DISPATCH_FCAS_REQ_CONSTRAINT` (from 2025-06)
+# with `start_date <= SETTLEMENTDATE < end_date`, under the old table's column names.
+function _fcas_requirement_rows(db, start_date, end_date, intervention::Integer)
+    _check_intervention(intervention)
+    window = (start_date, end_date)
+    fcas_bid_types = _bid_type_list(FCAS_BID_TYPES)
+    tables = DataFrame[]
+    if _cached_in_range(db, :DISPATCH_FCAS_REQ, window)
+        rows = _query(
+            db,
+            """
+            SELECT SETTLEMENTDATE, GENCONID, REGIONID, BIDTYPE,
+                   TRY_CAST(MARGINALVALUE AS DOUBLE) AS MARGINALVALUE,
+                   CAST(GENCONEFFECTIVEDATE AS TIMESTAMP) AS GENCONEFFECTIVEDATE,
+                   CAST(GENCONVERSIONNO AS INTEGER) AS GENCONVERSIONNO
+            FROM $(read_hive(db, :DISPATCH_FCAS_REQ, window))
+            WHERE SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ? AND BIDTYPE IN ($fcas_bid_types)
+            QUALIFY COALESCE(INTERVENTION, 0) = CASE WHEN ? = 0 THEN 0
+                ELSE max(COALESCE(INTERVENTION, 0)) OVER (PARTITION BY SETTLEMENTDATE) END
+            ORDER BY SETTLEMENTDATE, GENCONID, REGIONID, BIDTYPE
+            """,
+            [start_date, end_date, intervention],
+        )
+        push!(tables, rows)
+    end
+    if _cached_in_range(db, :DISPATCH_FCAS_REQ_CONSTRAINT, window)
+        rows = _query(
+            db,
+            """
+            SELECT INTERVAL_DATETIME AS SETTLEMENTDATE, CONSTRAINTID AS GENCONID, REGIONID, BIDTYPE,
+                   TRY_CAST(MARGINALVALUE AS DOUBLE) AS MARGINALVALUE,
+                   CAST(NULL AS TIMESTAMP) AS GENCONEFFECTIVEDATE,
+                   CAST(NULL AS INTEGER) AS GENCONVERSIONNO
+            FROM $(read_hive(db, :DISPATCH_FCAS_REQ_CONSTRAINT, window))
+            WHERE INTERVAL_DATETIME >= ? AND INTERVAL_DATETIME < ? AND BIDTYPE IN ($fcas_bid_types)
+            ORDER BY SETTLEMENTDATE, GENCONID, REGIONID, BIDTYPE
+            """,
+            [start_date, end_date],
+        )
+        push!(tables, rows)
+    end
+    isempty(tables) && throw(
+        ArgumentError(
+            "Neither DISPATCH_FCAS_REQ nor DISPATCH_FCAS_REQ_CONSTRAINT is cached: run " *
+                "`populate(db, :DISPATCH_FCAS_REQ, ...)` or `populate(db, :DISPATCH_FCAS_REQ_CONSTRAINT, ...)` " *
+                "first (AEMO switched tables at the 2025-05/2025-06 boundary; which one you need depends on the date range).",
+        ),
     )
-    subset!(df, :SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
-    # Keep the FCAS markets (see FCAS_BID_TYPES), dropping any other BIDTYPE the table carries.
-    subset!(df, :BIDTYPE => ByRow(in(string.(FCAS_BID_TYPES))))
-    transform!(df, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
-    return df
+    return reduce(vcat, tables)
 end
 
 """
@@ -105,25 +146,12 @@ end
 function read_fcas_bids(
         db, date_range, bid_types::AbstractVector{BidType}; resolution::Union{Nothing, Dates.Period} = nothing,
     )
-    start_date = first(date_range)
-    end_date = last(date_range)
-    if isnothing(resolution)
-        bids = _massage_bids(
-            db, start_date, end_date; bid_types, keep_bid_type = true,
-            period_columns = _FCAS_TRAPEZIUM_COLUMNS,
-        )
-        transform!(bids, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
-        return bids
-    end
-    bids = _massage_bids(db, start_date, end_date; bid_types, keep_bid_type = true, resolution)
-    trapezium = _read_period_offers(db, bid_types, start_date, end_date, nothing; columns = _FCAS_TRAPEZIUM_COLUMNS)
-    joined = innerjoin(
-        bids, trapezium; on = [:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION, :BIDTYPE],
+    bids = _massage_bids(
+        db, first(date_range), last(date_range); bid_types, keep_bid_type = true, resolution,
+        period_columns = _FCAS_TRAPEZIUM_COLUMNS,
     )
-    transform!(joined, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
-    return joined
+    return transform!(bids, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
 end
-
 
 # The FCAS trapezium columns of `BIDPEROFFER_D`; `MAXAVAIL` comes with the offer bands instead.
 const _FCAS_TRAPEZIUM_COLUMNS = ["ENABLEMENTMIN", "LOWBREAKPOINT", "HIGHBREAKPOINT", "ENABLEMENTMAX", "ROCUP", "ROCDOWN"]

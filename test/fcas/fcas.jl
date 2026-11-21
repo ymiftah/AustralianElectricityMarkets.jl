@@ -112,14 +112,14 @@
         keys = [:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION, :BIDTYPE]
         @test isequal(sort(projected, keys), sort(expected, keys))
         @test_throws ArgumentError R._massage_bids(
-            db, first(date_range), last(date_range); resolution = Minute(15),
-            period_columns = R._FCAS_TRAPEZIUM_COLUMNS,
+            db, first(date_range), last(date_range); resolution = Minute(15), in_force = true,
         )
+        # Each coarse bucket carries the trapezium of its last native interval.
+        trapezium = select(expected, keys, Symbol.(R._FCAS_TRAPEZIUM_COLUMNS))
         for resolution in (nothing, Minute(5), Minute(15))
             bands = R._massage_bids(db, first(date_range), last(date_range); bid_types = markets, keep_bid_type = true, resolution)
-            trapezium = R._read_period_offers(db, markets, first(date_range), last(date_range), nothing; columns = R._FCAS_TRAPEZIUM_COLUMNS)
+            transform!(bands, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
             legacy = innerjoin(bands, trapezium; on = keys)
-            transform!(legacy, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
             actual = read_fcas_bids(db, date_range, markets; resolution)
             @test isequal(sort(actual, keys), sort(legacy, keys))
         end

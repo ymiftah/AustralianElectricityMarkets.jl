@@ -16,23 +16,35 @@ A `DataFrame` with `SETTLEMENTDATE`, `INTERVAL_DATETIME`, `DUID`, `DIRECTION`, `
 `BANDAVAIL1` to `BANDAVAIL10`.
 """
 function read_energy_bids(db, date_range; resolution::Union{Nothing, Dates.Period} = nothing)
-    start_datetime = first(date_range)
-    end_datetime = last(date_range)
-    energy_bids = select!(
-        _read_period_offers(db, [BidType.ENERGY], start_datetime, end_datetime, resolution), Not(:BIDTYPE),
+    start_date, end_date = first(date_range), last(date_range)
+    source = read_hive(db, :BIDPEROFFER_D, (start_date - Day(1), end_date + Day(1)))
+    band_avail = join(_band_columns(_table_schema(db, source), "BANDAVAIL"), ", ")
+    bucket = isnothing(resolution) ? "INTERVAL_DATETIME" : _ceil_timestamp_sql("INTERVAL_DATETIME", resolution)
+    lower = isnothing(resolution) ? start_date : start_date - resolution
+    return _query(
+        db,
+        """
+        WITH latest AS (
+            SELECT SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, MAXAVAIL, $band_avail
+            FROM $source
+            WHERE BIDTYPE = 'ENERGY' AND SETTLEMENTDATE BETWEEN ? AND ?
+              AND INTERVAL_DATETIME >= ? AND INTERVAL_DATETIME < ?
+            QUALIFY row_number() OVER (
+                PARTITION BY SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION ORDER BY VERSIONNO DESC
+            ) = 1
+        ),
+        buckets AS (
+            SELECT SETTLEMENTDATE, $bucket AS INTERVAL_DATETIME, DUID, DIRECTION,
+                   max(COLUMNS('^(MAXAVAIL|BANDAVAIL\\d+)\$'))
+            FROM latest
+            GROUP BY ALL
+        )
+        SELECT * FROM buckets
+        WHERE INTERVAL_DATETIME >= ? AND INTERVAL_DATETIME < ?
+        ORDER BY SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION
+        """,
+        [_offer_days(start_date, end_date); lower; end_date; start_date; end_date],
     )
-    if !isnothing(resolution)
-        energy_bids[!, :INTERVAL_DATETIME] = ceil.(energy_bids[!, :INTERVAL_DATETIME], resolution)
-        energy_bids = @chain energy_bids begin
-            groupby([:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION])
-            combine(_, valuecols(_) .=> maximum ∘ skipmissing; renamecols = false)
-        end
-    end
-    subset!(
-        energy_bids,
-        :INTERVAL_DATETIME => ByRow(x -> (start_datetime <= x < end_datetime))
-    )
-    return energy_bids
 end
 
 
@@ -224,36 +236,9 @@ _bid_type_list(bid_types) = join(("'$(string(bt))'" for bt in bid_types), ", ")
 _offer_days(start_date, end_date) = [Date(start_date) - Day(1), Date(end_date) + Day(1)]
 
 
-# Latest-version `BIDPEROFFER_D` rows of `bid_types` with `start - resolution <= INTERVAL_DATETIME < end`
-# (`start` when `resolution` is `nothing`): the rows a ceil onto `resolution` can bring into the range.
-# `columns` defaults to `MAXAVAIL` and every cached `BANDAVAIL` column.
-function _read_period_offers(db, bid_types::AbstractVector{BidType}, start_date, end_date, resolution; columns = nothing)
-    sql, params = _period_offers_sql(db, bid_types, start_date, end_date, resolution; columns)
-    return _query(db, sql, params)
-end
-
-
 # Numbered bands are ordered numerically, independent of parquet column order.
 function _band_columns(schema, prefix)
     return sort(filter(c -> occursin(Regex("^$(prefix)[0-9]+\$"), c), schema); by = c -> parse(Int, c[(length(prefix) + 1):end]))
-end
-
-
-function _period_offers_sql(db, bid_types, start_date, end_date, resolution; columns = nothing)
-    source = read_hive(db, :BIDPEROFFER_D, (start_date - Day(1), end_date + Day(1)))
-    selected = isnothing(columns) ? ["MAXAVAIL"; _band_columns(_table_schema(db, source), "BANDAVAIL")] : columns
-    lower = isnothing(resolution) ? start_date : start_date - resolution
-    sql = """
-    SELECT SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE, $(join(selected, ", "))
-    FROM $source
-    WHERE BIDTYPE IN ($(_bid_type_list(bid_types))) AND SETTLEMENTDATE BETWEEN ? AND ?
-      AND INTERVAL_DATETIME >= ? AND INTERVAL_DATETIME < ?
-    QUALIFY row_number() OVER (
-        PARTITION BY SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE ORDER BY VERSIONNO DESC
-    ) = 1
-    ORDER BY SETTLEMENTDATE, INTERVAL_DATETIME
-    """
-    return sql, [_offer_days(start_date, end_date); lower; end_date]
 end
 
 
@@ -269,8 +254,8 @@ bands.
 # Returns
 A `DataFrame` with `SETTLEMENTDATE`, `DUID`, `DIRECTION`, `INTERVAL_DATETIME`, `PRICEBANDARRAY`,
 `BANDAVAILARRAY`, `MAXAVAIL`, `MINIMUMLOAD`, `DAILYENERGYCONSTRAINT`, and `BIDTYPE` when
-`keep_bid_type`. Native-resolution requests can also project `period_columns` from the same
-latest period rows. With `in_force`, at native resolution only, the `MINIMUMLOAD` and `T1` to `T4`
+`keep_bid_type`, then `period_columns` from the same latest period rows (from the last interval of
+each bucket with a `resolution`). With `in_force`, at native resolution only, the `MINIMUMLOAD` and `T1` to `T4`
 of energy rows come from the `BIDDAYOFFER` version in force at the period offer's `LASTCHANGED`
 ([`read_offers`](@ref)).
 """
@@ -280,8 +265,7 @@ function _massage_bids(
         keep_bid_type::Bool = false, period_columns::AbstractVector{<:AbstractString} = String[],
         extra_price_columns::AbstractVector{<:AbstractString} = String[], in_force::Bool = false,
     )
-    (isempty(period_columns) && !in_force) || isnothing(resolution) ||
-        throw(ArgumentError("additional period columns require native resolution"))
+    !in_force || isnothing(resolution) || throw(ArgumentError("in_force requires native resolution"))
     window = (start_date - Day(1), end_date + Day(1))
     period_source = read_hive(db, :BIDPEROFFER_D, window)
     price_source = read_hive(db, :BIDDAYOFFER_D, window)
@@ -291,7 +275,10 @@ function _massage_bids(
     price_bands = join(_band_columns(_table_schema(db, price_source), "PRICEBAND"), ", ")
     bucket = isnothing(resolution) ? "INTERVAL_DATETIME" : _ceil_timestamp_sql("INTERVAL_DATETIME", resolution)
     missing_value = isnothing(resolution) ? "NULL" : "'NaN'::DOUBLE"
-    period_extra = join((", $c" for c in [period_columns; in_force ? ["LASTCHANGED"] : String[]]))
+    carried = [period_columns; in_force ? ["LASTCHANGED"] : String[]]
+    period_extra = join((", $c" for c in carried))
+    # Each bucket keeps the carried period columns of its last interval.
+    period_last = join((", arg_max_null($c, INTERVAL_DATETIME) AS $c" for c in carried))
     price_extra = join((", $c" for c in extra_price_columns))
     days = _offer_days(start_date, end_date)
     lower = isnothing(resolution) ? start_date : start_date - resolution
@@ -310,8 +297,8 @@ function _massage_bids(
             ) = 1
         ),
         period AS (
-            SELECT SETTLEMENTDATE, $bucket AS INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE $period_extra,
-                   COALESCE(avg(COLUMNS('^(MAXAVAIL|BANDAVAIL\\d+)\$')), $missing_value)
+            SELECT SETTLEMENTDATE, $bucket AS INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE,
+                   COALESCE(avg(COLUMNS('^(MAXAVAIL|BANDAVAIL\\d+)\$')), $missing_value) $period_last
             FROM latest_period
             GROUP BY ALL
         ),
