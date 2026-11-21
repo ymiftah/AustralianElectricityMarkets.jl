@@ -9,8 +9,7 @@ Device formulation for `PSY.AreaInterchange` that apportions the attached
 `PSI.AreaBalancePowerModel` only, matching NEMDE's regional balance; other network models,
 missing or ambiguous loss models and concave curves throw `ArgumentError`. The demand term of each
 interval's loss factor is read from the interchange's `"loss_demand_coefficient"` series
-(written by [`nem_system`](@ref AustralianElectricityMarkets.nem_system)) as a [`LossDemandCoefficientParameter`](@ref), so the formulation
-also runs in recurrent simulations.
+(written by [`nem_system`](@ref AustralianElectricityMarkets.nem_system)) as a [`LossDemandCoefficientParameter`](@ref).
 
 # Notes
 Loss follows the breakpoint interpolation at every price sign: segments fill contiguously from

@@ -12,8 +12,7 @@ end
 
 Prices the slack variables of the container keyed `(V, T, meta)` for `names` at `cvp_factor` times
 the Market Price Cap per MW of one dispatch interval, as a constant of the invariant objective. The
-cap is `rate` when given, else [`_container_market_price_cap`](@ref) at the container's initial time:
-a simulation keeps the cap of its first interval, since its range lies within one financial year.
+cap is `rate` when given, else [`_container_market_price_cap`](@ref) at the container's initial time.
 
 # Arguments
 - `container`: the `PSI.OptimizationContainer` being built.
@@ -82,8 +81,8 @@ end
 """
     _area_balance_network_model(; duals = Vector{DataType}()) -> PSI.NetworkModel{PSI.AreaBalancePowerModel}
 
-The `AreaBalancePowerModel` network model of a run, with PSI's own balance slacks on. A build with an AEMSim
-formulation that adds [`AreaBalanceSlack`](@ref) replaces them at the Market Price Cap.
+The `AreaBalancePowerModel` network model of a run, with PSI's own balance slacks on. A build with a
+formulation of this package that adds [`AreaBalanceSlack`](@ref) replaces them at the Market Price Cap.
 
 # Arguments
 - `duals`: the dual constraints to record on the network model.

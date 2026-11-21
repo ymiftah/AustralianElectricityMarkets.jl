@@ -83,8 +83,8 @@ The [`NEMBuildReport`](@ref) stored on `sys` by [`set_build_report!`](@ref).
 - `sys`: a `System` built by `nem_system`.
 
 # Returns
-The stored report, or an empty `NEMBuildReport` when none was stored (no constraints were built into `sys`).
-Throws `ArgumentError` for a stored report without `unavailable_constraints`, written by an earlier version.
+The stored report, or an empty `NEMBuildReport` when none was stored. Throws `ArgumentError` for a
+stored report without `unavailable_constraints`.
 """
 function get_build_report(sys)
     data = get(get_ext(sys), "build_report", nothing)

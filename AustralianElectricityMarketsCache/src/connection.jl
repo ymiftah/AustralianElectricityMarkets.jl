@@ -29,10 +29,8 @@ end
 """
     _new_duckdb_connection(filesystem::String = "file") -> DuckDB.DB
 
-Open a DuckDB connection configured to spill to disk once memory use crosses
-a conservative bound, rather than growing unbounded. Loads the `httpfs`
-extension when `filesystem` is remote (`"s3"`/`"gs"`), so subsequent
-`COPY`/`glob()` calls can reach it.
+Open a DuckDB connection with a memory limit that spills to disk. Loads the `httpfs`
+extension when `filesystem` is remote (`"s3"`/`"gs"`).
 """
 function _new_duckdb_connection(filesystem::String = "file")
     conn = DuckDB.DB()

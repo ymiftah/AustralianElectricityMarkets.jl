@@ -3,12 +3,8 @@
 """
     _get_archive(table_name::String, year::Int, month::Int; download! = _download_and_cache) -> Vector{String}
 
-Download and cache the NEMWEB data archive ZIP file(s) for one month.
-
-AEMO publishes most tables as a single `PUBLIC_DVD_...` ZIP, but some are split into
-numbered parts under the `PUBLIC_ARCHIVE#...#FILEnn#...` naming pattern. When the primary
-(`PUBLIC_DVD`) URL 404s, this fetches `FILE01`, `FILE02`, ... under the alternative pattern
-until a part 404s, and returns every part fetched.
+Download and cache the NEMWEB archive ZIP file(s) for one month. When the `PUBLIC_DVD_...`
+URL returns 404, fetches the numbered `PUBLIC_ARCHIVE#...#FILEnn#...` parts until one returns 404.
 
 # Arguments
 - `table_name::String`: Name of the NEMWEB table
@@ -98,12 +94,8 @@ const _DOWNLOAD_CONNECT_TIMEOUT_S = 30
 """
     _is_transient_status(status::Integer) -> Bool
 
-Whether an HTTP status means "ask again later" rather than "this does not exist".
-
-`403` is in the list because that is how NEMWEB rate-limits: a burst of requests (easily
-produced by bulk-populating a wide date range, or by two populate runs at once) gets 403 on
-URLs that resolve perfectly a minute later. Treating it as absence is what silently puts
-holes in a cache.
+Whether an HTTP status is retryable: `403` (NEMWEB rate limiting), `408`, `425`, `429` and
+`500`, `502`, `503`, `504`.
 """
 _is_transient_status(status::Integer) =
     status in (403, 408, 425, 429, 500, 502, 503, 504)
@@ -115,9 +107,9 @@ _is_transient_status(status::Integer) =
 
 GET `url`, retrying transient failures with exponential backoff.
 
-Returns the response when its status is in `ok`. Throws [`MissingDataError`](@ref) on any other
-non-transient status (404 included), or [`TransientDownloadError`](@ref) if a transient failure
-- see [`_is_transient_status`](@ref) \\- persists across [`_DOWNLOAD_MAX_ATTEMPTS`](@ref) attempts.
+Throws [`MissingDataError`](@ref) on a non-transient status outside `ok` (404 included), or
+[`TransientDownloadError`](@ref) if a transient failure ([`_is_transient_status`](@ref))
+persists across [`_DOWNLOAD_MAX_ATTEMPTS`](@ref) attempts.
 
 # Arguments
 - `url::String`: URL to fetch.
@@ -125,7 +117,7 @@ non-transient status (404 included), or [`TransientDownloadError`](@ref) if a tr
 - `ok`: Statuses that count as success.
 - `dest`: When a path, the body is streamed to it, truncated at the start of every attempt,
   instead of being buffered in the response. The file is left in place only on success.
-- `http_get`: The request function, replaceable for testing.
+- `http_get`: The request function.
 
 # Returns
 - `HTTP.Response`: The successful response; its body is empty when `dest` is set.
@@ -198,7 +190,7 @@ memory. A failed download leaves no file at `cache_path`.
 # Arguments
 - `url::String`: URL to download.
 - `cache_path::String`: Destination file; its directory is created.
-- `http_get`: The request function, replaceable for testing.
+- `http_get`: The request function.
 
 # Returns
 - `Nothing`.

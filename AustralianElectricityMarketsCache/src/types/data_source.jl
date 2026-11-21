@@ -1,13 +1,8 @@
 """
     DataSource
 
-Immutable description of one NEMWEB MMS table, cached as Hive-partitioned
-parquet under `config.hive_location`. Construction is pure — it does not
-touch the filesystem; `_add_data` creates `path` lazily on first write.
-
-The filesystem (`"file"`, `"s3"`, `"gs"`) is not stored separately — it's
-recovered from `path`'s scheme via `get_filesystem(::String)`, since `path`
-already encodes it (`s3://...`, `gs://...`, or a bare local path).
+Description of one NEMWEB MMS table cached as Hive-partitioned parquet under
+`config.hive_location`. The filesystem is recovered from the scheme of `path`.
 
 # Fields
 - `table_name::String`: Name of the table
@@ -39,9 +34,8 @@ islocal(source::DataSource) = islocal(get_filesystem(source))
     DataSource(table_name, table_columns, config=HiveConfiguration();
                table_sort_by=String[], month_filter_column=nothing, row_filter=nothing)
 
-Create a new `DataSource` for a NEMWEB table, rooted at `config.hive_location`.
-Works for both local and remote (`s3`/`gs`) `config.filesystem` — path
-construction is delegated to `_parse_hive_root`.
+Create a new `DataSource` for a NEMWEB table, rooted at `config.hive_location` on a local
+or remote (`s3`/`gs`) filesystem. Does not touch the filesystem.
 """
 function DataSource(
         table_name::String,

@@ -27,16 +27,10 @@ Every interconnector's [`InterconnectorLossModel`](@ref), assembled from
 [`read_interconnector_demand_coefficients`](@ref) and
 [`read_interconnector_loss_breakpoints`](@ref) as of `as_of`.
 
-An interconnector with loss parameters but no `LOSSMODEL` breakpoints is skipped, reported in
-one summary `@warn`.
-
-The loss share of `T-V-MNSP1` (Basslink) is fixed at `1.0`, as in nempy, because AEMO's published
-value is not well defined.
-
-Demand coefficients missing from `LOSSFACTORMODEL` but published by AEMO (V-SA `NSW1` for
-FY2025-26) are filled in; a value present in the table is never overridden.
-
-Throws `ArgumentError` when no interconnector survives.
+An interconnector with no `LOSSMODEL` breakpoints is skipped with one summary `@warn`. The loss share
+of `T-V-MNSP1` (Basslink) is fixed at `1.0`. Demand coefficients absent from `LOSSFACTORMODEL` but
+published by AEMO (V-SA `NSW1` for FY2025-26) are filled in, never overriding a cached value. Throws
+`ArgumentError` when no interconnector remains.
 """
 function interconnector_loss_models(db, as_of::Union{Date, DateTime})
     params = read_interconnector_loss_parameters(db; as_of = as_of)
@@ -141,11 +135,8 @@ Attaches the per-interval flow limits of [`read_interconnector_limits`](@ref) to
 bound the larger, each clamped into the static envelope `[-MAXMWIN, MAXMWOUT]`. An interval with no
 published row or a `missing` limit keeps the static limit, and one `@warn` counts them.
 
-The published limits are computed after NEMDE's solve (each binding constraint's right-hand side
-projected with the other terms held at the solved values), so bounding flow by them pins it to
-NEMDE's answer. Use them as a diagnostic, not when validating flows.
-
-A repeat call replaces the earlier limits.
+The published limits are computed from NEMDE's solution, so they are a diagnostic and must not be
+used to validate simulated flows. A repeat call replaces the earlier limits.
 
 # Arguments
 - `sys`: the `System` to add to.

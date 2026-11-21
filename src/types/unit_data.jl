@@ -87,7 +87,7 @@ value.
 
 # Fields
 - `agc_status`: whether the unit is under AGC.
-- `uigf`: the unit initial generation forecast, MW. Semi-scheduled units only.
+- `uigf`: the unconstrained intermittent generation forecast, MW. Semi-scheduled units only.
 - `ramp_up_limit`: `RAMPUPRATE`, MW/h, as published.
 - `ramp_down_limit`: `RAMPDOWNRATE`, MW/h, as published.
 - `raise_reg_enablement`: the `(min, max)` MW enablement of raise regulation.

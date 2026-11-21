@@ -34,18 +34,17 @@ end
 """
     resolve_term_devices(sys, term::ConstraintTerm) -> Union{Vector{String}, Nothing}
 
-Resolves a [`ConstraintTerm`](@ref) to the names of the devices it contributes in `sys`. A pure
-lookup — never throws, warns, or applies policy.
+Resolves a [`ConstraintTerm`](@ref) to the names of the devices it contributes in `sys`. Never
+throws or warns.
 
 # Arguments
 - `sys`: the `System` to resolve against.
 - `term`: a `UnitTerm`, `InterconnectorTerm`, or `RegionTerm`.
 
 # Returns
-`nothing` if `term` references something `sys` doesn't have. Otherwise a `Vector{String}` of
-device names — a `UnitTerm`/`InterconnectorTerm` resolves to its own name, a `RegionTerm` to
-every `Generator`/`Storage` in that region (possibly empty), plus every `ControllableLoad`
-when the term is an FCAS term.
+`nothing` if `term` references something `sys` does not have. Otherwise a `Vector{String}`: a
+`UnitTerm`/`InterconnectorTerm` resolves to its own name, a `RegionTerm` to every
+`Generator`/`Storage` in that region (possibly empty), plus every `ControllableLoad` for an FCAS term.
 """
 function resolve_term_devices(sys, term::UnitTerm)
     device = get_component(Device, sys, get_duid(term))
@@ -267,23 +266,16 @@ mapping a skipped name to `:no_definition`, `:no_terms`, `:unknown_duid`, `:vacu
 `:unknown_region`, or `:unknown_interconnector` (the kind of the first unresolved term). Dropped unit
 terms are read back with [`get_dropped_terms`](@ref).
 
-A unit's participant fixed loading (`\$<DUID>`) is not a generic constraint: its `DISPATCHCONSTRAINT`
-row is neither added nor reported as skipped at intervals with a fixed-loading row for an available
-device in `sys`. Devices that are unavailable or absent
-from `sys` are still reported as skipped.
+A participant fixed-loading row (`\$<DUID>`) is not added nor reported as skipped at intervals with a
+fixed-loading row for an available device in `sys`; for an unavailable or absent device it is skipped.
+Skipped versions ([`get_skipped_constraints`](@ref)), intervals with no invoked constraint
+([`get_missing_constraint_intervals`](@ref)) and constraints given the default weight 1.0
+([`get_defaulted_constraint_weights`](@ref)) are recorded on `sys`.
 
-Each skipped version is also recorded on `sys`; read it with [`get_skipped_constraints`](@ref). The
-intervals of `date_range` with no invoked constraint ([`get_missing_constraint_intervals`](@ref)) and
-the constraints given the default weight 1.0 for a NULL `GENERICCONSTRAINTWEIGHT`
-([`get_defaulted_constraint_weights`](@ref)) are recorded the same way.
-
-A unit term whose DUID is absent from `sys` is dropped, as nempy does for a unit that is not in the
-dispatch, and recorded in the build report ([`get_dropped_terms`](@ref)) with whether `DUDETAILSUMMARY`
-registers the unit at some interval of `date_range`.
-An unresolved region or interconnector term, or a constraint with no resolvable term, skips the constraint.
-A constraint whose every term is a dropped unit term has a zero left-hand side; when `0 sense RHS` holds
-at every invoked interval it cannot bind and is skipped as `:vacuous_unknown_duid` (its dropped terms are
-still recorded), otherwise it is skipped as `:unknown_duid`.
+A unit term whose DUID is absent from `sys` is dropped and recorded ([`get_dropped_terms`](@ref)). An
+unresolved region or interconnector term, or no resolvable term, skips the constraint. A constraint whose
+every term was dropped is skipped as `:vacuous_unknown_duid` when `0 sense RHS` holds at every invoked
+interval, else as `:unknown_duid`.
 
 Throws `ArgumentError` when a `RegionTerm` resolves to a region with no Generator/Storage in `sys`, or
 when an invoked `SETTLEMENTDATE` falls outside `date_range`'s grid; the throw leaves `sys` unmodified.
@@ -565,10 +557,9 @@ end
     add_nem_constraints!(sys, db, date_range; intervention::Integer = 0) -> nothing
 
 Reads the invoked constraints and participant fixed loadings over `date_range` from `db` and attaches
-them to `sys`: one [`GenericConstraint`](@ref) per invoked version. A unit's participant fixed
-loading is unit offer data, excluded from the generic constraints but not attached as a series; the
-run formulation derives it from the bid and the unit state. Constraints skipped or dropped are
-recorded on `sys` (see [`get_skipped_constraints`](@ref)).
+them to `sys`: one [`GenericConstraint`](@ref) per invoked version. Participant fixed loadings are
+excluded from the generic constraints. Constraints skipped or dropped are recorded on `sys` (see
+[`get_skipped_constraints`](@ref)).
 
 # Arguments
 - `sys`: the `System` to add to.

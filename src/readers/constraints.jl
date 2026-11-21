@@ -1,10 +1,8 @@
 """
     read_invoked_constraints(db, date_range; intervention = 0)
 
-Reads `DISPATCHCONSTRAINT` over `date_range`: one row per `(SETTLEMENTDATE, GENCONID)` with
-`RHS` and the exact constraint version NEMDE used that interval
-(`GENCONID_EFFECTIVEDATE`/`GENCONID_VERSIONNO`). Membership in this table is the definition
-of "NEMDE actually enforced this constraint" c.f. the constraint build of [`AustralianElectricityMarkets.nem_system`](@ref).
+Reads `DISPATCHCONSTRAINT` over `date_range`: one row per `(SETTLEMENTDATE, GENCONID)` invoked in
+dispatch, with `RHS` and the constraint version NEMDE used (`GENCONID_EFFECTIVEDATE`/`GENCONID_VERSIONNO`).
 """
 function read_invoked_constraints(db, date_range; intervention::Integer = 0)
     columns = [
@@ -18,14 +16,11 @@ end
 """
     read_constraint_definitions(db, gencon_versions)
 
-`gencon_versions` has distinct `(GENCONID, GENCONID_EFFECTIVEDATE, GENCONID_VERSIONNO)`
-rows (see [`read_invoked_constraints`](@ref)). Joins each to its exact `GENCONDATA` version:
-`CONSTRAINTTYPE`, `GENERICCONSTRAINTWEIGHT`, `CONSTRAINTVALUE`, plus
-`DESCRIPTION`/`LIMITTYPE`/`SOURCE`. A `GENCONID` absent from the result has no `GENCONDATA`
-row for that exact version — usually because the defining archive month isn't cached (see
-[`read_fcas_requirements`](@ref)) — callers must treat that as "no definition available".
-Throws an `ArgumentError` on an empty `gencon_versions`: nothing was invoked over the range,
-which means `DISPATCHCONSTRAINT` was never cached for it.
+Joins each `(GENCONID, GENCONID_EFFECTIVEDATE, GENCONID_VERSIONNO)` row of `gencon_versions`
+(from [`read_invoked_constraints`](@ref)) to its exact `GENCONDATA` version: `CONSTRAINTTYPE`,
+`GENERICCONSTRAINTWEIGHT`, `CONSTRAINTVALUE`, `DESCRIPTION`, `LIMITTYPE` and `SOURCE`. A version
+with no cached `GENCONDATA` row is absent from the result. Throws an `ArgumentError` on an empty
+`gencon_versions`.
 """
 function read_constraint_definitions(db, gencon_versions)
     _require_invoked(gencon_versions)
@@ -227,26 +222,12 @@ end
 """
     _fcas_req_union_sql(db, start_date, end_date, intervention) -> (sql_fragment, params)
 
-A `SELECT`-able fragment presenting AEMO's two generations of the dispatch FCAS requirement
-table under the **old** column names — `SETTLEMENTDATE`, `GENCONID`, `REGIONID`, `BIDTYPE`,
-`MARGINALVALUE`, `GENCONEFFECTIVEDATE`, `GENCONVERSIONNO`.
-
-`DISPATCH_FCAS_REQ` was last published for the 2025-05 archive month; from 2025-06 AEMO
-publishes `DISPATCH_FCAS_REQ_CONSTRAINT` instead, which renames `GENCONID` to
-`CONSTRAINTID` and `SETTLEMENTDATE` to `INTERVAL_DATETIME`. Callers get one continuous
-series across the cut rather than silently empty results for recent dates.
-
-Two columns have no successor and come back `NULL` for post-cut rows:
-`GENCONEFFECTIVEDATE`/`GENCONVERSIONNO`, so a constraint's `GENCONDATA` version can only be
-resolved by exact equality on the old side (see [`read_fcas_requirements`](@ref) for the
-fallback).
-
-`intervention` applies to the old side only. `DISPATCH_FCAS_REQ_CONSTRAINT` has no `INTERVENTION`
-column, but it carries `RUNNO` and `RUN_DATETIME`; its rows are read as published, whichever run
-they hold during an intervention, which is not verified.
-
-Either table may have no cached partition for the range; such a table contributes no rows, so a cache
-covering only one side of the cut still works. Throws an `ArgumentError` when neither has one.
+A `SELECT`-able fragment unioning `DISPATCH_FCAS_REQ` (to 2025-05) and
+`DISPATCH_FCAS_REQ_CONSTRAINT` (from 2025-06) under the old column names `SETTLEMENTDATE`,
+`GENCONID`, `REGIONID`, `BIDTYPE`, `MARGINALVALUE`, `GENCONEFFECTIVEDATE` and `GENCONVERSIONNO`.
+The last two are `NULL` for `DISPATCH_FCAS_REQ_CONSTRAINT` rows, and `intervention` filters
+`DISPATCH_FCAS_REQ` only. A table with no cached partition contributes no rows; throws an
+`ArgumentError` when neither is cached.
 """
 function _fcas_req_union_sql(db, start_date, end_date, intervention::Integer)
     _check_intervention(intervention)

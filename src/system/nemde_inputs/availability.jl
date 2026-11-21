@@ -19,9 +19,8 @@ end
 """
     _set_nemde_availability!(sys::PSY.System) -> Nothing
 
-Records the unavailable devices and services of `sys` in its `ext`, as plain data, so a later change of
-availability can be refused by [`_check_nemde_availability`](@ref): the NEMDE inputs (FCAS effective offers,
-tie-break membership, loss demand terms, constraint availability) were derived for this availability.
+Records the unavailable devices and services of `sys` in its `ext`, as plain data, for
+[`_check_nemde_availability`](@ref).
 
 # Arguments
 - `sys`: the system whose NEMDE inputs were just written.

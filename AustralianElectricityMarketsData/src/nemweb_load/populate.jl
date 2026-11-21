@@ -3,9 +3,8 @@
 """
     _clear_local_partition(source::DataSource, partition_dir::String) -> Nothing
 
-Remove `partition_dir` if it exists, for local sources only, so stale files from a previous
-run never coexist with freshly written ones. Remote rewrites rely on `COPY`'s
-`OVERWRITE_OR_IGNORE` instead.
+Remove `partition_dir` if it exists, for local sources only. Remote partitions are left to
+`COPY`'s `OVERWRITE_OR_IGNORE`.
 
 # Arguments
 - `source::DataSource`: The table being populated.

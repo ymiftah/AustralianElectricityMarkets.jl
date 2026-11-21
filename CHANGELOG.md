@@ -94,6 +94,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Docstrings across the four packages and `scripts/` are trimmed to reference documentation of the current behaviour, without history, rationale or implementation walkthroughs.
+
 - Every Literate page is frozen: `docs/prerender.jl` renders each one into the committed `docs/frozen/`, and `docs/make.jl` copies that output instead of executing Literate code, so the docs build runs from `docs/frozen/` alone.
 
 - Added how-to pages for the five NEMDE template presets: energy only, lossless interconnectors, interconnector losses, FCAS markets and generic constraints.

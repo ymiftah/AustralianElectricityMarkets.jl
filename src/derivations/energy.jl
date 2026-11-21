@@ -27,7 +27,7 @@ limited by `uigf` where one is published, and zero for a non-scheduled load or a
 
 # Arguments
 - `max_avail`: the energy bid `MAXAVAIL` per interval.
-- `uigf`: the unit initial generation forecast per interval, or `nothing` when the unit is not
+- `uigf`: the unconstrained intermittent generation forecast per interval, or `nothing` when the unit is not
   semi-scheduled.
 - `ramp_up_raw`: the telemetered ramp-up limit per interval, `NaN` at an interval with no row.
 - `pinned`: whether the unit is a non-scheduled load, dispatched by constraint rather than by offer.

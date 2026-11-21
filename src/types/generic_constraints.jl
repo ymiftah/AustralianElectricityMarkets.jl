@@ -6,10 +6,8 @@ IS.@scoped_enum(ConstraintSense, LE = 1, GE = 2, EQ = 3)
 
 
 """
-Abstract supertype for one linear term on a [`GenericConstraint`](@ref)'s LHS. Concrete
-subtypes hold names, not live component references — see [`GenericConstraint`](@ref) for why.
-Factors are in natural MW, matching AEMO's own `FACTOR` columns; not per-unitized by
-`BASE_POWER`.
+Abstract supertype for one linear term on a [`GenericConstraint`](@ref)'s LHS. Concrete subtypes
+hold component names, and factors are AEMO's `FACTOR` values, not per-unitized.
 """
 abstract type ConstraintTerm <: PSY.DeviceParameter end
 
@@ -49,12 +47,8 @@ get_interconnector(t::InterconnectorTerm) = t.interconnector
 
 
 """
-A `FACTOR * <region's BidType aggregate>` term, from `SPDREGIONCONSTRAINT`.
-
-!!! note
-    `devices` is the region's contributing `Generator`/`Storage` names.
-    `region` and `bid_type` are kept alongside it so downstream code can still see this is a regional
-    aggregate, not merely an unlabelled device list.
+A `FACTOR * <region's BidType aggregate>` term, from `SPDREGIONCONSTRAINT`. `devices` holds the
+names of the region's contributing devices.
 """
 struct RegionTerm <: ConstraintTerm
     region::String
@@ -119,11 +113,11 @@ IS.deserialize(::Type{Vector{FCASRequirement}}, data::Vector) =
 
 
 """
-A NEM generic constraint, `LHS <sense> RHS` — the mechanism AEMO uses for both network limits
-and FCAS requirements. Attached to its contributing devices as a `PSY.Service`.
+A NEM generic constraint, `LHS <sense> RHS`, for a network limit or an FCAS requirement. Attached to
+its contributing devices as a `PSY.Service`.
 
 # Fields
-- `name`: identifier — `GENCONID@EFFECTIVEDATE#VERSIONNO` for an AEMO-sourced constraint.
+- `name`: `GENCONID@EFFECTIVEDATE#VERSIONNO` for an AEMO-sourced constraint.
 - `available`: whether it is enforced.
 - `sense`: `LE`, `GE` or `EQ`, from `GENCONDATA.CONSTRAINTTYPE`.
 - `rhs`: `GENCONDATA.CONSTRAINTVALUE` in MW as published, or a key of the per-interval right-hand side

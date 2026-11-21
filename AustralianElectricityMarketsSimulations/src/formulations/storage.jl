@@ -174,9 +174,7 @@ _storage_parameters(::Type{<:AbstractNEMDispatch}) = (
     PSI.add_constraints!(container, ::Type{PSI.RampConstraint}, ::Type{PSI.ActivePowerOutVariable}, devices, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_model) where {T <: PSY.Storage}
 
 Holds each battery's net `Out - In` within its per-interval ramp rates of the base its
-formulation measures against, through [`_add_nem_ramp_constraints!`](@ref), so a net ramp
-envelope that conflicts with the per-direction bounds is violated at the unit ramp CVP instead of
-making the model infeasible.
+formulation measures against, through [`_add_nem_ramp_constraints!`](@ref).
 
 # Returns
 `nothing`.

@@ -26,9 +26,6 @@ the telemetry `uigf` is zero there. A registered unit with a `NaN` mode is refus
 across every device is raised as one `ArgumentError`, and `sys` is left unmodified. A repeat call replaces each series
 it writes, and replaces the structs on the devices.
 
-The series are read through the keys, and AEMSim derives the dispatch inputs from them. The schedule type
-and registration span of a device come from its [`NEMRegistration`](@ref).
-
 # Arguments
 - `sys`: the `System` to add to, after [`set_market_bids!`](@ref) has made the non-scheduled loads
   with FCAS bids available.

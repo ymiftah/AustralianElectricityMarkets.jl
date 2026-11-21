@@ -1,8 +1,8 @@
 """
     NEMFloatTimeSeriesParameter
 
-Abstract supertype of the time-series parameters whose values are stored as `Float64` in every build mode,
-because they are written into constraint coefficients and row bounds rather than used as JuMP parameters.
+Abstract supertype of the time-series parameters whose values are stored as `Float64` in every build mode
+and written into constraint coefficients and row bounds.
 """
 abstract type NEMFloatTimeSeriesParameter <: PSI.TimeSeriesParameter end
 

@@ -158,14 +158,10 @@ end
 """
     read_bids(db, date_range; resolution = nothing)
 
-Reads energy offers from `BIDPEROFFER_D`/`BIDDAYOFFER_D` and returns one row per
-`(SETTLEMENTDATE, DUID, DIRECTION, INTERVAL_DATETIME)` with the 10-band offer as
-`PRICEBANDARRAY` connection-point prices (not referred to the reference node, unlike
-[`set_market_bids!`](@ref AustralianElectricityMarkets.set_market_bids!)) and `BANDAVAILARRAY`
-MW, plus `MAXAVAIL` (`BIDPEROFFER_D`) and
-`MINIMUMLOAD`/`DAILYENERGYCONSTRAINT` (`BIDDAYOFFER_D`) - the physical bounds a caller needs
-to clip dispatch to, not just the priced curve. See [`read_fcas_bids`](@ref) for the
-FCAS-market equivalent.
+Reads energy offers from `BIDPEROFFER_D`/`BIDDAYOFFER_D`: one row per
+`(SETTLEMENTDATE, DUID, DIRECTION, INTERVAL_DATETIME)` with `PRICEBANDARRAY` (connection-point
+prices, not referred to the reference node), `BANDAVAILARRAY` (MW), `MAXAVAIL`, `MINIMUMLOAD` and
+`DAILYENERGYCONSTRAINT`. See [`read_fcas_bids`](@ref) for the FCAS markets.
 """
 function read_bids(db, date_range; resolution::Union{Nothing, Dates.Period} = nothing)
     return _massage_bids(db, first(date_range), last(date_range); resolution)

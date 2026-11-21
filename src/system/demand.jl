@@ -1,11 +1,8 @@
 """
     set_demand!(sys, db, date_range; kwargs...)
 
-Adds load time series data to the system from the database.
-
-This function reads demand data for a specified date range, processes it into a time series,
-and attaches it to the `PowerLoad` components in the system. `TOTALDEMAND` becomes the
-`"max_active_power"` series and `LOSSDEMAND` (see [`read_demand`](@ref)) a second `"loss_demand"`
+Reads [`read_demand`](@ref) over `date_range` and attaches it to the `PowerLoad` components of `sys`:
+`TOTALDEMAND` as the `"max_active_power"` series and `LOSSDEMAND` as the `"loss_demand"`
 series. Throws an `ArgumentError` if any available load or area has no demand row for an
 interval of `date_range`, or if a demand value is not finite. A second call on the same system throws
 an `ArgumentError` for the series already attached.

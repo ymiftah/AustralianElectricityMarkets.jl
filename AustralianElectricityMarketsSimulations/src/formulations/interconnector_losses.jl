@@ -164,9 +164,8 @@ end
 """
     _validate_convex_segments(name, model)
 
-Throws `ArgumentError` naming `name` when `model`'s [`loss_segments`](@ref) chord slopes are not
-ascending. Evaluated once per interconnector against an empty demand, since demand shifts every
-slope by the same constant.
+Throws `ArgumentError` naming `name` when `model`'s [`loss_segments`](@ref) chord slopes, at zero
+demand, are not ascending.
 """
 function _validate_convex_segments(name::AbstractString, model::InterconnectorLossModel)
     segments = loss_segments(model, Dict{String, Float64}())
@@ -434,14 +433,11 @@ end
 
 Bounds `PSI.FlowActivePowerVariable` by the static `flow_limits`, or by the from-to and to-from
 flow-limit parameters when every device carries those time series. Each row carries an
-[`InterconnectorFlowSlack`](@ref) with meta `"surplus"` (upper) or `"deficit"` (lower) priced at [`INTERCONNECTOR_FLOW_CVP_FACTOR`](@ref) times the Market Price Cap, always,
-whatever the device model's `use_slacks`, as NEMDE's limit is always soft, so
-limits that conflict with each other, or with the loss breakpoint range under [`NEMInterconnectorLoss`](@ref), are
-violated at that price instead of making the model infeasible. Under `NEMInterconnectorLoss` the breakpoint range
-itself stays a hard bound. Because
-the slacks are priced from the Market Price Cap of the build's initial interval, building requires a cap
-for that interval, whether the cap comes from `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` (from FY2021-22) or from the
-`"market_price_cap"` entry of the model's settings, even when `use_slacks` is `false`.
+[`InterconnectorFlowSlack`](@ref) with meta `"surplus"` (upper) or `"deficit"` (lower) priced at
+[`INTERCONNECTOR_FLOW_CVP_FACTOR`](@ref) times the Market Price Cap, whatever the device model's
+`use_slacks`. Under [`NEMInterconnectorLoss`](@ref) the loss breakpoint range stays a hard bound.
+Building requires a Market Price Cap for the build's initial interval, from
+`MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` (from FY2021-22) or the model's `"market_price_cap"` setting.
 """
 function _add_flow_limit_constraint!(
         container::PSI.OptimizationContainer,

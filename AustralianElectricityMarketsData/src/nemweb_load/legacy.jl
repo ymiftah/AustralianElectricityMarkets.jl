@@ -92,17 +92,10 @@ end
     populate_legacy_archive(db::AEMDB; tables=CONSTRAINT_DEFINITION_TABLES, start_date=Date(2009, 7, 1),
                             end_date=Date(2014, 12, 1), force_new::Bool=false)
 
-Populate the Hive cache for months before 2015, when NEMWEB hosts only one monolithic
-`MMSDM_<yyyy>_<mm>.zip` per month (1.5 to 2.2 GB) instead of one ZIP per table. Each requested table's
-entry is read with HTTP range requests, so a month costs a few MB instead of the full archive, then written
-through the same pipeline as [`populate`](@ref). Months already cached are skipped.
-
-Use case: generic-constraint definitions. `GENCONDATA` and the `SPD*CONSTRAINT` term tables are
-effective-dated, and a monthly archive carries only the versions that became effective that month. A constraint
-last revised before 2015 (for example `N_NIL_TE_B`, effective 2012-07-04, or the Murraylink and Basslink
-`*_ZERO` constraints, effective 2013-08-21) is still invoked in `DISPATCHCONSTRAINT` today, but its definition
-appears only in a pre-2015 archive, so a cache populated from 2015-01 reports it as having no definition.
-The default tables are the four that define constraints.
+Populate the Hive cache for months before 2015 from the monolithic monthly `MMSDM_<yyyy>_<mm>.zip`
+archive, reading each table's entry with HTTP range requests and writing it as [`populate`](@ref) does.
+Months already cached are skipped unless `force_new` is set. The default tables are the four that
+define generic constraints.
 
 # Arguments
 - `db::AEMDB`: the cache connection.

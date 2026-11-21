@@ -1,7 +1,7 @@
 """
     AbstractNEMDispatchProblem <: PSI.DefaultDecisionProblem
 
-The PSI decision problems of a NEM dispatch dispatch interval. The concrete problem type selects the run
+The PSI decision problems of a NEM dispatch interval. The concrete problem type selects the run
 mode: [`NEMDispatchProblem`](@ref) runs each interval from AEMO's observed state, and
 [`NEMClosedLoopDispatchProblem`](@ref) from the previous solved interval.
 """
@@ -83,18 +83,15 @@ end
 """
     PSI.validate_template(model::PSI.DecisionModel{<:AbstractNEMDispatchProblem})
 
-Checks that the system carries forecasts and that the availability of its devices and services is the one its
-NEMDE inputs were derived for, sets the Market Price Cap of `model`, then checks that the constraints the template excludes are constraints of the system, and runs
-[`check_template_against_sys`](@ref) and [`check_fcas_services`](@ref). It throws when the template cannot model an
-available `GenericConstraint` it does not tolerate, deletes the per-name `GenericConstraint` models of the constraints
-the template leaves out (see [`template_skipped_constraints`](@ref)), runs [`check_dispatch_envelope`](@ref) over the
-dispatch intervals of the system, then the default template validation, which prunes device models with no
-available devices.
-The cap is the `"market_price_cap_override"` setting when set, else the one dated by the initial time, or by the
-system's forecast initial timestamp when the initial time is unset. The resolved cap is written to the
-`"market_price_cap"` setting on every call, so a rebuild at a later initial time re-dates it. The build
-replaces PSI's own balance slacks by [`AreaBalanceSlack`](@ref) only when the template holds an AEMSim formulation
-that adds them, and only on the build's copy of the template; a template of stock PSI formulations keeps its `use_slacks`.
+Validates `model` before it is built, in order: checks that the system has forecasts and unchanged
+availability since `nem_system`, sets the Market Price Cap, checks the excluded constraints, runs
+[`check_template_against_sys`](@ref) and [`check_fcas_services`](@ref), throws on an available
+`GenericConstraint` the template cannot model and does not tolerate, drops the `GenericConstraint` models the
+template leaves out ([`template_skipped_constraints`](@ref)), runs [`check_dispatch_envelope`](@ref), then the
+default template validation, which prunes device models with no available devices.
+
+The cap is the `"market_price_cap_override"` setting when set, else the one dated by the initial time (or the
+system's forecast initial timestamp when unset), and is written to the `"market_price_cap"` setting on every call.
 
 # Arguments
 - `model`: the NEM dispatch `PSI.DecisionModel` being built.

@@ -75,9 +75,9 @@ end
 """
     ClosedLoopInputs
 
-The state-independent inputs of one device's state-dependent NEMDE inputs over the System's range, read once and
-prepared per family on first use, so that a closed-loop step evaluates only the state-dependent rules.
-Build with [`closed_loop_inputs`](@ref) and evaluate with [`closed_loop_input`](@ref).
+The state-independent inputs of one device's state-dependent NEMDE inputs over the System's range,
+prepared per family on first use. Build with [`closed_loop_inputs`](@ref) and evaluate with
+[`closed_loop_input`](@ref).
 """
 mutable struct ClosedLoopInputs
     device::PSY.Device
