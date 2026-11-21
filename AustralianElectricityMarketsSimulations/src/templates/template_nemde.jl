@@ -8,8 +8,8 @@ The keyword builder of the dispatch templates. The default builds the `PSI.Probl
 [`NEMDispatch`](@ref) for each type of [`NEM_DISPATCH_DEVICE_TYPES`](@ref), including the batteries,
 `PSI.StaticPowerLoad` demand, [`NEMInterconnectorLoss`](@ref) on each `PSY.AreaInterchange`, an [`FCASMarket`](@ref)
 per `FCASService`, a [`LinearFactorLimit`](@ref) per `GenericConstraint` and the [`TieBreakMarket`](@ref) service
-model, over `PSI.AreaBalancePowerModel` regions. The balance slacks are PSI's own here; the build replaces them by
-[`AreaBalanceSlack`](@ref), priced at the Market Price Cap, because this template holds AEMSim formulations.
+model, over `PSI.AreaBalancePowerModel` regions. The build replaces PSI's balance slacks by
+[`AreaBalanceSlack`](@ref), priced at the Market Price Cap.
 
 Each keyword removes or swaps one part. The presets [`template_energy_only`](@ref), [`template_interconnected`](@ref),
 [`template_losses`](@ref), [`template_fcas`](@ref) and [`template_constraints`](@ref) are calls to this builder with
@@ -21,8 +21,7 @@ read what is modeled from the template they are given.
   under [`NEMInterconnectorLossless`](@ref) and `:none` leaves the interchanges out.
 - `fcas`: whether the [`FCASMarket`](@ref) service model of each `FCASService` is included.
 - `constraints`: `true` models every `GenericConstraint`, `:fcas_requirements` only those carrying FCAS requirements
-  (it needs `fcas = true`, since FCAS requirements are constraints that clear nothing without the FCAS market),
-  and `false` none.
+  (requires `fcas = true`), and `false` none.
 - `tie_break`: whether the [`TieBreakMarket`](@ref) service model is included.
 - `exclude_constraints`: a `Dict` from the names of `GenericConstraint`s to the reason each is recorded with.
   The run leaves these constraints out without changing the system; an unknown name fails the model's

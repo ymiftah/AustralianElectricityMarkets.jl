@@ -320,19 +320,15 @@ end
     set_market_bids!(sys, db, date_range; markets = NEM_MARKETS, resolution = Minute(5)) -> (; added, excluded)
 
 Stores the bids of each unit of `sys` for `date_range`. On a NEMDE system (units carrying NEM unit
-data, built by [`nem_network`](@ref) or `nem_system(db, NEMDEConfiguration(); date_range)`) it is one
-[`read_offers`](@ref) read of the `markets`, written as one series per bid field
+data) the [`read_offers`](@ref) rows of `markets` are written as one series per bid field
 ([`bid_series_name`](@ref)) and recorded on the unit's [`NEMOfferCost`](@ref) as
-[`NEMEnergyBid`](@ref)s and [`NEMFCASBid`](@ref)s. The values are as offered: MW, `\$/MWh` at the
-connection point and MW/min. A unit's loss factors, from which AEMSim refers its energy prices, are on
-its [`NEMRegistration`](@ref) recorded by [`nem_network`](@ref).
+[`NEMEnergyBid`](@ref)s and [`NEMFCASBid`](@ref)s, as offered: MW, `\$/MWh` at the connection point
+and MW/min.
 
-On a system without NEM unit data, such as one built with [`RegionalNetworkConfiguration`](@ref), only
-the energy bids are read and each bidding unit gets a `MarketBidCost` for PowerSimulations' own
-formulations: the incremental offer curves of its `GEN` bid and the decremental curves of its `LOAD`
-bid, as `SingleTimeSeries` in natural units. Each curve's prices are divided by the unit's loss
-factor from [`read_loss_factors`](@ref), so they are referred to the regional reference node, and its
-quantity is capped at the interval's `MAXAVAIL`. FCAS bids are not read and no service is added.
+On a system without NEM unit data, such as a [`RegionalNetworkConfiguration`](@ref) system, only
+energy bids are read: each bidding unit gets a `MarketBidCost` with the incremental curves of its
+`GEN` bid and the decremental curves of its `LOAD` bid, prices divided by the loss factor of
+[`read_loss_factors`](@ref) and quantities capped at `MAXAVAIL`. No FCAS service is added.
 
 Generators bid `GEN`. Scheduled loads bid `LOAD`, and a non-scheduled load bids no energy; an available one
 gets a zero `MAXAVAIL` series of the `LOAD` energy bid name instead. Storage

@@ -342,11 +342,8 @@ end
     _interval_timing_rows(simulation, model, results) -> Vector{_TimingRow}
 
 Builds the `parameter_update` and `solve_and_write` rows of every executed step of `model`.
-The `parameter_update` span runs from the step's start event to the last `ParameterUpdateEvent`
-logged for its simulation time, and is zero when none is logged. PSI then applies the
-initial-condition updates and rebuilds the objective, and it logs no event for either, so both
-fall in `solve_and_write`. That span also holds the solve, pricing, auxiliary calculation, result
-write, native state update and warm start, and ends at the step's done event.
+`parameter_update` runs from the step's start event to its last `ParameterUpdateEvent` (zero when
+none is logged); `solve_and_write` runs from there to the step's done event.
 
 # Arguments
 
@@ -414,13 +411,10 @@ end
 """
     _write_interval_timings!(simulation, dispatch, results) -> String
 
-Writes `interval_timings.csv` into the model's output directory, one `parameter_update` and one
-`solve_and_write` row per executed step. Fields the recorder does not provide are written as
-`NaN`. `timestamp_utc` is the end of each phase. The recorder stamps events with the local clock
-without a zone, so every timestamp is shifted by one offset, rounded to 15 minutes and read after
-`execute!`; a run spanning a DST change is off by an hour for events after the change. The
-`parameter_update` span ends at the last `ParameterUpdateEvent` of its step, and the objective
-rebuild and initial-condition updates are counted in `solve_and_write`.
+Writes `interval_timings.csv` into the model's output directory, one row per phase per step from
+[`_interval_timing_rows`](@ref). Fields the recorder does not provide are `NaN`. `timestamp_utc` is
+the end of each phase, converted from local time with one offset, so a run spanning a DST change is
+off by an hour after the change.
 
 # Arguments
 

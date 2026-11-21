@@ -1,44 +1,19 @@
 """
     read_fcas_requirements(db, date_range; intervention = 0)
 
-Reads per-interval, per-region FCAS requirement constraints actually enforced in dispatch,
-long-format: one row per `(SETTLEMENTDATE, REGIONID, BIDTYPE::BidType, GENCONID)`.
+Reads the FCAS requirement constraints enforced in dispatch, one row per
+`(SETTLEMENTDATE, REGIONID, BIDTYPE::BidType, GENCONID)`, with `REQUIREMENT` and `LHS` from
+`DISPATCHCONSTRAINT`, `MARGINALVALUE`, and `DESCRIPTION`/`CONSTRAINTTYPE` from `GENCONDATA`
+(`missing` when the defining archive month is not cached).
 
-AEMO stopped populating the `RESERVE` table (and `DISPATCHREGIONSUM`'s `*REQ` columns) in
-Dec 2003 - confirmed directly, both URL patterns 404 for every month tried. The modern
-mechanism is generic-constraint-based: `DISPATCH_FCAS_REQ` maps each
-`(region, service, interval)` to the `GENCONID` of the generic constraint governing it (a
-region/service can be governed by more than one constraint at once - e.g. a regulation
-market's target also appears on a contingency constraint's LHS - so this is joined, not
-aggregated, to one row per governing constraint).
+Each row is the constraint `LHS CONSTRAINTTYPE REQUIREMENT`. A disarmed variant has a
+`REQUIREMENT` offset by a large negative multiple of 10,000 and a `MARGINALVALUE` of `0.0`.
+Summing `MARGINALVALUE` per `(REGIONID, BIDTYPE)` gives the regional FCAS price
+([`read_fcas_prices`](@ref)).
 
-Each row is a linear constraint `LHS CONSTRAINTTYPE REQUIREMENT` (`CONSTRAINTTYPE` is
-`<=`/`>=`/`=`), not a standalone MW quantity - `REQUIREMENT` (`DISPATCHCONSTRAINT.RHS`) is
-only meaningful together with `LHS` (`DISPATCHCONSTRAINT.LHS`, the FCAS-and-related dispatch
-terms NEMDE actually summed) and `CONSTRAINTTYPE`. Two regimes are common in practice:
-
-- **Disarmed**: AEMO switches an inapplicable constraint variant off by offsetting its
-  `REQUIREMENT` by a large negative multiple of 10,000 so it can never bind regardless of
-  `LHS` - a `REQUIREMENT` far below any plausible FCAS quantity (in the thousands or tens of
-  thousands negative) is this, not a literal deficit. `MARGINALVALUE` is always `0.0` for
-  these rows.
-- **Armed**: `REQUIREMENT` is the real bound. It can still be negative here - the same
-  region/service is often governed by more than one constraint variant (e.g. one that nets
-  FCAS against an interconnector flow term on `LHS`), and only one variant is armed at a
-  time. Compare `LHS` to `REQUIREMENT` under `CONSTRAINTTYPE` to see whether the constraint
-  is satisfied or violated; `MARGINALVALUE != 0.0` confirms it is binding.
-
-`MARGINALVALUE` is the constraint's shadow price, and summing it per `(REGIONID, BIDTYPE)`
-reproduces the regional FCAS price (see [`read_fcas_prices`](@ref)). `GENCONDATA` is joined
-in only for its human-readable `DESCRIPTION`/`CONSTRAINTTYPE` - `GENCONDATA` is a
-change-only table (a constraint version appears only in the archive month it was published),
-so a `missing` `DESCRIPTION`/`CONSTRAINTTYPE` usually means the defining archive month isn't
-in the local cache, not that AEMO never published one.
-
-`intervention` selects the dispatch run: `0` for the pricing run. `1` for the physical run where the interval has one, else the pricing run.
-
-Throws an `ArgumentError` when neither `DISPATCH_FCAS_REQ` nor `DISPATCH_FCAS_REQ_CONSTRAINT`
-is cached.
+`intervention` is `0` for the pricing run, or `1` for the physical run where the interval has one,
+else the pricing run. Throws an `ArgumentError` when neither `DISPATCH_FCAS_REQ` nor
+`DISPATCH_FCAS_REQ_CONSTRAINT` is cached.
 """
 function read_fcas_requirements(db, date_range; intervention::Integer = 0)
     start_date = first(date_range)
@@ -118,18 +93,10 @@ end
     read_fcas_bids(db, date_range, bid_type::BidType; resolution = nothing)
     read_fcas_bids(db, date_range, bid_types::AbstractVector{BidType}; resolution = nothing)
 
-Like [`read_bids`](@ref), but for an AEMO FCAS `bid_type` (e.g. `BidType.RAISE6SEC`,
-`BidType.RAISEREG` — see `FCAS_BID_TYPES`). Reuses `_massage_bids` for the 10-band offer
-(same columns as the energy bid path), and additionally reads the AEMO FCAS trapezium
-columns from `BIDPEROFFER_D` (`ENABLEMENTMIN/MAX`, `LOWBREAKPOINT`, `HIGHBREAKPOINT`,
-`ROCUP`, `ROCDOWN` — already present in that table, just never selected by the
-energy-only bid path).
-
-With a vector of `bid_types` the tables are read once for all of them and the result carries
-an extra `BIDTYPE` column (`BidType`).
-
-With a `resolution` above five minutes, each bucket's trapezium comes from the native row at the
-bucket's last interval, not from an average over the bucket.
+Like [`read_bids`](@ref), for the FCAS markets in `FCAS_BID_TYPES`, adding the trapezium columns
+`ENABLEMENTMIN`, `ENABLEMENTMAX`, `LOWBREAKPOINT`, `HIGHBREAKPOINT`, `ROCUP` and `ROCDOWN` from
+`BIDPEROFFER_D`. With a vector of `bid_types` the result carries a `BIDTYPE` column (`BidType`).
+With a `resolution` above five minutes, each bucket's trapezium is that of its last interval.
 """
 function read_fcas_bids(db, date_range, bid_type::BidType; resolution::Union{Nothing, Dates.Period} = nothing)
     return select!(read_fcas_bids(db, date_range, [bid_type]; resolution), Not(:BIDTYPE))
@@ -165,16 +132,10 @@ const _FCAS_TRAPEZIUM_COLUMNS = ["ENABLEMENTMIN", "LOWBREAKPOINT", "HIGHBREAKPOI
 """
     read_fcas_dispatch(db, date_range; intervention = 0)
 
-Reads per-interval, per-unit FCAS dispatch outcomes from `DISPATCHLOAD`, long-format: one
-row per `(SETTLEMENTDATE, DUID, BIDTYPE::BidType, TARGET, ACTUALAVAILABILITY)`, plus the
-unit's energy context columns `INITIALMW`, `TOTALCLEARED`, `AVAILABILITY`, `AGCSTATUS`. This
-is the cleared counterpart to [`read_fcas_bids`](@ref)'s offered trapezium - comparing
-`TARGET`/`ACTUALAVAILABILITY` against the offer's trapezium shows how much of what a unit
-offered was actually deliverable at its dispatched energy level (see [`AustralianElectricityMarkets.FCASTrapezium`](@ref)).
-
-`ACTUALAVAILABILITY` is `missing` for the two regulation markets (`RAISEREG`/`LOWERREG`) -
-AEMO does not publish a trapezium-adjusted availability for regulation, only the raw offer
-availability (`RAISEREGAVAILABILITY`/`LOWERREGAVAILABILITY`).
+Reads per-unit FCAS dispatch outcomes from `DISPATCHLOAD`: one row per
+`(SETTLEMENTDATE, DUID, BIDTYPE::BidType)` with `TARGET` and `ACTUALAVAILABILITY`, plus
+`INITIALMW`, `TOTALCLEARED`, `AVAILABILITY` and `AGCSTATUS`. `ACTUALAVAILABILITY` is `missing` for
+`RAISEREG` and `LOWERREG`.
 
 `intervention` selects the dispatch run: `0` for the pricing run. `1` for the physical run where the
 interval has one, else the pricing run. A table without an `INTERVENTION` column is read unfiltered.

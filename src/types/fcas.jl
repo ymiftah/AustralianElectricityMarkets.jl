@@ -1,9 +1,8 @@
 """
 AEMO FCAS trapezium parameters for one device's offer into one FCAS market. Zero below
 `enablement_min`, ramping to `max_avail` at `low_breakpoint`, flat until `high_breakpoint`,
-ramping back to zero at `enablement_max` (AEMO, *FCAS Model in NEMDE*, §2). All MW/MW-per-minute
-fields are as the Simulations package's FCAS trapezium readers return them: MW under `NATURAL_UNITS`,
-per-unit of the system base under `SYSTEM_BASE`.
+ramping back to zero at `enablement_max` (AEMO, *FCAS Model in NEMDE*, §2). MW and MW/min fields
+are in MW, or per-unit of the system base when read under `SYSTEM_BASE`.
 """
 struct FCASTrapezium <: PSY.DeviceParameter
     enablement_min::Float64
@@ -57,8 +56,7 @@ get_upper_slope_coeff(t::FCASTrapezium) = iszero(t.max_avail) ? 0.0 : (t.enablem
 
 Returns `t` if it is a well-formed FCAS bid trapezium (AEMO, *FCAS Model in NEMDE*, §2):
 `enablement_min <= low_breakpoint <= high_breakpoint <= enablement_max` and `max_avail >= 0`.
-Throws an `ArgumentError` naming `context` otherwise. A context callback is evaluated only
-when validation fails.
+Throws an `ArgumentError` naming `context` otherwise; a `context` callback is evaluated only on failure.
 """
 function _validate_fcas_trapezium(t::FCASTrapezium, context::AbstractString)
     return _validate_fcas_trapezium(t, () -> context)
@@ -113,16 +111,11 @@ end
 
 Applies AEMO *FCAS Model in NEMDE* §4's trapezium scaling to the offered `trapezium`: the AGC
 enablement limits (§4.1) and AGC ramping capability (§4.2) for a regulation trapezium
-(`is_regulation`), and the UIGF ceiling (§4.3) for a semi-scheduled unit. Each bound is
-replaced only when the corresponding input is more restrictive than the bid's own value, and
-the paired breakpoint slides to keep that side's slope angle (`low_breakpoint` with
-`enablement_min`, `high_breakpoint` with `enablement_max`) equal to the bid's. The breakpoints are
-never clamped, so a squeezed result can have `high_breakpoint < low_breakpoint` (a trapezium whose
-peak lies below `max_avail`) or `enablement_max < enablement_min` (no feasible FCAS).
-
-A `nothing` or `0.0` `agc_enablement_min`, `agc_enablement_max` or `agc_max_avail` is treated
-as absent: no scaling on that leg. `uigf` has no such exemption: `0.0` clamps `enablement_max`
-to zero, matching a semi-scheduled unit's weather forecast of no output.
+(`is_regulation`), and the UIGF ceiling (§4.3) for a semi-scheduled unit. A bound is replaced only
+when the input is more restrictive, and its paired breakpoint moves to keep the bid's slope. The
+result is not clamped, so it can have `high_breakpoint < low_breakpoint` or
+`enablement_max < enablement_min`. A `nothing` or `0.0` AGC input is ignored; a `0.0` `uigf`
+clamps `enablement_max` to zero.
 
 # Arguments
 - `trapezium`: the offered `FCASTrapezium`.

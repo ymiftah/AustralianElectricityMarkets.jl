@@ -63,9 +63,8 @@ end
 """
     cached_date_range(source::DataSource; conn = nothing) -> Union{Nothing, Tuple{Date, Date}}
 
-Find the Hive-partitioned `archive_month=YYYY-MM-DD` partitions of `source` that contain
-parquet data, and return `(first_day_of_earliest_month, last_day_of_latest_month)`, or
-`nothing` if no cached data is found. Only the outer bounds are reported, so the cached months
+Return `(first_day_of_earliest_month, last_day_of_latest_month)` over the `archive_month`
+partitions of `source` that hold parquet data, or `nothing` if none do. The cached months
 need not be contiguous.
 
 # Arguments

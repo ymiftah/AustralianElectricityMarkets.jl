@@ -523,14 +523,13 @@ _fill_missing_median(x) = all(ismissing.(x)) ? missing : median(skipmissing(x))
 """
     _fill_opex!(df, variable_opex_df, fixed_opex_df, pm_var_medians, pm_fix_medians; extra_median_cols = Symbol[])
 
-Applies the 4-step OPEX fill cascade to `df` in place:
-1. per-unit join (IASR ID)          — `leftjoin!` on `:name => :unit`
-2. primemover-level median          — `leftjoin!` on `:technology => :primemover`
-3. `isp_technology` group median    — `groupby(:isp_technology)`
-4. global median across all units   — ungrouped transform
+Fills the OPEX columns of `df` in place, taking for each missing value the first available of:
+1. the unit's own value (`:name => :unit`);
+2. the prime-mover median (`:technology => :primemover`);
+3. the `isp_technology` group median;
+4. the median across all units.
 
-`extra_median_cols` are additional columns (e.g. thermal heat-rate/fuel-price
-columns) that only participate in steps 3 & 4, not the per-unit/primemover joins.
+`extra_median_cols` are filled by steps 3 and 4 only.
 """
 function _fill_opex!(df, variable_opex_df, fixed_opex_df, pm_var_medians, pm_fix_medians; extra_median_cols = Symbol[])
     # step 1: per-unit join

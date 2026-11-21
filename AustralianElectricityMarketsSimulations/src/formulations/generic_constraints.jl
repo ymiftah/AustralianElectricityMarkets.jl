@@ -374,11 +374,9 @@ end
     _add_gc_slack_variables!(container, gc, model)
 
 Fills [`GenericConstraintSlackUp`](@ref)/[`GenericConstraintSlackDown`](@ref) for `gc` in the shared slack
-containers when `PSI.get_use_slacks(model)`, one side per `get_sense(gc)` (`LE` → up only, `GE` → down only,
-`EQ` → both), and merges each into [`NEMConstraintLHS`](@ref): `-slack_up` on the `LE` side,
-`+slack_down` on the `GE` side, so `add_constraints!`'s stored bound becomes satisfiable by
-relaxing it rather than infeasible.
-A no-op when `use_slacks` is `false`.
+containers when `PSI.get_use_slacks(model)`, one side per `get_sense(gc)` (`LE`: up only, `GE`: down only,
+`EQ`: both), and merges each into [`NEMConstraintLHS`](@ref): `-slack_up` on the `LE` side and
+`+slack_down` on the `GE` side. A no-op when `use_slacks` is `false`.
 """
 function _add_gc_slack_variables!(
         container::PSI.OptimizationContainer, gc::GenericConstraint,

@@ -80,11 +80,9 @@ end
     _add_area_balance_slacks!(container, sys, network_model)
 
 Adds the [`AreaBalanceSlack`](@ref) deficit and surplus to each area's `ActivePowerBalance`, priced at
-[`AREA_BALANCE_CVP_FACTOR`](@ref) times the Market Price Cap. Called from the argument stage of every AEMSim
-formulation that writes to the area balance, so it runs before the balance row is built. For an
-`AreaBalancePowerModel` and unless the `"area_balance_slacks"` setting is `false`, it turns PSI's own balance
-slacks off on the build's network model and adds the slacks once per container. A template with no such
-formulation never calls it and keeps the caller's `use_slacks`.
+[`AREA_BALANCE_CVP_FACTOR`](@ref) times the Market Price Cap, once per container. Applies only to an
+`AreaBalancePowerModel` and unless the `"area_balance_slacks"` setting is `false`, and then turns PSI's own
+balance slacks off on the build's network model.
 
 # Arguments
 - `container`: the `PSI.OptimizationContainer` being built.

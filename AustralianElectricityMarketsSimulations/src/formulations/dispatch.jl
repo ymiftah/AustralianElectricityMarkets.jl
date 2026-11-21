@@ -31,11 +31,9 @@ PSI.objective_function_multiplier(::PSI.ActivePowerVariable, ::AbstractNEMDispat
     PSI.get_default_time_series_names(::Type{<:PSY.StaticInjection}, ::Type{<:AbstractNEMDispatch})
 
 Registers the time series [`AbstractNEMDispatch`](@ref) reads as parameters, each under its fixed series
-name. [`RampRateTimeSeriesParameter`](@ref) is registered once:
-its two directions are added with their own series names. [`EnergyLimitTimeSeriesParameter`](@ref) is added once
-per meta, each with its own series name, so its entry names the MAXAVAIL series only as a default. The
-initial-power and fixed-loading parameters are added explicitly from the build's first-solve seed series, so
-they take no entry here.
+name. [`RampRateTimeSeriesParameter`](@ref) and [`EnergyLimitTimeSeriesParameter`](@ref) have one entry each;
+their per-meta series names are set where they are added. The initial-power and fixed-loading parameters have
+no entry.
 
 # Returns
 A `Dict` mapping each `PowerSimulations.TimeSeriesParameter` type to its series name.
@@ -322,8 +320,7 @@ Holds each device's dispatch `net_at(name, t)` within its per-interval ramp rate
 Rates are read from the `"ramp_up_rate"` and `"ramp_down_rate"` parameters in system-base per-unit
 per minute and multiplied by the interval length in minutes. Each `PSI.RampConstraint` row carries a
 [`NEMUnitSlack`](@ref) of the `unit_ramp|up` or `unit_ramp|down` variant, priced at [`UNIT_RAMP_CVP_FACTOR`](@ref)
-times the Market Price Cap, so conflicts with the availability limits are resolved through the
-competing violation costs.
+times the Market Price Cap.
 
 # Arguments
 - `container`: the `PSI.OptimizationContainer` being built.
@@ -501,8 +498,7 @@ end
 
 Sets [`NEMDispatch`](@ref) as the device model for every dispatch participant in `sys`, and, when
 `sys` carries the [`EnergyTieBreak`](@ref) of [`nem_system`](@ref AustralianElectricityMarkets.nem_system), its
-[`TieBreakMarket`](@ref) service model, which dispatches price-tied energy bands pro rata. Without it
-ties resolve to an arbitrary solver vertex.
+[`TieBreakMarket`](@ref) service model, which dispatches price-tied energy bands pro rata.
 
 # Arguments
 - `template`: the `PowerSimulations.ProblemTemplate` to mutate.

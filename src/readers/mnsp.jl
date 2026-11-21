@@ -1,12 +1,9 @@
 """
     read_mnsp_offers(db, date_range)
 
-Reads the MNSP link offers NEMDE applied in each dispatch interval of `date_range`.
-
-Each interval's offer is the one named by `DISPATCH_MNSPBIDTRK` (dispatch run 1), joined to its
-`MNSP_DAYOFFER` price bands and its `MNSP_BIDOFFERPERIOD` availability for that interval's
-five-minute period of the trading day. The tables cover trading days from the start of five-minute
-settlement (1 October 2021); earlier intervals are not supported.
+Reads the MNSP link offers named by `DISPATCH_MNSPBIDTRK` (dispatch run 1) for each interval of
+`date_range`, joined to their `MNSP_DAYOFFER` price bands and `MNSP_BIDOFFERPERIOD` availability.
+Intervals before 1 October 2021 are not supported.
 
 # Arguments
 - `db`: The database connection.
@@ -60,11 +57,8 @@ end
 """
     read_mnsp_links(db, as_of)
 
-Reads the registered MNSP links as of `as_of`: the latest `MNSP_INTERCONNECTOR` version of each
-`LINKID` whose `EFFECTIVEDATE` is on or before `as_of`.
-
-The table still carries superseded rows for interconnectors that are no longer MNSPs, so a caller
-pairs it with [`read_mnsp_offers`](@ref), which names the links that offer in an interval.
+Reads the latest `MNSP_INTERCONNECTOR` version of each `LINKID` effective on or before `as_of`.
+The result includes links that no longer offer; [`read_mnsp_offers`](@ref) names those that do.
 
 # Arguments
 - `db`: The database connection.

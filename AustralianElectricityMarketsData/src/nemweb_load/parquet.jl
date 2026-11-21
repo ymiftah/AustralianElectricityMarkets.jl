@@ -81,12 +81,9 @@ _unquote(field::SubString{String}) = strip(field, '"')
     _write_d_lines(out::IO, zip_path::String;
                    month_filter_column=nothing, lo=nothing, hi=nothing) -> Vector{String}
 
-Stream the ZIP's first `.csv` entry, in one pass via `ZipArchives.jl`, writing only the
-real "D" data-record lines to `out` and capturing the "I" record's column names/order
-along the way.
-
-When `month_filter_column` is given, a "D" line is written only when that column's raw
-field, quotes stripped and cut to its first 19 characters, satisfies `lo < field <= hi`.
+Stream the ZIP's first `.csv` entry, writing its "D" data-record lines to `out` and returning
+the "I" record's column names. When `month_filter_column` is given, a line is kept only when the
+first 19 characters of that field satisfy `lo < field <= hi`.
 
 # Arguments
 - `out::IO`: Destination for the kept lines.
@@ -171,10 +168,9 @@ end
     _extract_d_lines(zip_paths::Vector{String};
                      month_filter_column=nothing, lo=nothing, hi=nothing) -> (String, Vector{String})
 
-Stream every ZIP part's D-lines, via [`_write_d_lines`](@ref), straight into one combined
-temp file, in part order — no intermediate per-part file. Returns `(d_only_path,
-available_cols)`, taking `available_cols` from the first part; caller deletes
-`d_only_path` when done.
+Write every ZIP part's D-lines, via [`_write_d_lines`](@ref), into one temp file in part order.
+Returns `(d_only_path, available_cols)`, with `available_cols` from the first part; caller
+deletes `d_only_path` when done.
 """
 function _extract_d_lines(
         zip_paths::Vector{String};
@@ -226,18 +222,9 @@ _cast_expr(col::String, T::DataType) = "TRY_CAST(\"$col\" AS $(_duckdb_type(T)))
     _csv_to_parquet(conn, csv_path, available_cols, table_columns, path, partitions, sort_by, year, month;
                     islocal=true, month_filter_column=nothing, row_filter=nothing)
 
-Read `csv_path` entirely inside DuckDB, in one query — every line as VARCHAR,
-filtered to real "D" records, cast to `COLUMN_TYPES`, missing columns filled
-as typed NULL, tagged with `archive_month` — and COPY straight to
-Hive-partitioned parquet.
-
-`available_cols` is the file's real column names/order and must be supplied
-explicitly, since `csv_path` may be a pre-filtered, D-lines-only file (see
-`_extract_d_lines`) with no header row left to read it from.
-
-When `month_filter_column` is given and `sort_by` gives a non-empty key, rows are
-deduplicated on that key, as parts of one archive can repeat rows. The month window itself is
-applied earlier, line by line, in [`_write_d_lines`](@ref).
+Read `csv_path` in one DuckDB query, cast columns to `COLUMN_TYPES` (missing ones as typed
+`NULL`), tag rows with `archive_month` and `COPY` them to Hive-partitioned parquet. When
+`month_filter_column` is given, rows are deduplicated on the partition and `sort_by` columns.
 
 # Arguments
 - `conn`: DuckDB connection.

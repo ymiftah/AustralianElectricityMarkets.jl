@@ -139,9 +139,7 @@ Returns a `DataFrame` with columns:
 - `isp_technology`: ISP technology category (e.g. "Steam Sub Critical", "Wind")
 - `variable_opex_aud_mwh`: variable OPEX in AUD/MWh sent out
 
-Covers all technology types (thermal, hydro, renewable, storage).
-Per ISP 2025, Wind and Large-scale Solar PV have 0 AUD/MWh variable OPEX
-because O&M costs are captured entirely in the Fixed O&M component.
+Covers all technology types; Wind and Large-scale Solar PV have 0 AUD/MWh.
 """
 function read_isp_variable_opex()
     file_source = joinpath(ISP_DATA_DIR, "variable_opex.csv")
@@ -161,10 +159,7 @@ Read renewable variable OPEX parameters from ISP 2025 data.
 
 Returns a `DataFrame` with columns:
 - `unit`: DUID (or IASR ID) of the generator
-- `variable_opex_aud_mwh`: variable OPEX in AUD/MWh sent out
-
-Per ISP 2025, Wind and Large-scale Solar PV have 0 AUD/MWh variable OPEX
-because O&M costs are captured entirely in the Fixed O&M component.
+- `variable_opex_aud_mwh`: variable OPEX in AUD/MWh sent out (0 for Wind and Large-scale Solar PV)
 """
 function read_isp_renewable_costs_parameters()
     renewable_techs = ["Wind", "Large scale Solar PV"]

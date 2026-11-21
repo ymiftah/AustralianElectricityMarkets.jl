@@ -24,10 +24,8 @@ A subquery over `table` holding the rows of the dispatch run `intervention` sele
 by `bounds`, a SQL predicate with `?` placeholders bound to `bound_params`. Run 0 keeps the rows
 with `COALESCE(INTERVENTION, 0) = 0`. Run 1 keeps, for each `time_col` value, the rows of the
 highest run that interval has: run 1 where it has any, else run 0. The run is decided after
-`bounds` and before the caller's own predicates, so a filter on units cannot change an interval's run.
-
-Without an `INTERVENTION` column in `schema` the rows are returned unfiltered, since partitions
-that predate the column are the normal run.
+`bounds` and before the caller's own predicates. Without an `INTERVENTION` column in `schema` the
+rows are returned unfiltered.
 
 # Arguments
 - `table`: the `FROM` source fragment of the table, e.g. from [`read_hive`](@ref).

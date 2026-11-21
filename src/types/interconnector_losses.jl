@@ -1,37 +1,30 @@
 """
     InterconnectorLossModel
 
-One interconnector's NEMDE loss model, resolved to a single `EFFECTIVEDATE`/`VERSIONNO`.
-
-NEMDE treats interconnector losses as a quadratic in flow whose linear coefficient shifts with
-regional demand: the *loss factor* at flow `f` is
+One interconnector's NEMDE loss model, resolved to a single `EFFECTIVEDATE`/`VERSIONNO`. The loss
+factor at flow `f` is
 
 ```
 lf(f) = loss_constant + loss_flow_coefficient * f + Σ_{r∈regions} demand_coefficients[r] * demand[r]
 ```
 
-and the losses themselves are the integral of `lf(f) - 1` over `[0, f]` — see
-[`interconnector_losses`](@ref). `MWBREAKPOINT` (`LOSSMODEL`) supplies the breakpoints NEMDE
-linearises that quadratic on, reproduced by [`loss_segments`](@ref).
+and the losses are the integral of `lf(f) - 1` over `[0, f]` ([`interconnector_losses`](@ref)),
+linearised on `breakpoints` by [`loss_segments`](@ref).
 
 # Fields
 - `interconnector`: `INTERCONNECTORID`.
-- `from_region`/`to_region`: `REGIONFROM`/`REGIONTO`; flow is positive from → to.
+- `from_region`/`to_region`: `REGIONFROM`/`REGIONTO`; flow is positive from `from_region` to `to_region`.
 - `from_region_loss_share`: fraction of losses attributed to `from_region`.
 - `loss_constant`: `LOSSCONSTANT`.
-- `loss_flow_coefficient`: `LOSSFLOWCOEFFICIENT`, natural-units MW unless the model has been
-  per-unitized (see [`attach_interconnector_losses!`](@ref)).
-- `demand_coefficients`: `REGIONID => DEMANDCOEFFICIENT`, same units convention as
-  `loss_flow_coefficient`.
-- `breakpoints`: `MWBREAKPOINT` values, ascending, same units convention as
-  `loss_flow_coefficient`.
+- `loss_flow_coefficient`: `LOSSFLOWCOEFFICIENT`.
+- `demand_coefficients`: `REGIONID => DEMANDCOEFFICIENT`.
+- `breakpoints`: `MWBREAKPOINT` values, ascending.
 - `internal`: `InfrastructureSystems` bookkeeping.
 
-A model returned by [`interconnector_loss_models`](@ref) carries natural-units MW throughout;
-one attached to a `System` by [`attach_interconnector_losses!`](@ref) is per-unit of that
-`System`'s base power instead. [`loss_factor`](@ref)/[`interconnector_losses`](@ref)/
-[`loss_segments`](@ref) are unit-agnostic - `flow`/`demand` must be passed in whichever
-convention `model` itself uses.
+A model from [`interconnector_loss_models`](@ref) is in MW; one attached by
+[`attach_interconnector_losses!`](@ref) is per-unit of the `System` base power. Pass `flow` and
+`demand` to [`loss_factor`](@ref), [`interconnector_losses`](@ref) and [`loss_segments`](@ref) in
+the units of `model`.
 """
 struct InterconnectorLossModel <: PSY.SupplementalAttribute
     interconnector::String
@@ -98,7 +91,7 @@ MW lost on `model` at `flow`, the integral of `loss_factor(model, f, demand) - 1
     + 0.5 * loss_flow_coefficient * flow^2
 ```
 
-`LOSSCONSTANT` is a loss *factor* quoted relative to unity, hence the `- 1`.
+`LOSSCONSTANT` is a loss factor relative to unity.
 """
 function interconnector_losses(model::InterconnectorLossModel, flow::Real, demand::AbstractDict)
     linear = loss_factor(model, 0.0, demand) - 1.0
@@ -135,11 +128,9 @@ end
     loss_segments(model, demand) -> Vector{NamedTuple}
 
 `model`'s quadratic loss curve linearised on its own `MWBREAKPOINT`s, as
-`(; from_mw, to_mw, slope)` per segment, ascending. `slope` is the average MW of loss per MW of
-flow across the segment — the chord of [`interconnector_losses`](@ref), which is exact at every
-breakpoint and is what NEMDE's LP sees.
-
-Throws `ArgumentError` when `model` carries fewer than two breakpoints or has duplicate adjacent breakpoints.
+`(; from_mw, to_mw, slope)` per segment, ascending. `slope` is the chord of
+[`interconnector_losses`](@ref) across the segment. Throws `ArgumentError` when `model` has fewer
+than two breakpoints or duplicate adjacent breakpoints.
 """
 function loss_segments(model::InterconnectorLossModel, demand::AbstractDict)
     length(model.breakpoints) < 2 && throw(

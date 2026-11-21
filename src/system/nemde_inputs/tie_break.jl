@@ -80,8 +80,7 @@ end
     _tie_break_active_bands(offers) -> Dict{Tuple{Bool, String}, Set{Int}}
 
 The segments of each unit's offer curves that have a positive width at some timestamp, keyed
-`(decremental, unit name)`. Only these can take part in a tie: a segment empty throughout, such as
-an unused top band priced at the Market Price Cap, would only add vacuous rows.
+`(decremental, unit name)`.
 
 # Returns
 A `Dict`.
