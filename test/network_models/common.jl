@@ -2,22 +2,22 @@
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
 
     @testset "get_bus_dataframe" begin
-        df = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db)
+        df = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db, MOCK_DATE_RANGE)
         @test nrow(df) == 12 # 6 regions * 2 (Gen + Load)
         @test all(contains(AustralianElectricityMarkets.RegionModel.GEN_SUFFIX), df.name[1:6])
         @test all(contains(AustralianElectricityMarkets.RegionModel.LOAD_SUFFIX), df.name[7:12])
     end
 
     @testset "get_branch_dataframe" begin
-        bus_df = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db)
-        df = AustralianElectricityMarkets.RegionModel.get_branch_dataframe(bus_df, read_interconnectors(db))
+        bus_df = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db, MOCK_DATE_RANGE)
+        df = AustralianElectricityMarkets.RegionModel.get_branch_dataframe(bus_df, read_interconnectors(db, MOCK_DATE_RANGE))
         # 6 interconnectors + 6 gen-to-load internal branches = 12
         @test nrow(df) == 12
     end
 
     @testset "get_batteries_dataframe" begin
-        bus_df = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db)
-        df = AustralianElectricityMarkets.RegionModel.get_batteries_dataframe(bus_df, read_units(db))
+        bus_df = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db, MOCK_DATE_RANGE)
+        df = AustralianElectricityMarkets.RegionModel.get_batteries_dataframe(bus_df, read_units(db, MOCK_DATE_RANGE))
         # Our mock data has 1 battery (BW01/GEN1)
         @test nrow(df) == 1
         @test df.name[1] == "BW01"
@@ -27,8 +27,8 @@
 
     @testset "generator unit of a battery registered as separate generator and load units" begin
         RM = AustralianElectricityMarkets.RegionModel
-        bus_df = RM.get_bus_dataframe(db)
-        units = read_units(db)
+        bus_df = RM.get_bus_dataframe(db, MOCK_DATE_RANGE)
+        units = read_units(db, MOCK_DATE_RANGE)
         # BW02 as the generator half of a split battery: a battery energy source, no storage data.
         units.CO2E_ENERGY_SOURCE = [d == "BW02" ? "Battery Storage" : s for (d, s) in zip(units.DUID, units.CO2E_ENERGY_SOURCE)]
         gen_df = RM.get_generators_dataframe(bus_df, units)
@@ -45,7 +45,7 @@
     end
 
     @testset "read_units keeps units without a GENUNITS row" begin
-        units = read_units(db)
+        units = read_units(db, MOCK_DATE_RANGE)
         # PUMP2 is a scheduled load with no GENUNITS/DUALLOC row, so no technology or fuel.
         pump2 = only(eachrow(subset(units, :DUID => ByRow(==("PUMP2")))))
         @test pump2.DISPATCHTYPE == "LOAD"
@@ -55,13 +55,13 @@
 
     @testset "read_units resolves a genset shared with a legacy DUALLOC DUID" begin
         # PUMP1's genset also maps to PUMP1_OLD, which sorts after it (as OSB01 after OSB-AG).
-        pump1 = only(eachrow(subset(read_units(db), :DUID => ByRow(==("PUMP1")))))
+        pump1 = only(eachrow(subset(read_units(db, MOCK_DATE_RANGE), :DUID => ByRow(==("PUMP1")))))
         @test pump1.CO2E_ENERGY_SOURCE == "Hydro"
     end
 
     @testset "get_scheduled_loads_dataframe" begin
-        bus_df = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db)
-        df = AustralianElectricityMarkets.RegionModel.get_scheduled_loads_dataframe(bus_df, read_units(db))
+        bus_df = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db, MOCK_DATE_RANGE)
+        df = AustralianElectricityMarkets.RegionModel.get_scheduled_loads_dataframe(bus_df, read_units(db, MOCK_DATE_RANGE))
         @test sort(df.name) == ["ASLOAD1", "ASLOAD2", "PUMP1", "PUMP2", "WDR1"]
         # Non-scheduled loads are built unavailable: they carry no energy bid and are only
         # switched on by an FCAS offer.
@@ -75,7 +75,7 @@
     end
 
     @testset "get_interfaces_dataframe" begin
-        df = AustralianElectricityMarkets.RegionModel.get_interfaces_dataframe(read_interconnectors(db))
+        df = AustralianElectricityMarkets.RegionModel.get_interfaces_dataframe(read_interconnectors(db, MOCK_DATE_RANGE))
         @test nrow(df) == 6
         # Check Snowy availability logic
         snowy_rows = df[(df.from_area .== "SNOWY1") .| (df.to_area .== "SNOWY1"), :]
@@ -83,7 +83,7 @@
     end
 
     # One regional system, read-only for the two testsets below.
-    regional = nem_system(db, RegionalNetworkConfiguration())
+    regional = nem_system(db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
 
     @testset "nem_system" begin
         system = regional

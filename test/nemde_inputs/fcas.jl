@@ -179,7 +179,7 @@ end
     @test occursin(get_name(generator), err.msg)
     @test_throws ArgumentError AEM._fcas_series_key(generator, 5.0, :trapezium)
     # A device with NEM unit data but no telemetry cannot supply its window inputs.
-    bare = first(get_components(PowerSystems.ThermalStandard, first(nem_network(aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))))))
+    bare = first(get_components(PowerSystems.ThermalStandard, first(nem_network(aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file")); date_range = MOCK_DATE_RANGE))))
     @test_throws ArgumentError AEM._fcas_window(bare, [DateTime(2025, 1, 1, 0, 5)], Minute(5), 100.0)
 end
 

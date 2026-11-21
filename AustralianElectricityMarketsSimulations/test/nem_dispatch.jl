@@ -18,7 +18,7 @@ const NEM_DISPATCH_HORIZON = Hour(1)
 # forecast windows the model reads.
 function nem_dispatch_system(; mutate! = identity, data_span = NEM_DISPATCH_HORIZON)
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
-    sys = first(nem_network(db))
+    sys = first(nem_network(db; date_range = MOCK_DATE_RANGE))
     date_range = NEM_DISPATCH_START:NEM_DISPATCH_RESOLUTION:(NEM_DISPATCH_START + data_span)
     attach_demand!(sys, db, date_range; resolution = NEM_DISPATCH_RESOLUTION)
     set_market_bids!(sys, db, date_range; resolution = NEM_DISPATCH_RESOLUTION)
@@ -91,7 +91,7 @@ constraint_metas(constraint_keys, ::Type{T}) where {T} =
 
     @testset "a System with no dispatch limits throws, naming the setter" begin
         db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
-        bare = first(nem_network(db))
+        bare = first(nem_network(db; date_range = MOCK_DATE_RANGE))
         template = ProblemTemplate(NetworkModel(AreaBalancePowerModel; use_slacks = true))
         err = _caught(() -> set_nem_dispatch_models!(template, bare))
         @test err isa ArgumentError

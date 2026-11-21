@@ -1,60 +1,71 @@
 """
-    read_interconnectors(db; as_of = nothing)
+    read_interconnectors(db, date_range)
 
-Reads and processes interconnector data from the database.
+Reads each interconnector's `INTERCONNECTORCONSTRAINT` version in force at `first(date_range)`
+(latest `EFFECTIVEDATE`, then highest `VERSIONNO`), joined to its `INTERCONNECTOR` region pair.
+Interconnectors with an endpoint region absent from the latest `DISPATCHREGIONSUM` snapshot at or
+before `first(date_range)` are dropped with a warning.
 
 # Arguments
-- `db`: The database connection.
-- `as_of`: when a `Date` or `DateTime`, resolves each `INTERCONNECTORCONSTRAINT` row as of that
-  instant (latest `EFFECTIVEDATE <= as_of`, then highest `VERSIONNO`). `nothing` keeps the latest
-  version in the cache.
+- `db`: the database connection.
+- `date_range`: the half-open range of interval-ending stamps.
 
 # Returns
-A `DataFrame` containing the interconnector constraint data, latest or as of `as_of`. Interconnectors with an
-endpoint region absent from the latest cached `DISPATCHREGIONSUM` snapshot at or before `as_of`
-are dropped with a warning. With `as_of = nothing`, uses the latest cached snapshot. Throws an
-`ArgumentError` when no eligible demand snapshot is cached.
+A `DataFrame` with the `INTERCONNECTORCONSTRAINT` columns, `REGIONFROM` and `REGIONTO`. Throws an
+`ArgumentError` when no `DISPATCHREGIONSUM` snapshot is cached at or before `first(date_range)`.
 
 # Example
 ```julia
 db = aem_connect()
-interconnectors_df = read_interconnectors(db)
-println(interconnectors_df)
+interconnectors = read_interconnectors(db, DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 2))
 ```
 """
-function read_interconnectors(db; as_of::Union{Nothing, Date, DateTime} = nothing)
-    t_interconnector = read_hive(db, :INTERCONNECTOR)
-    t_interconnector_constraint = read_hive(db, :INTERCONNECTORCONSTRAINT)
-
+function read_interconnectors(db, date_range)
+    as_of = first(date_range)
+    _require_cached(db, :DISPATCHREGIONSUM; context = "read_interconnectors needs it to identify the active regions.")
+    demand = read_hive(db, :DISPATCHREGIONSUM)
+    regions = _query(
+        db,
+        """
+        SELECT DISTINCT REGIONID FROM $demand
+        WHERE REGIONID IS NOT NULL AND SETTLEMENTDATE = (
+            SELECT max(SETTLEMENTDATE) FROM $demand WHERE REGIONID IS NOT NULL AND SETTLEMENTDATE <= ?
+        )
+        """,
+        [as_of],
+    ).REGIONID
+    isempty(regions) && throw(
+        ArgumentError(
+            "read_interconnectors found no DISPATCHREGIONSUM snapshot at or before $as_of; " *
+                "populate it with `populate(db, :DISPATCHREGIONSUM, start_date, end_date)`",
+        ),
+    )
+    interconnector = read_hive(db, :INTERCONNECTOR)
     # Each monthly archive holds the full history, so only the latest archive is read.
-    as_of_filter = isnothing(as_of) ? "" : "WHERE c.EFFECTIVEDATE <= ?"
-    sql = """
-        WITH ic AS (SELECT * FROM $t_interconnector),
-             latest_ic AS (
-                 SELECT INTERCONNECTORID, REGIONFROM, REGIONTO, archive_month
-                 FROM ic
-                 WHERE archive_month = (SELECT max(archive_month) FROM ic)
-             ),
-             icc AS (SELECT * FROM $t_interconnector_constraint)
+    interconnectors = _query(
+        db,
+        """
+        WITH latest_ic AS (
+            SELECT INTERCONNECTORID, REGIONFROM, REGIONTO, archive_month
+            FROM $interconnector
+            WHERE archive_month = (SELECT max(archive_month) FROM $interconnector)
+        )
         SELECT c.* EXCLUDE (archive_month), l.REGIONFROM, l.REGIONTO
-        FROM icc c
+        FROM $(read_hive(db, :INTERCONNECTORCONSTRAINT)) c
         INNER JOIN latest_ic l
           ON c.INTERCONNECTORID = l.INTERCONNECTORID AND c.archive_month = l.archive_month
-        $as_of_filter
+        WHERE c.EFFECTIVEDATE <= ?
         QUALIFY row_number() OVER (
             PARTITION BY c.INTERCONNECTORID ORDER BY c.EFFECTIVEDATE DESC, c.VERSIONNO DESC
         ) = 1
-    """
-    df = isnothing(as_of) ? _query(db, sql) : _query(db, sql, [as_of])
-    current_regions = _current_regions(db; as_of)
-    retired = filter(
-        row -> !(row.REGIONFROM in current_regions) || !(row.REGIONTO in current_regions), df,
+        """,
+        [as_of],
     )
+    current = subset(interconnectors, [:REGIONFROM, :REGIONTO] => ByRow((from, to) -> from in regions && to in regions))
+    retired = setdiff(interconnectors.INTERCONNECTORID, current.INTERCONNECTORID)
     isempty(retired) ||
-        @warn "read_interconnectors: dropping $(nrow(retired)) interconnector(s) with a retired endpoint region not present in DISPATCHREGIONSUM" interconnectors = retired.INTERCONNECTORID
-    return filter(
-        row -> row.REGIONFROM in current_regions && row.REGIONTO in current_regions, df,
-    )
+        @warn "read_interconnectors: dropping $(length(retired)) interconnector(s) with a retired endpoint region not present in DISPATCHREGIONSUM" interconnectors = retired
+    return current
 end
 
 """
@@ -218,22 +229,4 @@ function read_interconnector_limits(db, date_range; intervention::Integer = 0)
         """,
         [first(date_range), last(date_range), intervention],
     )
-end
-
-
-function read_interconnector_loss_breakpoints(db, as_of::Union{Date, DateTime})
-    Base.depwarn("Use read_interconnector_loss_breakpoints(db; as_of) instead of a positional as_of.", :read_interconnector_loss_breakpoints)
-    return read_interconnector_loss_breakpoints(db; as_of)
-end
-
-
-function read_interconnector_demand_coefficients(db, as_of::Union{Date, DateTime})
-    Base.depwarn("Use read_interconnector_demand_coefficients(db; as_of) instead of a positional as_of.", :read_interconnector_demand_coefficients)
-    return read_interconnector_demand_coefficients(db; as_of)
-end
-
-
-function read_interconnector_loss_parameters(db, as_of::Union{Date, DateTime})
-    Base.depwarn("Use read_interconnector_loss_parameters(db; as_of) instead of a positional as_of.", :read_interconnector_loss_parameters)
-    return read_interconnector_loss_parameters(db; as_of)
 end

@@ -44,7 +44,7 @@ end
     AEM = AustralianElectricityMarkets
     AEMSim = AustralianElectricityMarketsSimulations
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
-    sys_base, _ = nem_network(db)
+    sys_base, _ = nem_network(db; date_range = MOCK_DATE_RANGE)
     resolution = Minute(5)
     start_date = DateTime(2025, 1, 1, 0, 0)
     date_range = start_date:resolution:(start_date + Hour(2))

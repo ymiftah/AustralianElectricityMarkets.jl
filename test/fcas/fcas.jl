@@ -72,7 +72,7 @@
     end
 
     @testset "fcas_service throws when a device has two services of one market" begin
-        sys = first(nem_network(db))
+        sys = first(nem_network(db; date_range = MOCK_DATE_RANGE))
         set_market_bids!(sys, db, date_range)
         asload1 = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
         @test fcas_service(asload1, BidType.RAISE6SEC) === get_component(FCASService, sys, "NSW1_RAISE6SEC")
@@ -126,7 +126,7 @@
     end
 
     @testset "a non-scheduled load offering FCAS joins its region's services" begin
-        sys = first(nem_network(db))
+        sys = first(nem_network(db; date_range = MOCK_DATE_RANGE))
         (; added, excluded) = set_market_bids!(sys, db, date_range)
         asload1 = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
         @test "NSW1_RAISE6SEC" in added
@@ -165,7 +165,7 @@
         raise1sec = subset(dispatch, :BIDTYPE => ByRow(==(BidType.RAISE1SEC)))
         @test !isempty(raise1sec)
         @test all(==(5.0), raise1sec.ACTUALAVAILABILITY)
-        sys = first(nem_network(db))
+        sys = first(nem_network(db; date_range = MOCK_DATE_RANGE))
         set_market_bids!(sys, db, date_range)
         @test any(
             g -> has_time_series(g, SingleTimeSeries, AustralianElectricityMarkets.bid_series_name(BidType.RAISE1SEC, :trapezium, AustralianElectricityMarkets.BidDirection.GEN)),

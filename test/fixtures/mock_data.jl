@@ -28,6 +28,12 @@ constraints whose terms cannot all resolve (`N_PHANTOM_TEST`, `N_ONE_PHANTOM_TER
 `PUMP2` is inactive in `DISPATCHLOAD`, so a strict run can run on it. Every interconnector also
 gets a `LOSSMODEL`.
 """
+# The half-open range of interval-ending stamps the mock cache covers.
+const MOCK_DATE_RANGE = DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 1, 4, 5)
+
+# The one-interval range starting at `t`, for reading versioned tables as of `t`.
+mock_range_at(t) = DateTime(t):Minute(5):(DateTime(t) + Minute(5))
+
 function create_mock_data(hive_root::String; complete_inputs::Bool = false)
     db = DuckDB.DB()
     conn = DuckDB.connect(db)

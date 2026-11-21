@@ -18,47 +18,6 @@ end
 
 
 """
-    _run_rows(table, schema, intervention, time_col, bounds, bound_params) -> (sql, params)
-
-A subquery over `table` holding the rows of the dispatch run `intervention` selects, restricted
-by `bounds`, a SQL predicate with `?` placeholders bound to `bound_params`. Run 0 keeps the rows
-with `COALESCE(INTERVENTION, 0) = 0`. Run 1 keeps, for each `time_col` value, the rows of the
-highest run that interval has: run 1 where it has any, else run 0. The run is decided after
-`bounds` and before the caller's own predicates. Without an `INTERVENTION` column in `schema` the
-rows are returned unfiltered.
-
-# Arguments
-- `table`: the `FROM` source fragment of the table, e.g. from [`read_hive`](@ref).
-- `schema`: the column names of `table`.
-- `intervention`: `0` or `1`.
-- `time_col`: the interval column the run is decided over, `SETTLEMENTDATE` for every dispatch table.
-- `bounds`: the SQL predicate restricting the rows read.
-- `bound_params`: the values for the `?` placeholders of `bounds`.
-
-# Returns
-The subquery text and the parameters in placeholder order.
-"""
-function _run_rows(table, schema, intervention::Integer, time_col::AbstractString, bounds::AbstractString, bound_params)
-    _check_intervention(intervention)
-    params = Any[bound_params...]
-    if !("INTERVENTION" in schema)
-        sql = "(SELECT * FROM $table WHERE ($bounds))"
-    elseif intervention == 0
-        push!(params, 0)
-        sql = "(SELECT * FROM $table WHERE ($bounds) AND COALESCE(INTERVENTION, 0) = ?)"
-    else
-        sql = """
-        (SELECT * EXCLUDE (RUN_MAX) FROM (
-            SELECT *, max(COALESCE(INTERVENTION, 0)) OVER (PARTITION BY $time_col) AS RUN_MAX
-            FROM $table WHERE ($bounds)
-        ) WHERE COALESCE(INTERVENTION, 0) = RUN_MAX)
-        """
-    end
-    return sql, params
-end
-
-
-"""
     _table_schema(db, table) -> Vector{String}
 
 The column names of `table`, a `FROM` source such as the fragment [`read_hive`](@ref) returns.

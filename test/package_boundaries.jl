@@ -30,7 +30,7 @@ using Logging
     db = aem_connect(HiveConfiguration(hive_location = cache_dir))
     DuckDB.execute(
         db.db,
-        "COPY (SELECT TIMESTAMP '2025-01-01 00:05:00' AS SETTLEMENTDATE, 'NSW1' AS REGIONID, 42.0 AS RRP, 42.0 AS ROP, 0 AS INTERVENTION) TO '$(joinpath(partition, "data.parquet"))' (FORMAT PARQUET)",
+        "COPY (SELECT TIMESTAMP '2025-01-01 00:05:00' AS SETTLEMENTDATE, 'NSW1' AS REGIONID, 42.0 AS RRP, 42.0 AS ROP, 0 AS APCFLAG, 0 AS INTERVENTION) TO '$(joinpath(partition, "data.parquet"))' (FORMAT PARQUET)",
     )
     @test_logs (:info, r"already exists") min_level = Logging.Info match_mode = :any AustralianElectricityMarketsData.populate(
         db, :DISPATCHPRICE, Date(2025, 1, 1), Date(2025, 1, 1),

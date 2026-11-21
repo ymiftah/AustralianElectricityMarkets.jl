@@ -1,6 +1,6 @@
 using DataFrames, Statistics
 
-@testset "Historical regions and loss-reader keywords" begin
+@testset "Historical regions" begin
     db = damaged_cache(
         AEM_TEST_HIVE_DIR, :DISPATCHREGIONSUM,
         "DELETE FROM input WHERE REGIONID = 'SNOWY1' AND SETTLEMENTDATE >= TIMESTAMP '2025-01-01 00:15'",
@@ -8,20 +8,13 @@ using DataFrames, Statistics
     early = DateTime(2025, 1, 1, 0, 10)
     late = DateTime(2025, 1, 1, 0, 20)
     regions(df) = Set(vcat(df.REGIONFROM, df.REGIONTO))
-    @test "SNOWY1" in regions(read_interconnectors(db; as_of = early))
-    @test !("SNOWY1" in regions(read_interconnectors(db; as_of = late)))
-    @test !("SNOWY1" in regions(read_interconnectors(db)))
-    buses = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db; as_of = early)
+    @test "SNOWY1" in regions(read_interconnectors(db, mock_range_at(early)))
+    @test !("SNOWY1" in regions(read_interconnectors(db, mock_range_at(late))))
+    buses = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db, mock_range_at(early))
     @test "SNOWY1" in buses.region
-    late_buses = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db; as_of = late)
+    late_buses = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db, mock_range_at(late))
     @test !("SNOWY1" in late_buses.region)
-    @test_throws ArgumentError read_interconnectors(db; as_of = Date(2024, 1, 1))
-    for reader in (
-            read_interconnector_loss_breakpoints, read_interconnector_demand_coefficients,
-            read_interconnector_loss_parameters,
-        )
-        @test isequal(reader(db; as_of = early), reader(db, early)) && isequal(reader(db; as_of = Date(early)), reader(db, Date(early)))
-    end
+    @test_throws ArgumentError read_interconnectors(db, mock_range_at(Date(2024, 1, 1)))
 end
 
 @testset "SQL ceiling preserves Julia bucket boundaries" begin
@@ -51,7 +44,7 @@ end
     )
     stamp = DateTime(2025, 1, 1, 0, 5)
     nsw(df) = df.TOTALDEMAND[(df.REGIONID .== "NSW1") .& (df.SETTLEMENTDATE .== stamp)]
-    @test (nsw(read_demand(db)), nsw(read_demand(db; intervention = 1))) == ([1010.0], [1510.0])
+    @test (nsw(read_demand(db, MOCK_DATE_RANGE)), nsw(read_demand(db, MOCK_DATE_RANGE; intervention = 1))) == ([1010.0], [1510.0])
 end
 
 @testset "Demand aggregation keeps nulls, charging and range boundaries" begin
@@ -181,11 +174,11 @@ end
     window = (bucket, bucket + Hour(6))
     inwindow(df) = filter(:SETTLEMENTDATE => t -> window[1] <= t < window[2], df)
     sorted(df) = sort(df, [:SETTLEMENTDATE, :REGIONID])
-    expected = inwindow(read_demand(db; resolution = Week(1)))
+    # The reference windows start a month earlier, so they read every cached partition the bucket needs.
+    expected = inwindow(read_demand(db, (bucket - Month(1), window[2]); resolution = Week(1)))
     @test !isempty(expected)
     @test isequal(sorted(read_demand(db, window; resolution = Week(1))), sorted(expected))
     uigf = AustralianElectricityMarkets.Readers._read_regional_renewable_uigf
-    # The reference window starts a month earlier, so it reads every cached partition the bucket needs.
     expected_uigf = inwindow(uigf(db, (bucket - Month(1), window[2]); resolution = Week(1), intervention = 0))
     @test !isempty(expected_uigf)
     @test isequal(sorted(uigf(db, window; resolution = Week(1), intervention = 0)), sorted(expected_uigf))

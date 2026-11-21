@@ -2,15 +2,16 @@
 
 
 """
-    _base_system(db; as_of = nothing)
+    _base_system(db; date_range, kwargs...)
 
 Assembles the energy-only regional `PowerSystems.System` built from the database, as
 [`RegionalNetworkConfiguration`](@ref) returns it.
 
 # Arguments
 - `db`: The database connection.
-- `as_of`: a `Date` or `DateTime` to resolve the unit and interconnector tables as of (see
-  [`read_units`](@ref)); `nothing` (the default) uses the latest cached version.
+- `date_range`: the half-open range of interval-ending stamps the units and interconnectors are
+  resolved over (see [`read_units`](@ref)).
+- `kwargs...`: Passed to the `PowerSystems.System` constructor.
 
 # Returns
 A `PowerSystems.System` object.
@@ -18,18 +19,18 @@ A `PowerSystems.System` object.
 # Example
 ```julia
 db = aem_connect()
-sys = nem_system(db, RegionalNetworkConfiguration())
+sys = nem_system(db, RegionalNetworkConfiguration(); date_range = DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 2))
 println(sys)
 ```
 """
-function _base_system(db; kwargs...)
-    sys, _ = _regional_system(db; kwargs...)
+function _base_system(db; date_range, kwargs...)
+    sys, _ = _regional_system(db; date_range, kwargs...)
     return sys
 end
 
 
-function _regional_system(db; kwargs...)
-    sys, units, gen_df = _nem_network(db; kwargs...)
+function _regional_system(db; date_range, kwargs...)
+    sys, units, gen_df = _nem_network(db; date_range, kwargs...)
     _set_isp_generation_costs!(sys, gen_df)
     return sys, units
 end
@@ -67,4 +68,4 @@ AustralianElectricityMarkets.table_requirements(::RegionalNetworkConfiguration) 
 ]
 
 
-AustralianElectricityMarkets.nem_system(db, ::RegionalNetworkConfiguration; kwargs...) = _base_system(db; kwargs...)
+AustralianElectricityMarkets.nem_system(db, ::RegionalNetworkConfiguration; date_range, kwargs...) = _base_system(db; date_range, kwargs...)

@@ -27,7 +27,7 @@ const _MNSP_WINDOW = DateTime(2025, 1, 1, 11, 55):Minute(5):DateTime(2025, 1, 1,
 
 # The MNSP system of `db` with its offers attached, and the fixed-loading series written by the writer.
 function _mnsp_fixed_load_system(db)
-    sys = nem_system(db, RegionalNetworkConfiguration())
+    sys = nem_system(db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
     set_mnsp_offers!(sys, db, _MNSP_WINDOW)
     AustralianElectricityMarkets._set_mnsp_fixed_loads!(sys)
     return sys

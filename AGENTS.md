@@ -20,8 +20,9 @@ using Dates
 
 db = aem_connect()                                    # AEMDB wrapper over DuckDB.DB
 populate(db, :DISPATCHPRICE, Date(2025, 1, 1), Date(2025, 1, 3))
-sys = nem_system(db, RegionalNetworkConfiguration())  # energy-only regional system
-sys = nem_system(db, NEMDEConfiguration(); date_range = start:Minute(5):stop)
+date_range = start:Minute(5):stop                     # half-open interval-ending stamps
+sys = nem_system(db, RegionalNetworkConfiguration(); date_range)  # energy-only regional system
+sys = nem_system(db, NEMDEConfiguration(); date_range)
                                                       # NEMDE system: bids, FCAS, constraints, losses
 ```
 

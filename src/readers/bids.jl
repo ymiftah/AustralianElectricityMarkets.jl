@@ -90,80 +90,60 @@ end
 
 
 """
-    read_loss_factors(db; as_of = nothing, through = nothing) -> DataFrame
+    read_loss_factors(db, date_range) -> DataFrame
 
-Reads each unit's connection-point loss factors from `DUDETAILSUMMARY`: the row with
-`START_DATE <= as_of < END_DATE` in the latest archive.
+Reads each unit's connection-point loss factors from the earliest `DUDETAILSUMMARY` row (latest
+archive) registered at some dispatch interval of `date_range`, the row [`read_units`](@ref) keeps.
+Warns when a unit's factors differ between its rows in the range, since the result holds one
+factor per unit.
 
 # Arguments
 - `db`: the database connection.
-- `as_of`: a `Date` or `DateTime` to resolve the factors as of. `nothing` keeps each unit's open row
-  (earliest `START_DATE`, the row [`read_units`](@ref) keeps).
-- `through`: with `as_of`, resolves the factors over the window `[as_of, through]` instead: each
-  unit's earliest row registered in it, the row [`read_units`](@ref) keeps with the same `through`.
-  Warns if a unit's factors differ between its rows in the window, since the result holds one
-  factor per unit.
+- `date_range`: the half-open range of interval-ending stamps; the last interval is
+  `last(date_range) - Minute(5)`.
 
 # Returns
-A `DataFrame` with `DUID`, `LOAD_LOSS_FACTOR` (`TRANSMISSIONLOSSFACTOR * DISTRIBUTIONLOSSFACTOR`,
-the factor for a load or a battery's charging side) and `GEN_LOSS_FACTOR` (`SECONDARY_TLF *
-DISTRIBUTIONLOSSFACTOR` for a `BIDIRECTIONAL` unit that publishes a secondary factor, else
-`LOAD_LOSS_FACTOR`). Requires the cached `DUDETAILSUMMARY` to hold the loss-factor columns;
-re-populate it with `force_new = true` otherwise.
+A `DataFrame` with `DUID`, `GEN_LOSS_FACTOR` (`SECONDARY_TLF * DISTRIBUTIONLOSSFACTOR` for a
+`BIDIRECTIONAL` unit that publishes a secondary factor, else `LOAD_LOSS_FACTOR`) and
+`LOAD_LOSS_FACTOR` (`TRANSMISSIONLOSSFACTOR * DISTRIBUTIONLOSSFACTOR`, the factor for a load or a
+battery's charging side).
 """
-function read_loss_factors(
-        db; as_of::Union{Nothing, Date, DateTime} = nothing,
-        through::Union{Nothing, Date, DateTime} = nothing,
-    )
-    isnothing(through) || !isnothing(as_of) || throw(ArgumentError("read_loss_factors: through requires as_of"))
+function read_loss_factors(db, date_range)
+    as_of, through = DateTime(first(date_range)), DateTime(last(date_range)) - Minute(5)
     source = read_hive(db, :DUDETAILSUMMARY)
-    windowed = !isnothing(through)
-    window = if isnothing(as_of)
-        "(END_DATE IS NULL OR year(END_DATE) = 2999)"
-    elseif windowed
-        _registration_window_sql()
-    else
-        "START_DATE <= ? AND (END_DATE IS NULL OR END_DATE > ?)"
-    end
-    # Open rows keep the earliest START_DATE, as read_units does, so both readers pick the same row.
-    order = isnothing(as_of) || windowed ? "ASC" : "DESC"
-    sql = """
-        SELECT DUID,
-            TRANSMISSIONLOSSFACTOR * DISTRIBUTIONLOSSFACTOR AS LOAD_LOSS_FACTOR,
-            CASE WHEN DISPATCHTYPE = 'BIDIRECTIONAL' AND SECONDARY_TLF IS NOT NULL
-                 THEN SECONDARY_TLF * DISTRIBUTIONLOSSFACTOR
-                 ELSE TRANSMISSIONLOSSFACTOR * DISTRIBUTIONLOSSFACTOR END AS GEN_LOSS_FACTOR
-        FROM $source
-        WHERE archive_month = (SELECT max(archive_month) FROM $source) AND $window
-        QUALIFY row_number() OVER (PARTITION BY DUID ORDER BY START_DATE $order) = 1
-    """
-    factors = if isnothing(as_of)
-        _query(db, sql)
-    elseif windowed
-        _query(db, sql, [through, as_of])
-    else
-        _query(db, sql, [as_of, as_of])
-    end
-    if windowed
-        # NULL counts as a value, so a NULL to number change in SECONDARY_TLF is caught.
-        changed_all = _query(
-            db,
-            """
-            SELECT DUID
-            FROM $source
-            WHERE archive_month = (SELECT max(archive_month) FROM $source) AND $window
+    factors = _query(
+        db,
+        """
+        WITH registered AS (
+            SELECT * FROM $source
+            WHERE archive_month = (SELECT max(archive_month) FROM $source)
+              AND START_DATE < ? AND (END_DATE IS NULL OR END_DATE >= ?)
+        ),
+        -- NULL counts as a value, so a NULL to number change in SECONDARY_TLF is caught.
+        changed AS (
+            SELECT DUID,
+                   count(DISTINCT TRANSMISSIONLOSSFACTOR) > 1
+                       OR count(DISTINCT DISTRIBUTIONLOSSFACTOR) > 1
+                       OR count(DISTINCT coalesce(CAST(SECONDARY_TLF AS VARCHAR), 'NULL')) > 1 AS FACTORS_CHANGE
+            FROM registered
             GROUP BY DUID
-            HAVING count(DISTINCT TRANSMISSIONLOSSFACTOR) > 1
-                OR count(DISTINCT DISTRIBUTIONLOSSFACTOR) > 1
-                OR count(DISTINCT coalesce(CAST(SECONDARY_TLF AS VARCHAR), 'NULL')) > 1
-            """,
-            [through, as_of],
-        ).DUID
-        changed = intersect(changed_all, factors.DUID)
-        isempty(changed) ||
-            @warn "Loss factors change within the date range; the factors of each unit's earliest registration row overlapping it are used throughout" as_of through first_changed = first(changed, 5)
-    end
-    return select(factors, :DUID, :GEN_LOSS_FACTOR, :LOAD_LOSS_FACTOR)
+        )
+        SELECT DUID,
+               CASE WHEN DISPATCHTYPE = 'BIDIRECTIONAL' AND SECONDARY_TLF IS NOT NULL
+                    THEN SECONDARY_TLF * DISTRIBUTIONLOSSFACTOR
+                    ELSE TRANSMISSIONLOSSFACTOR * DISTRIBUTIONLOSSFACTOR END AS GEN_LOSS_FACTOR,
+               TRANSMISSIONLOSSFACTOR * DISTRIBUTIONLOSSFACTOR AS LOAD_LOSS_FACTOR,
+               FACTORS_CHANGE
+        FROM registered
+        JOIN changed USING (DUID)
+        QUALIFY row_number() OVER (PARTITION BY DUID ORDER BY START_DATE ASC) = 1
+        """,
+        [through, as_of],
+    )
+    changed = subset(factors, :FACTORS_CHANGE).DUID
+    isempty(changed) ||
+        @warn "Loss factors change within the date range; the factors of each unit's earliest registration row overlapping it are used throughout" as_of through first_changed = first(changed, 5)
+    return select!(factors, Not(:FACTORS_CHANGE))
 end
 
 

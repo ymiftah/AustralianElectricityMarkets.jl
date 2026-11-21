@@ -9,7 +9,7 @@
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
 
     # Base system for testing
-    sys_base, _ = nem_network(db)
+    sys_base, _ = nem_network(db; date_range = MOCK_DATE_RANGE)
 
     @testset "demand build rejects incomplete regional demand" begin
         # The mock hive holds demand to 04:00; a window running to 06:00 has no rows for the last two hours.
@@ -268,7 +268,7 @@
         start_date = DateTime(2025, 1, 1, 0, 0)
         date_range = start_date:resolution:(start_date + Hour(2))
 
-        demand_df = read_demand(db; resolution = resolution)
+        demand_df = read_demand(db, MOCK_DATE_RANGE; resolution = resolution)
         subset!(demand_df, :SETTLEMENTDATE => ByRow(x -> first(date_range) <= x < last(date_range)))
 
         function seed(write_mode)
@@ -412,7 +412,7 @@
 
         @testset "a semi-scheduled unit gets its UIGF, a scheduled unit none" begin
             semi_range = DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 1, 0, 10)
-            sys = first(nem_network(db))
+            sys = first(nem_network(db; date_range = MOCK_DATE_RANGE))
             set_market_bids!(sys, db, semi_range)
             set_unit_conditions!(sys, db, semi_range)
             for (duid, forecast) in [("BW03", [40.0, 41.0]), ("BW04", [70.0, 69.0])]
@@ -511,7 +511,7 @@
                     append!(frame, extra)
                 end
             )
-            @test_throws r"ER01 change REGIONID/DISPATCHTYPE/SCHEDULE_TYPE" nem_network(bad; as_of = at(0), through = at(10) - Minute(5))
+            @test_throws r"ER01 change REGIONID/DISPATCHTYPE/SCHEDULE_TYPE" nem_network(bad; date_range = at(0):Minute(5):at(10))
         end
 
         @testset "a zero static max_active_power throws, naming the DUID" begin
@@ -580,24 +580,22 @@
         factor(df, d, col) = only(df[df.DUID .== d, col])
 
         @testset "read_loss_factors" begin
-            old = read_loss_factors(ldb; as_of = start_date)
+            old = read_loss_factors(ldb, mock_range_at(start_date))
             @test factor(old, "ER01", :LOAD_LOSS_FACTOR) ≈ 0.9 * 0.97   # DLF is applied
             @test factor(old, "ER01", :GEN_LOSS_FACTOR) ≈ 0.9 * 0.97
             @test factor(old, "BW01", :GEN_LOSS_FACTOR) == 0.5            # BIDIRECTIONAL: secondary on GEN
             @test factor(old, "BW01", :LOAD_LOSS_FACTOR) == 0.8
             @test factor(old, "BW02", :GEN_LOSS_FACTOR) == 1.0            # SECONDARY_TLF ignored off a BDU
-            new = read_loss_factors(ldb; as_of = DateTime(2025, 7, 2))
+            new = read_loss_factors(ldb, mock_range_at(DateTime(2025, 7, 2)))
             @test factor(new, "ER01", :LOAD_LOSS_FACTOR) == 0.8
             @test factor(new, "BW01", :GEN_LOSS_FACTOR) == 1.0
-            # The new row starts at the boundary; a Date before it resolves the old one.
-            @test factor(read_loss_factors(ldb; as_of = fy_change - Minute(5)), "ER01", :LOAD_LOSS_FACTOR) ≈ 0.9 * 0.97
-            @test factor(read_loss_factors(ldb; as_of = fy_change), "ER01", :LOAD_LOSS_FACTOR) == 0.8
-            # No as_of keeps the open row.
-            @test factor(read_loss_factors(ldb), "ER01", :LOAD_LOSS_FACTOR) == 0.8
-            @test_logs (:warn, r"change within the date range") match_mode = :any read_loss_factors(ldb; as_of = start_date, through = DateTime(2025, 7, 1, 1))
+            # The new row starts at the boundary, so the interval ending at it still takes the old row.
+            @test factor(read_loss_factors(ldb, mock_range_at(fy_change)), "ER01", :LOAD_LOSS_FACTOR) ≈ 0.9 * 0.97
+            @test factor(read_loss_factors(ldb, mock_range_at(fy_change + Minute(5))), "ER01", :LOAD_LOSS_FACTOR) == 0.8
+            @test_logs (:warn, r"change within the date range") match_mode = :any read_loss_factors(ldb, start_date:Minute(5):(DateTime(2025, 7, 1, 1) + Minute(5)))
         end
 
-        sys_lf, _ = nem_network(ldb; as_of = start_date, through = last(date_range) - Minute(5))
+        sys_lf, _ = nem_network(ldb; date_range)
         set_market_bids!(sys_lf, ldb, date_range; resolution = Minute(5))
 
         # Read raw bids (unscaled by loss factors) to compare
@@ -643,7 +641,7 @@
                     df
                 end
             )
-            @test_throws r"No DUDETAILSUMMARY loss factor for BW02" nem_network(unfactored; as_of = start_date, through = last(date_range) - Minute(5))
+            @test_throws r"No DUDETAILSUMMARY loss factor for BW02" nem_network(unfactored; date_range)
         end
     end
 end
@@ -652,7 +650,7 @@ end
     using DataFrames, Statistics
     import TimeSeries
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
-    sys_base = nem_system(db, RegionalNetworkConfiguration())
+    sys_base = nem_system(db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
     resolution = Minute(30)
     start_date = DateTime(2025, 1, 1, 0, 0)
     date_range = start_date:Minute(5):(start_date + Hour(2))

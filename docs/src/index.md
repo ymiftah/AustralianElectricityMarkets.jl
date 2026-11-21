@@ -56,13 +56,12 @@ println(demand_df)
 
 `read_demand(db, date_range)` returns aggregate timestamps from the start of the range up to,
 but excluding, its end. With a coarser `resolution`, it reads complete bins before averaging.
-Omit `date_range` to read all cached demand.
 
 And parsing the data into `PowerSystems.jl`
 
 ```julia
 # Instantiate a System
-sys = nem_system(db, RegionalNetworkConfiguration())
+sys = nem_system(db, RegionalNetworkConfiguration(); date_range)
 
 println(sys)
 ```
