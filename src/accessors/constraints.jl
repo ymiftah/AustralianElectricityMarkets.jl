@@ -13,13 +13,14 @@ unresolved term), `n_missing` (number of unresolved term keys of any kind) and `
 (those keys). Empty when nothing was skipped or no constraints were built into `sys`.
 """
 function get_skipped_constraints(sys)
-    rows = get_build_report(sys).skipped_constraints
-    return DataFrame(;
-        constraint = String[r["constraint"] for r in rows],
-        reason = Symbol[Symbol(r["reason"]) for r in rows],
-        n_missing = Int[length(r["missing"]) for r in rows],
-        missing_keys = Vector{String}[String[k for k in r["missing"]] for r in rows],
-    )
+    return @chain get_build_report(sys).skipped_constraints begin
+        transform(
+            :reason => ByRow(Symbol) => :reason,
+            :missing => ByRow(length) => :n_missing,
+            :missing => ByRow(copy) => :missing_keys,
+        )
+        select(Not(:missing))
+    end
 end
 
 
@@ -38,15 +39,7 @@ A `DataFrame` with `constraint` (versioned name), `kind`, `key`, `bid_type`, `fa
 recorded), one row per dropped term. Empty when nothing was dropped or no constraints were built into `sys`.
 """
 function get_dropped_terms(sys)
-    rows = get_build_report(sys).dropped_terms
-    return DataFrame(;
-        constraint = String[r["constraint"] for r in rows],
-        kind = String[r["kind"] for r in rows],
-        key = String[r["key"] for r in rows],
-        bid_type = String[r["bid_type"] for r in rows],
-        factor = Float64[r["factor"] for r in rows],
-        registered = Bool[get(r, "registered", true) for r in rows],
-    )
+    return copy(get_build_report(sys).dropped_terms)
 end
 
 
@@ -64,11 +57,10 @@ A `DataFrame` with `constraint` (`String`) and `reason` (`Symbol`), sorted by co
 constraint was made unavailable or no constraints were built into `sys`.
 """
 function get_unavailable_constraints(sys)
-    rows = sort(get_build_report(sys).unavailable_constraints; by = r -> r["constraint"])
-    return DataFrame(;
-        constraint = String[r["constraint"] for r in rows],
-        reason = Symbol[Symbol(r["reason"]) for r in rows],
-    )
+    return @chain get_build_report(sys).unavailable_constraints begin
+        sort(:constraint)
+        transform(:reason => ByRow(Symbol) => :reason)
+    end
 end
 
 

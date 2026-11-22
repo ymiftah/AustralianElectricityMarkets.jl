@@ -1,7 +1,6 @@
 # Attaches the constraint build that `nem_system` runs, from the same cached inputs.
 function build_constraints!(sys, db, date_range; intervention = 0)
-    invoked, fixed = AustralianElectricityMarkets._read_constraint_inputs(db, date_range; intervention)
-    return AustralianElectricityMarkets._add_nem_constraints!(sys, db, date_range, invoked, fixed; intervention)
+    return add_nem_constraints!(sys, db, date_range; intervention)
 end
 
 function attach_demand!(sys, db, date_range; resolution = Minute(5))

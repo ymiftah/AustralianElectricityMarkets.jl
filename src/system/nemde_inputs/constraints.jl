@@ -55,13 +55,13 @@ function _set_constraint_availability!(sys::PSY.System)
     isempty(stamps) && return
     constraints = sort!(collect(PSY.get_components(GenericConstraint, sys)); by = PSY.get_name)
     isempty(constraints) && return
-    rows = Dict{String, Any}[]
+    rows = @NamedTuple{constraint::String, reason::String}[]
     index = _contributing_device_index(sys)
     for constraint in constraints
         reason = _constraint_unavailable_reason(index, constraint, stamps)
         isnothing(reason) && continue
         PSY.set_available!(constraint, false)
-        push!(rows, Dict{String, Any}("constraint" => PSY.get_name(constraint), "reason" => String(reason)))
+        push!(rows, (constraint = PSY.get_name(constraint), reason = String(reason)))
     end
     report = get_build_report(sys)
     set_build_report!(
@@ -71,7 +71,7 @@ function _set_constraint_availability!(sys::PSY.System)
             missing_constraint_intervals = report.missing_constraint_intervals,
             defaulted_constraint_weights = report.defaulted_constraint_weights,
             dropped_terms = report.dropped_terms,
-            unavailable_constraints = rows,
+            unavailable_constraints = DataFrame(rows),
         ),
     )
     return

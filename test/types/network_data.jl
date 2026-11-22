@@ -173,10 +173,10 @@ end
     AEM.set_build_report!(sys, report)
 
     push!(report.defaulted_constraint_weights, "LATE")
-    report.dropped_terms[1]["key"] = "CHANGED"
+    report.dropped_terms.key[1] = "CHANGED"
     stored = AEM.get_build_report(sys)
     @test stored.defaulted_constraint_weights == ["N_W"]
-    @test only(stored.dropped_terms)["key"] == "K"
+    @test only(stored.dropped_terms.key) == "K"
 
     twin = AEM.NEMBuildReport(; defaulted_constraint_weights = ["N_W"], dropped_terms = [dropped()])
     @test stored == twin
