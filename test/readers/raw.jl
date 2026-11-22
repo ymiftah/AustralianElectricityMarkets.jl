@@ -93,14 +93,18 @@ let
         @test isempty(read_units(vwin, DateTime(2019, 1, 1):Minute(5):(DateTime(2019, 12, 31) + Minute(5))))
     end
 
-    @testset "a mid-window region change is rejected and a loss factor change warns" begin
+    @testset "a mid-window region change is flagged and a loss factor change warns" begin
         # A second BW03 row from 00:10 in another region (BW03 is in QLD1), the first row left open.
         moved = damaged_cache(
             hive_dir, :DUDETAILSUMMARY,
             "INSERT INTO input SELECT * REPLACE (TIMESTAMP '2025-01-01 00:10:00' AS START_DATE, 'NSW1' AS REGIONID) FROM input WHERE DUID = 'BW03'",
         )
         window = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
-        @test_throws r"BW03.*REGIONID" read_units(moved, window)
+        # The earliest row is kept and the unit flagged; the NEMDE build refuses the range.
+        units = @test_logs (:warn, r"change REGIONID") match_mode = :any read_units(moved, window)
+        @test only(units[units.DUID .== "BW03", :REGIONID]) == "QLD1"
+        @test only(subset(units, :CHANGES_IN_RANGE).DUID) == "BW03"
+        @test_throws r"BW03 change REGIONID" nem_network(moved; date_range = window)
         # A changed loss factor is not an error: the earlier row's factor is used, with a warning.
         lossy = damaged_cache(
             hive_dir, :DUDETAILSUMMARY,
