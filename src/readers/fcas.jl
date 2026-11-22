@@ -148,9 +148,9 @@ function read_fcas_bids(
         db, date_range, bid_types::AbstractVector{BidType}; resolution::Union{Nothing, Dates.Period} = nothing,
     )
     resolution = something(resolution, Minute(5))
-    window = (first(date_range) - (resolution - Minute(5)), last(date_range))
-    return @chain read_offers(db, window; markets = bid_types) begin
-        _aggregate_offers(resolution, date_range)
+    start, stop = DateTime(first(date_range)), DateTime(last(date_range))
+    return @chain read_offers(db, (start - (resolution - Minute(5)), stop); markets = bid_types) begin
+        _aggregate_offers(resolution, (start, stop))
         select(
             :SETTLEMENTDATE, :DUID, :DIRECTION, :INTERVAL_DATETIME, :PRICEBANDARRAY, :BANDAVAILARRAY,
             :MAXAVAIL, :MINIMUMLOAD, :DAILYENERGYCONSTRAINT, :BIDTYPE,

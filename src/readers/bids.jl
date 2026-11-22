@@ -108,15 +108,25 @@ prices, not referred to the reference node), `BANDAVAILARRAY` (MW), `MAXAVAIL`, 
 """
 function read_bids(db, date_range; resolution::Union{Nothing, Dates.Period} = nothing)
     resolution = something(resolution, Minute(5))
-    window = (first(date_range) - (resolution - Minute(5)), last(date_range))
-    return @chain read_offers(db, window; markets = (BidType.ENERGY,)) begin
-        _aggregate_offers(resolution, date_range)
+    start, stop = DateTime(first(date_range)), DateTime(last(date_range))
+    return @chain read_offers(db, (start - (resolution - Minute(5)), stop); markets = (BidType.ENERGY,)) begin
+        _aggregate_offers(resolution, (start, stop))
         select(
             :SETTLEMENTDATE, :DUID, :DIRECTION, :INTERVAL_DATETIME, :PRICEBANDARRAY, :BANDAVAILARRAY,
             :MAXAVAIL, :MINIMUMLOAD, :DAILYENERGYCONSTRAINT,
         )
     end
 end
+
+
+# An empty `BIDDAYOFFER` relation, read in place of the table when no energy offer is read.
+const _NO_OFFER_VERSIONS = """(
+    SELECT NULL::TIMESTAMP AS SETTLEMENTDATE, NULL::VARCHAR AS DUID, NULL::VARCHAR AS DIRECTION,
+           NULL::VARCHAR AS BIDTYPE, NULL::TIMESTAMP AS OFFERDATE, NULL::DOUBLE AS MINIMUMLOAD,
+           NULL::DOUBLE AS T1, NULL::DOUBLE AS T2, NULL::DOUBLE AS T3, NULL::DOUBLE AS T4,
+           NULL::BIGINT AS VERSIONNO
+    WHERE false
+)"""
 
 
 """
@@ -127,8 +137,9 @@ joined to their `BIDDAYOFFER_D` price bands, at native resolution. Each row is o
 `(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE)` with
 `first(date_range) <= INTERVAL_DATETIME < last(date_range)`. The `MINIMUMLOAD` and `T1` to `T4` of an
 energy row come from the `BIDDAYOFFER` version in force at the interval: the latest
-`BIDDAYOFFER.OFFERDATE` at or before the period offer's `LASTCHANGED`. Rows without such a version
-keep the `BIDDAYOFFER_D` values.
+`BIDDAYOFFER.OFFERDATE` at or before the period offer's `LASTCHANGED`, NULL fields included. Rows
+without such a version keep the `BIDDAYOFFER_D` values. `BIDDAYOFFER` is read only when `markets`
+includes `BidType.ENERGY`.
 
 # Arguments
 - `db`: an `AEMDB` connection.
@@ -147,7 +158,8 @@ function read_offers(db, date_range; markets = NEM_MARKETS)
     window = (start_date - Day(1), end_date + Day(1))
     period_source = read_hive(db, :BIDPEROFFER_D, window)
     price_source = read_hive(db, :BIDDAYOFFER_D, window)
-    version_source = read_hive(db, :BIDDAYOFFER, window)
+    # Only energy rows read the in-force version, so an FCAS-only read needs no BIDDAYOFFER.
+    version_source = BidType.ENERGY in markets ? read_hive(db, :BIDDAYOFFER, window) : _NO_OFFER_VERSIONS
     band_avail = join(("BANDAVAIL$i" for i in 1:10), ", ")
     price_bands = join(("PRICEBAND$i" for i in 1:10), ", ")
     offers = _query(
@@ -183,9 +195,12 @@ function read_offers(db, date_range; markets = NEM_MARKETS)
         )
         SELECT p.SETTLEMENTDATE, p.INTERVAL_DATETIME, p.DUID, p.DIRECTION, p.BIDTYPE,
                d.PRICEBANDARRAY, list_value($band_avail) AS BANDAVAILARRAY, p.MAXAVAIL,
-               COALESCE(v.MINIMUMLOAD, d.MINIMUMLOAD) AS MINIMUMLOAD, d.DAILYENERGYCONSTRAINT,
-               COALESCE(v.T1, d.T1) AS T1, COALESCE(v.T2, d.T2) AS T2,
-               COALESCE(v.T3, d.T3) AS T3, COALESCE(v.T4, d.T4) AS T4, d.NORMALSTATUS,
+               CASE WHEN v.DUID IS NULL THEN d.MINIMUMLOAD ELSE v.MINIMUMLOAD END AS MINIMUMLOAD,
+               d.DAILYENERGYCONSTRAINT,
+               CASE WHEN v.DUID IS NULL THEN d.T1 ELSE v.T1 END AS T1,
+               CASE WHEN v.DUID IS NULL THEN d.T2 ELSE v.T2 END AS T2,
+               CASE WHEN v.DUID IS NULL THEN d.T3 ELSE v.T3 END AS T3,
+               CASE WHEN v.DUID IS NULL THEN d.T4 ELSE v.T4 END AS T4, d.NORMALSTATUS,
                p.FIXEDLOAD, p.ROCUP, p.ROCDOWN, p.ENERGYLIMIT,
                p.ENABLEMENTMIN, p.LOWBREAKPOINT, p.HIGHBREAKPOINT, p.ENABLEMENTMAX,
                d.DUID IS NULL AS MISSING_PRICE

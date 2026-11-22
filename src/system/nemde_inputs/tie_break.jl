@@ -137,7 +137,7 @@ function _set_tie_break!(sys::PSY.System, grid = _nemde_grid(sys))
     for group in groupby(tied, [:side, :name, :band])
         # The scale is zero at the intervals where the band is not in a tied group.
         values = @chain stamps begin
-            leftjoin(group; on = :stamp)
+            leftjoin(group; on = :stamp, order = :left)
             coalesce.(_.scale, 0.0)
         end
         (; side, device, band) = first(group)

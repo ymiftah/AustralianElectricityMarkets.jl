@@ -225,6 +225,51 @@
             @test all(iszero, unit(read_offers(db, late), "BW02", "GEN").T1)
             @test all(iszero, unit(read_offers(db, late), "PUMP1", "LOAD").T1)
         end
+
+        # A copy of the mock hive with `table` rewritten by `select` (a DuckDB SELECT over `src`), or removed.
+        function edited_hive(table; select = nothing)
+            hive = joinpath(mktempdir(), "hive")
+            cp(AEM_TEST_HIVE_DIR, hive)
+            if isnothing(select)
+                rm(joinpath(hive, String(table)); recursive = true)
+            else
+                edit_db = DuckDB.DB()
+                for (root, _, files) in walkdir(joinpath(hive, String(table))), f in filter(endswith(".parquet"), files)
+                    path = joinpath(root, f)
+                    query = replace(select, "src" => "read_parquet('$path')")
+                    DuckDB.execute(edit_db, "COPY ($query) TO '$path.new' (FORMAT PARQUET)")
+                    mv("$path.new", path; force = true)
+                end
+                DuckDB.close(edit_db)
+            end
+            return aem_connect(HiveConfiguration(hive_location = hive, filesystem = "file"))
+        end
+
+        @testset "a NULL field of the version in force is kept, not filled from BIDDAYOFFER_D" begin
+            late = DateTime(2025, 1, 1, 3, 0):Minute(5):DateTime(2025, 1, 1, 3, 30)
+            # The 03:17 rebid, in force from 03:20, leaves T1 empty; BIDDAYOFFER_D's T1 is 10.
+            null_db = edited_hive(
+                :BIDDAYOFFER;
+                select = "SELECT * REPLACE (CASE WHEN DUID = 'BW04' AND VERSIONNO = 3 THEN NULL ELSE T1 END AS T1) FROM src",
+            )
+            offers = read_offers(null_db, late; markets = (AustralianElectricityMarkets.BidType.ENERGY,))
+            bw04 = sort(subset(offers, :DUID => ByRow(==("BW04")), :DIRECTION => ByRow(==("GEN"))), :INTERVAL_DATETIME)
+            @test isequal(bw04.T1, [10.0, 12.0, 12.0, 12.0, missing, missing])
+        end
+
+        @testset "FCAS offers read without BIDDAYOFFER" begin
+            fcas_db = edited_hive(:BIDDAYOFFER)
+            raise6 = read_fcas_bids(fcas_db, date_range, AustralianElectricityMarkets.BidType.RAISE6SEC)
+            @test nrow(raise6) > 0
+            @test_throws ArgumentError read_offers(fcas_db, date_range; markets = (AustralianElectricityMarkets.BidType.ENERGY,))
+        end
+
+        @testset "bids read over a Date range" begin
+            days = Date(2025, 1, 1):Day(1):Date(2025, 1, 2)
+            @test nrow(read_bids(db, days)) > 0
+            @test nrow(read_bids(db, days; resolution = Minute(30))) > 0
+            @test nrow(read_fcas_bids(db, days, AustralianElectricityMarkets.BidType.RAISE6SEC)) > 0
+        end
     end
 
     @testset "read_bids resolution aggregation uses per-bucket mean (regression: scale-then-sum bug)" begin
