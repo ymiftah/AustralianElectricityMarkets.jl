@@ -6,7 +6,6 @@ dispatch, with `RHS` and the constraint version NEMDE used (`GENCONID_EFFECTIVED
 """
 function read_invoked_constraints(db, date_range; intervention::Integer = 0)
     _check_intervention(intervention)
-    _require_cached(db, :DISPATCHCONSTRAINT)
     source = read_hive(db, :DISPATCHCONSTRAINT, date_range)
     return _query(
         db,

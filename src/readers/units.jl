@@ -1,11 +1,12 @@
 """
-    _registered_duids(db, duids, as_of, through) -> Set{String}
+    _registered_duids(db, duids, date_range) -> Set{String}
 
-The DUIDs of `duids` that `DUDETAILSUMMARY` (latest archive) registers at some instant of
-`[as_of, through]`.
+The DUIDs of `duids` that `DUDETAILSUMMARY` (latest archive) registers at some dispatch interval
+of the half-open `date_range`, whose last interval is `last(date_range) - Minute(5)`.
 """
-function _registered_duids(db, duids, as_of, through)
+function _registered_duids(db, duids, date_range)
     isempty(duids) && return Set{String}()
+    as_of, through = DateTime(first(date_range)), DateTime(last(date_range)) - Minute(5)
     summary = read_hive(db, :DUDETAILSUMMARY)
     wanted = DataFrame(DUID = unique(String.(duids)))
     registered = _with_registered(db, wanted, "wanted_duids") do

@@ -170,7 +170,6 @@ interval has one, else the pricing run.
 """
 function read_fcas_dispatch(db, date_range; intervention::Integer = 0)
     _check_intervention(intervention)
-    _require_cached(db, :DISPATCHLOAD)
     source = read_hive(db, :DISPATCHLOAD, date_range)
     dispatch = _query(
         db,

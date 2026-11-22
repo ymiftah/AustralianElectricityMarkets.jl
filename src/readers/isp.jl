@@ -1,4 +1,3 @@
-# TODO, MOVE THIS IN AEMData, populate the HIVE with it + Make the CSV data artifacts with Artifacts.jl
 const ISP_DATA_DIR = joinpath(@__DIR__, "..", "..", "data", "isp2025")
 
 
@@ -76,32 +75,22 @@ Read thermal costs parameters from ISP 2025 data for a given `year` and `scenari
 - `scenario::String`: The scenario to read data for.
 """
 function read_isp_thermal_costs_parameters(year::Int, scenario::String)
-    affine_heatrates = read_affine_heatrates()
-    prices = vcat(
-        read_coal_prices(),
-        read_gas_prices(),
-    )
+    prices = vcat(read_coal_prices(), read_gas_prices())
     available_scenarios = unique(prices.scenario)
     available_years = unique(prices.year)
-    !in(available_scenarios)(scenario) && throw(ArgumentError("scenario value must be one of $available_scenarios"))
-    !in(available_years)(year) && throw(ArgumentError("year value must be one of $available_years"))
-    subset!(prices, :year => ByRow(==(year)), :scenario => ByRow(==(scenario)))
-    select!(prices, Not(:year, :scenario))
-
-    biomass_prices = read_biomass_prices()
-    subset!(biomass_prices, :year => ByRow(==(year)), :scenario => ByRow(==(scenario)))
-    select!(biomass_prices, Not(:year, :scenario))
-    biomass_price = biomass_prices.price_aud |> first # only one element
-
-
-    df = leftjoin(affine_heatrates, prices, on = :station)
-    # match biomass costs to biomass units
-    transform!(
-        df,
-        [:technology, :price_aud] => ByRow((tech, price) -> tech == "Biomass" ? biomass_price : price) => :price_aud
-    )
-
-    return df
+    scenario in available_scenarios || throw(ArgumentError("scenario value must be one of $available_scenarios"))
+    year in available_years || throw(ArgumentError("year value must be one of $available_years"))
+    biomass_price = @chain read_biomass_prices() begin
+        subset(:year => ByRow(==(year)), :scenario => ByRow(==(scenario)))
+        only(_.price_aud)
+    end
+    return @chain prices begin
+        subset(:year => ByRow(==(year)), :scenario => ByRow(==(scenario)))
+        select(Not(:year, :scenario))
+        leftjoin(read_affine_heatrates(), _, on = :station)
+        # biomass units take the biomass price
+        transform([:technology, :price_aud] => ByRow((tech, price) -> tech == "Biomass" ? biomass_price : price) => :price_aud)
+    end
 end
 
 
@@ -119,13 +108,10 @@ To convert to AUD/h for a unit with `base_power` in MVA:
     `fixed_opex_aud_kw_year * base_power * 1000 / 8760`
 """
 function read_isp_fixed_opex()
-    file_source = joinpath(ISP_DATA_DIR, "fixed_opex.csv")
-    df = CSV.read(file_source, DataFrame)
-    return DataFrame(
-        unit = df.iasr_id,
-        isp_technology = df.technology,
-        fixed_opex_aud_kw_year = df.fixed_opex_aud_kw_year,
-    )
+    return @chain joinpath(ISP_DATA_DIR, "fixed_opex.csv") begin
+        CSV.read(DataFrame)
+        select(:iasr_id => :unit, :technology => :isp_technology, :fixed_opex_aud_kw_year)
+    end
 end
 
 
@@ -142,13 +128,13 @@ Returns a `DataFrame` with columns:
 Covers all technology types; Wind and Large-scale Solar PV have 0 AUD/MWh.
 """
 function read_isp_variable_opex()
-    file_source = joinpath(ISP_DATA_DIR, "variable_opex.csv")
-    df = CSV.read(file_source, DataFrame)
-    return DataFrame(
-        unit = df.iasr_id,
-        isp_technology = df.technology,
-        variable_opex_aud_mwh = df.variable_opex_aud_mwh_sent_out,
-    )
+    return @chain joinpath(ISP_DATA_DIR, "variable_opex.csv") begin
+        CSV.read(DataFrame)
+        select(
+            :iasr_id => :unit, :technology => :isp_technology,
+            :variable_opex_aud_mwh_sent_out => :variable_opex_aud_mwh,
+        )
+    end
 end
 
 

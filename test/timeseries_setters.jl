@@ -113,7 +113,7 @@
             @test occursin("DISPATCHLOAD", err.msg)
         end
 
-        @testset "read_uigf throws when cached DISPATCHLOAD predates the UIGF column" begin
+        @testset "read_uigf fails when cached DISPATCHLOAD has no UIGF column" begin
             no_uigf_hive = mktempdir()
             ddb = DuckDB.DB()
             conn = DuckDB.connect(ddb)
@@ -127,13 +127,14 @@
             mkpath(table_dir)
             DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
             DuckDB.unregister_table(conn, "tmp_table")
+            cp(joinpath(AEM_TEST_HIVE_DIR, "DUDETAILSUMMARY"), joinpath(no_uigf_hive, "DUDETAILSUMMARY"))
 
             no_uigf_db = aem_connect(HiveConfiguration(hive_location = no_uigf_hive, filesystem = "file"))
-            err = (@test_throws ArgumentError read_uigf(no_uigf_db, date_range; resolution)).value
-            @test occursin("no UIGF column", err.msg) && occursin("force_new = true", err.msg)
+            err = (@test_throws DuckDB.QueryException read_uigf(no_uigf_db, date_range; resolution)).value
+            @test occursin("UIGF", string(err.var))
         end
 
-        @testset "read_uigf throws without DUDETAILSUMMARY's SCHEDULE_TYPE" begin
+        @testset "read_uigf fails without DUDETAILSUMMARY's SCHEDULE_TYPE" begin
             function save_table(hive, df, table)
                 conn = DuckDB.connect(DuckDB.DB())
                 DuckDB.execute(conn, "SET preserve_identifier_case=true")
@@ -159,8 +160,8 @@
                     DUID = ["BW03"], START_DATE = [DateTime(2020, 1, 1)], archive_month = ["2025-01"],
                 ), "DUDETAILSUMMARY",
             )
-            err = (@test_throws ArgumentError read_uigf(hive_db, date_range; resolution)).value
-            @test occursin("SCHEDULE_TYPE", err.msg)
+            err = (@test_throws DuckDB.QueryException read_uigf(hive_db, date_range; resolution)).value
+            @test occursin("SCHEDULE_TYPE", string(err.var))
         end
     end
 
@@ -466,11 +467,16 @@
                 set_at(:AVAILABILITY, "ER01", -1.0) => "ER01: negative AVAILABILITY",
                 (frame -> filter!(r -> r.DUID != "ER01", frame)) => "ER01: no DISPATCHLOAD rows",
                 set_at(:UIGF, "BW03", -1.0) => "BW03 at $(at(5)): missing or invalid UIGF",
-                (frame -> select!(frame, Not(:UIGF))) => "",
             )
             sys = deepcopy(sys_base)
             @test_throws ArgumentError corrupt_and_build(:DISPATCHLOAD, transform!; sys)
             @test occursin(message, last_error[].msg)
+            @test untouched(sys)
+        end
+
+        @testset "a DISPATCHLOAD without a UIGF column fails the query and leaves sys untouched" begin
+            sys = deepcopy(sys_base)
+            @test_throws DuckDB.QueryException corrupt_and_build(:DISPATCHLOAD, frame -> select!(frame, Not(:UIGF)); sys)
             @test untouched(sys)
         end
 
