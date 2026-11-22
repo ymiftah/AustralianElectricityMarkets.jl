@@ -187,5 +187,3 @@ function _set_unit_data!(sys, device, semi::Bool, series_keys::AbstractDict{Stri
     )
     return
 end
-
-
