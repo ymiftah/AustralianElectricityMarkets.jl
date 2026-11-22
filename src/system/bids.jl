@@ -150,9 +150,17 @@ function _fcas_trapezium_points(row)
 end
 
 
+const _TRAPEZIUM_COLUMNS = (:DUID, :DIRECTION, :INTERVAL_DATETIME, :ENABLEMENTMIN, :LOWBREAKPOINT, :HIGHBREAKPOINT, :ENABLEMENTMAX, :MAXAVAIL)
+
 # The validated trapezium of each row of `on_grid`, zero where there is no row.
 function _trapezium_on_grid(on_grid::AbstractDataFrame)
-    return [ismissing(row.DUID) ? (0.0, 0.0, 0.0, 0.0) : Tuple(_fcas_trapezium_points(row)) for row in eachrow(on_grid)]
+    return _trapezia(Tuple(on_grid[!, c] for c in _TRAPEZIUM_COLUMNS))
+end
+
+# One trapezium per row of the `_TRAPEZIUM_COLUMNS` `columns`, read as typed named tuples.
+function _trapezia(columns)
+    rows = (NamedTuple{_TRAPEZIUM_COLUMNS}(values) for values in zip(columns...))
+    return [ismissing(row.DUID) ? (0.0, 0.0, 0.0, 0.0) : Tuple(_fcas_trapezium_points(row)) for row in rows]
 end
 
 

@@ -41,7 +41,7 @@ end
     _tie_break_band_table(sys, grid) -> DataFrame
 
 The energy offer bands of every available unit on `grid`, one row per (side, unit, interval, segment): the `side`
-(an [`OfferSide`](@ref)), the unit's `region` (area name), `device`, `name`, the `stamp`, the offer segment `band`, and
+(an [`OfferSide`](@ref)), the unit's `region` (area name), `device` and `name`, the `stamp`, the offer segment `band`, and
 its `price` and `width` (MW). Only the segments of a unit and side with a positive width at some interval are kept,
 so a band empty throughout the offer series is left out.
 
@@ -54,20 +54,12 @@ A `DataFrame`.
 """
 function _tie_break_band_table(sys::PSY.System, grid)
     # Rows are collected in a vector, which is far cheaper to grow than a `DataFrame`.
-    rows = @NamedTuple{
-        side::OfferSide, region::String, device::PSY.Component, name::String, stamp::DateTime, band::Int, price::Float64,
-        width::Float64,
-    }[]
+    rows = _TieBandRow[]
     for device in PSY.get_available_components(PSY.StaticInjection, sys), side in (OfferSide.GEN, OfferSide.LOAD)
         offer = _energy_offer_view(device, side)
         isnothing(offer) && continue
         region = PSY.get_name(PSY.get_area(PSY.get_bus(device)))
-        for (stamp, curve) in zip(grid, offer.curves)
-            x, y = PSY.get_x_coords(curve), PSY.get_y_coords(curve)
-            for k in 1:(length(x) - 1)
-                push!(rows, (side, region, device, PSY.get_name(device), stamp, k, y[k], x[k + 1] - x[k]))
-            end
-        end
+        _push_band_rows!(rows, side, region, device, grid, offer.curves)
     end
     return @chain DataFrame(rows) begin
         groupby([:side, :name, :band])
@@ -75,6 +67,22 @@ function _tie_break_band_table(sys::PSY.System, grid)
         subset(:positive)
         select(Not(:positive))
     end
+end
+
+const _TieBandRow = @NamedTuple{
+    side::OfferSide, region::String, device::PSY.Component, name::String, stamp::DateTime, band::Int, price::Float64, width::Float64,
+}
+
+# Appends one row per (interval, segment) of `device`'s offer `curves` on `grid`.
+function _push_band_rows!(rows, side, region, device, grid, curves)
+    name = PSY.get_name(device)
+    for (stamp, curve) in zip(grid, curves)
+        x, y = PSY.get_x_coords(curve), PSY.get_y_coords(curve)
+        for k in 1:(length(x) - 1)
+            push!(rows, (side, region, device, name, stamp, k, y[k], x[k + 1] - x[k]))
+        end
+    end
+    return
 end
 
 
@@ -95,19 +103,21 @@ function _tie_break_active_bands(sys::PSY.System)
 end
 
 
-# The tied members of one (side, region, interval) group of bands: the unit, band and tie-break scale of each band in
-# a price-tied group, `w / w_ref` over the widest band of its group.
-function _tie_break_scales(group)
-    rows = NamedTuple.(eachrow(group))
-    tied = NamedTuple{(:device, :name, :band, :scale), Tuple{PSY.Component, String, Int, Float64}}[]
-    for members in tie_groups(rows)
-        reference_width = maximum(rows[i].width for i in members)
+# The tied members of one (side, region, interval) group of bands, from its columns: the unit, band and tie-break
+# scale of each band in a price-tied group, `w / w_ref` over the widest band of its group.
+function _tie_break_scales(price, device, name, band, width)
+    bands = [(; price = p, name = n, band = b) for (p, n, b) in zip(price, name, band)]
+    tied = (; device = PSY.Component[], name = String[], band = Int[], scale = Float64[])
+    for members in tie_groups(bands)
+        reference_width = maximum(width[i] for i in members)
         for i in members
-            scale = tie_break_scale(rows[i].width, reference_width)
-            push!(tied, (; device = rows[i].device, name = rows[i].name, band = rows[i].band, scale))
+            push!(tied.device, device[i])
+            push!(tied.name, name[i])
+            push!(tied.band, band[i])
+            push!(tied.scale, tie_break_scale(width[i], reference_width))
         end
     end
-    return DataFrame(tied)
+    return tied
 end
 
 
@@ -131,7 +141,7 @@ the energy offer series written before it in the NEMDE input stage.
 function _set_tie_break!(sys::PSY.System, grid = _nemde_grid(sys))
     tied = @chain _tie_break_band_table(sys, grid) begin
         groupby([:side, :region, :stamp])
-        combine(_tie_break_scales)
+        combine([:price, :device, :name, :band, :width] => _tie_break_scales => AsTable)
     end
     stamps = DataFrame(; stamp = collect(grid))
     for group in groupby(tied, [:side, :name, :band])
