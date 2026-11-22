@@ -301,7 +301,7 @@ function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; interven
     invoked_by_version = groupby(invoked, [:GENCONID, :GENCONID_EFFECTIVEDATE, :GENCONID_VERSIONNO])
 
     # Drop the last point: `date_range`'s N+1 timestamps label N interval starts, matching
-    # `read_fcas_bids`/`_set_demand!`'s half-open convention.
+    # `read_fcas_bids`/`set_demand!`'s half-open convention.
     full_grid = collect(date_range)[1:(end - 1)]
     resolution = step(date_range)
 
