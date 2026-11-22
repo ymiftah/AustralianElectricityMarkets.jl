@@ -556,6 +556,20 @@ end
         @test any(startswith("\$BW01"), get_skipped_constraints(unavailable_sys).constraint)
     end
 
+    @testset "zero-flow version with a missing effective date is skipped" begin
+        versions = DataFrame(
+            GENCONID = ["VT_ZERO", "VT_ZERO"],
+            GENCONID_EFFECTIVEDATE = [missing, DateTime(2013, 8, 21)],
+            GENCONID_VERSIONNO = [1, 1],
+        )
+        definitions, terms = @test_logs (:warn, r"unrecognised version") begin
+            AustralianElectricityMarkets._zero_flow_constraint_definitions(versions)
+        end
+        @test definitions.GENCONID == ["VT_ZERO"]
+        @test definitions.EFFECTIVEDATE == [DateTime(2013, 8, 21)]
+        @test nrow(terms) == 1
+    end
+
     @testset "throws when DISPATCHCONSTRAINT is not cached" begin
         empty_db = aem_connect(HiveConfiguration(hive_location = mktempdir(), filesystem = "file"))
         empty_sys = nem_system(db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
