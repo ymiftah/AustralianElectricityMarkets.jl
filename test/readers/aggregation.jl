@@ -178,8 +178,5 @@ end
     expected = inwindow(read_demand(db, (bucket - Month(1), window[2]); resolution = Week(1)))
     @test !isempty(expected)
     @test isequal(sorted(read_demand(db, window; resolution = Week(1))), sorted(expected))
-    uigf = AustralianElectricityMarkets.Readers._read_regional_renewable_uigf
-    expected_uigf = inwindow(uigf(db, (bucket - Month(1), window[2]); resolution = Week(1), intervention = 0))
-    @test !isempty(expected_uigf)
-    @test isequal(sorted(uigf(db, window; resolution = Week(1), intervention = 0)), sorted(expected_uigf))
+    @test any(!ismissing, expected.SS_SOLAR_UIGF)
 end

@@ -31,7 +31,6 @@ end
 
 function read_published_interval(db, steps::StepRange{DateTime}; intervention::Integer = 0)
     _check_intervention(intervention)
-    foreach(table -> _require_cached(db, table), (:DISPATCHLOAD, :DISPATCHINTERCONNECTORRES))
     interval = (first(steps), last(steps) + Minute(5))
     dispatch = _query(
         db,

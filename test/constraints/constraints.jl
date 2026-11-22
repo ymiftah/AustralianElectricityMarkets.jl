@@ -682,9 +682,9 @@ end
     )
     @test isnothing(check(sys))
     registered = AustralianElectricityMarkets.Readers._registered_duids
-    @test registered(db, ["PHANTOM1", "BW01", "NOT_A_DUID"], first(date_range), last(date_range)) == Set(["PHANTOM1", "BW01"])
-    @test registered(db, ["BW01"], DateTime(1990, 1, 1), DateTime(1990, 1, 2)) == Set{String}()
-    @test isempty(registered(db, String[], first(date_range), last(date_range)))
+    @test registered(db, ["PHANTOM1", "BW01", "NOT_A_DUID"], date_range) == Set(["PHANTOM1", "BW01"])
+    @test registered(db, ["BW01"], DateTime(1990, 1, 1):Minute(5):DateTime(1990, 1, 2)) == Set{String}()
+    @test isempty(registered(db, String[], date_range))
 
     # A violated zero left-hand side (0 >= 5) is never silently omitted.
     sys, added, skipped = build_with_rhs(5.0)

@@ -83,8 +83,36 @@ A `DataFrame` with `INTERCONNECTORID`, `LOSSSEGMENT` and `MWBREAKPOINT`, sorted 
 within an interconnector. Throws an `ArgumentError` when `LOSSMODEL` is not cached.
 """
 function read_interconnector_loss_breakpoints(db; as_of::Union{Date, DateTime})
-    return _read_loss_model_table(db, :LOSSMODEL, "LOSSSEGMENT", "MWBREAKPOINT", "MWBREAKPOINT", as_of)
+    _require_cached(db, :LOSSMODEL)
+    table = read_hive(db, :LOSSMODEL)
+    return _query(
+        db,
+        """
+        WITH raw AS (
+            SELECT * FROM $table
+            WHERE EFFECTIVEDATE <= ?
+            QUALIFY row_number() OVER (
+                PARTITION BY INTERCONNECTORID, EFFECTIVEDATE, VERSIONNO, LOSSSEGMENT
+                ORDER BY archive_month DESC
+            ) = 1
+        ),
+        latest AS (
+            SELECT INTERCONNECTORID, max_by(EFFECTIVEDATE, (EFFECTIVEDATE, VERSIONNO)) AS EFFECTIVEDATE,
+                   max_by(VERSIONNO, (EFFECTIVEDATE, VERSIONNO)) AS VERSIONNO
+            FROM raw GROUP BY INTERCONNECTORID
+        )
+        SELECT r.INTERCONNECTORID, r.LOSSSEGMENT, TRY_CAST(r.MWBREAKPOINT AS DOUBLE) AS MWBREAKPOINT
+        FROM raw r
+        INNER JOIN latest l
+          ON r.INTERCONNECTORID = l.INTERCONNECTORID
+             AND r.EFFECTIVEDATE = l.EFFECTIVEDATE AND r.VERSIONNO = l.VERSIONNO
+        WHERE r.MWBREAKPOINT IS NOT NULL
+        ORDER BY r.INTERCONNECTORID, MWBREAKPOINT
+        """,
+        [as_of],
+    )
 end
+
 
 """
     read_interconnector_demand_coefficients(db; as_of) -> DataFrame
@@ -101,14 +129,8 @@ A `DataFrame` with `INTERCONNECTORID`, `REGIONID` and `DEMANDCOEFFICIENT`. Throw
 `ArgumentError` when `LOSSFACTORMODEL` is not cached.
 """
 function read_interconnector_demand_coefficients(db; as_of::Union{Date, DateTime})
-    return _read_loss_model_table(db, :LOSSFACTORMODEL, "REGIONID", "DEMANDCOEFFICIENT", "r.REGIONID", as_of)
-end
-
-# `INTERCONNECTORID`, `key` and non-null `value` of each interconnector's latest `table_name` version
-# effective on or before `as_of`, sorted by interconnector then `order_by`.
-function _read_loss_model_table(db, table_name::Symbol, key::String, value::String, order_by::String, as_of)
-    _require_cached(db, table_name)
-    table = read_hive(db, table_name)
+    _require_cached(db, :LOSSFACTORMODEL)
+    table = read_hive(db, :LOSSFACTORMODEL)
     return _query(
         db,
         """
@@ -116,7 +138,7 @@ function _read_loss_model_table(db, table_name::Symbol, key::String, value::Stri
             SELECT * FROM $table
             WHERE EFFECTIVEDATE <= ?
             QUALIFY row_number() OVER (
-                PARTITION BY INTERCONNECTORID, EFFECTIVEDATE, VERSIONNO, $key
+                PARTITION BY INTERCONNECTORID, EFFECTIVEDATE, VERSIONNO, REGIONID
                 ORDER BY archive_month DESC
             ) = 1
         ),
@@ -125,13 +147,13 @@ function _read_loss_model_table(db, table_name::Symbol, key::String, value::Stri
                    max_by(VERSIONNO, (EFFECTIVEDATE, VERSIONNO)) AS VERSIONNO
             FROM raw GROUP BY INTERCONNECTORID
         )
-        SELECT r.INTERCONNECTORID, r.$key, TRY_CAST(r.$value AS DOUBLE) AS $value
+        SELECT r.INTERCONNECTORID, r.REGIONID, TRY_CAST(r.DEMANDCOEFFICIENT AS DOUBLE) AS DEMANDCOEFFICIENT
         FROM raw r
         INNER JOIN latest l
           ON r.INTERCONNECTORID = l.INTERCONNECTORID
              AND r.EFFECTIVEDATE = l.EFFECTIVEDATE AND r.VERSIONNO = l.VERSIONNO
-        WHERE r.$value IS NOT NULL
-        ORDER BY r.INTERCONNECTORID, $order_by
+        WHERE r.DEMANDCOEFFICIENT IS NOT NULL
+        ORDER BY r.INTERCONNECTORID, r.REGIONID
         """,
         [as_of],
     )
@@ -208,7 +230,6 @@ A `DataFrame` with `SETTLEMENTDATE`, `INTERCONNECTORID`, `METEREDMWFLOW`, `EXPOR
 """
 function read_interconnector_limits(db, date_range; intervention::Integer = 0)
     _check_intervention(intervention)
-    _require_cached(db, :DISPATCHINTERCONNECTORRES)
     source = read_hive(db, :DISPATCHINTERCONNECTORRES, date_range)
     return _query(
         db,

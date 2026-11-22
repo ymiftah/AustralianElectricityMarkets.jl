@@ -496,7 +496,7 @@ function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; interven
 
     # A dropped DUID registered in the window is a unit the build left out; one that is not was retired or not yet registered.
     dropped_keys = String[term["key"] for terms in values(merge(dropped, vacuous_dropped)) for term in terms]
-    registered = Readers._registered_duids(db, dropped_keys, start_date, last(date_range) - resolution)
+    registered = Readers._registered_duids(db, dropped_keys, date_range)
     for terms in values(merge(dropped, vacuous_dropped)), term in terms
         term["registered"] = term["key"] in registered
     end

@@ -23,15 +23,13 @@ each ramp rate and `AVAILABILITY` across its intervals.
 
 # Returns
 A `DataFrame` with `SETTLEMENTDATE`, `DUID`, `INITIALMW`, `RAMPUPRATE`, `RAMPDOWNRATE`,
-`AVAILABILITY`. Throws an `ArgumentError` when `DISPATCHLOAD` is not cached or lacks a column.
+`AVAILABILITY`. Throws an `ArgumentError` when `DISPATCHLOAD` has no cached partition for the range.
 """
 function read_dispatch_limits(db, date_range; intervention::Integer = 0, resolution::Dates.Period = Minute(5))
     _check_intervention(intervention)
-    _require_cached(db, :DISPATCHLOAD)
     start_date, end_date = first(date_range), last(date_range)
     # A row ceiled into the range has its raw stamp in [start - resolution, end).
     source = read_hive(db, :DISPATCHLOAD, (start_date - resolution, end_date))
-    _require_columns(:DISPATCHLOAD, _table_schema(db, source), ["RAMPUPRATE", "RAMPDOWNRATE", "AVAILABILITY"])
     bucket = _ceil_timestamp_sql("SETTLEMENTDATE", resolution)
     return _query(
         db,
@@ -85,8 +83,7 @@ upper limit NEMDE applies to each semi-scheduled unit in each dispatch interval.
 
 # Returns
 A `DataFrame` with `SETTLEMENTDATE`, `DUID` and `UIGF` (MW). Throws an `ArgumentError` when
-`DISPATCHLOAD` or `DUDETAILSUMMARY` is not cached, `DUDETAILSUMMARY` has no `SCHEDULE_TYPE`, or
-`DISPATCHLOAD` has no `UIGF` column in its cached partitions.
+`DISPATCHLOAD` has no cached partition for the range or `DUDETAILSUMMARY` is not cached.
 
 # Example
 ```julia
@@ -95,14 +92,11 @@ uigf = read_uigf(db, Date(2025, 1, 1):Date(2025, 1, 2); resolution = Minute(30))
 """
 function read_uigf(db, date_range; resolution::Dates.Period = Minute(5), intervention::Integer = 0)
     _check_intervention(intervention)
-    _require_cached(db, :DISPATCHLOAD)
     start_date, end_date = DateTime(first(date_range)), DateTime(last(date_range))
     # A row ceiled into the range has its raw stamp in [start - resolution, end).
     source = read_hive(db, :DISPATCHLOAD, (start_date - resolution, end_date))
-    _require_columns(:DISPATCHLOAD, _table_schema(db, source), ["UIGF"])
     _require_cached(db, :DUDETAILSUMMARY)
     summary = read_hive(db, :DUDETAILSUMMARY)
-    _require_columns(:DUDETAILSUMMARY, _table_schema(db, summary), ["SCHEDULE_TYPE"])
     bucket = _ceil_timestamp_sql("SETTLEMENTDATE", resolution)
     return _query(
         db,
@@ -156,20 +150,12 @@ the lesser of bid and telemetered rate.
 A `DataFrame` with `SETTLEMENTDATE`, `DUID`, `INITIALMW`, `AVAILABILITY`, `RAMPUPRATE`,
 `RAMPDOWNRATE`, `UIGF`, `DISPATCHMODE`, `DISPATCHMODETIME`, `AGCSTATUS`, `RAISEREGENABLEMENTMIN`, `RAISEREGENABLEMENTMAX`,
 `LOWERREGENABLEMENTMIN`, `LOWERREGENABLEMENTMAX`, `RAISEREGAVAILABILITY` and `LOWERREGAVAILABILITY`,
-sorted by `DUID` and `SETTLEMENTDATE`. Throws an `ArgumentError` when `DISPATCHLOAD` is not cached or
-a cached partition lacks one of these columns.
+sorted by `DUID` and `SETTLEMENTDATE`. Throws an `ArgumentError` when `DISPATCHLOAD` has no cached
+partition for the range.
 """
 function read_unit_conditions(db, date_range; intervention::Integer = 0)
     _check_intervention(intervention)
-    _require_cached(db, :DISPATCHLOAD)
     source = read_hive(db, :DISPATCHLOAD, date_range)
-    _require_columns(
-        :DISPATCHLOAD, _table_schema(db, source),
-        [
-            "UIGF", "DISPATCHMODE", "DISPATCHMODETIME", "AGCSTATUS", "RAISEREGENABLEMENTMIN", "RAISEREGENABLEMENTMAX",
-            "LOWERREGENABLEMENTMIN", "LOWERREGENABLEMENTMAX", "RAISEREGAVAILABILITY", "LOWERREGAVAILABILITY",
-        ],
-    )
     return _query(
         db,
         """

@@ -17,7 +17,6 @@ A `DataFrame` with `SETTLEMENTDATE`, `REGIONID`, `RRP`, `ROP` and `APCFLAG`, sor
 """
 function read_prices(db, date_range; intervention::Integer = 0)
     _check_intervention(intervention)
-    _require_cached(db, :DISPATCHPRICE)
     source = read_hive(db, :DISPATCHPRICE, date_range)
     return _query(
         db,
@@ -60,7 +59,6 @@ FCAS market in `FCAS_BID_TYPES`, sorted by `SETTLEMENTDATE`, `REGIONID` and `BID
 """
 function read_fcas_prices(db, date_range; intervention::Integer = 0)
     _check_intervention(intervention)
-    _require_cached(db, :DISPATCHPRICE)
     source = read_hive(db, :DISPATCHPRICE, date_range)
     prices = _query(
         db,

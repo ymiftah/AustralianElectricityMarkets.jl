@@ -56,16 +56,13 @@ end
     end
 
     @testset "DISPATCHREGIONSUM" begin
-        # The solar UIGF is read by _read_regional_renewable_uigf, which is checked with the same cache.
+        # read_demand also returns the regional solar UIGF, which is checked with the same cache.
         db = damaged_cache(
             AEM_TEST_HIVE_DIR, :DISPATCHREGIONSUM,
             _physical_copy("TRY_CAST(TOTALDEMAND AS DOUBLE) + 500.0 AS TOTALDEMAND, TRY_CAST(SS_SOLAR_UIGF AS DOUBLE) + 9.0 AS SS_SOLAR_UIGF"),
         )
         _check_runs(read_demand, base_db, db, [:REGIONID], :TOTALDEMAND, 500.0)
-        regional_uigf(source, range; intervention) = AustralianElectricityMarkets.Readers._read_regional_renewable_uigf(
-            source, range; resolution = Minute(5), intervention,
-        )
-        _check_runs(regional_uigf, base_db, db, [:REGIONID], :SS_SOLAR_UIGF, 9.0)
+        _check_runs(read_demand, base_db, db, [:REGIONID], :SS_SOLAR_UIGF, 9.0)
     end
 
     @testset "DISPATCHPRICE" begin
