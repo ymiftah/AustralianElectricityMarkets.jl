@@ -54,7 +54,8 @@ end
     @test issorted(AEM.get_unavailable_constraints(sys).constraint)
 
     # The unavailable constraints are recorded in the build report.
-    @test Dict{String, Any}("constraint" => "CS_NEVER", "reason" => "never_invoked") in AEM.get_build_report(sys).unavailable_constraints
+    recorded = AEM.get_build_report(sys).unavailable_constraints
+    @test only(filter(:constraint => ==("CS_NEVER"), recorded).reason) == "never_invoked"
 end
 
 @testset "the contributing-device index matches get_contributing_devices for every constraint" begin

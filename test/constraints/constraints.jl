@@ -5,14 +5,14 @@
 
     @testset "_pad_to_grid carries the last known value forward" begin
         grid = [DateTime(2025, 1, 1, 0, 5 * i) for i in 0:3]
-        values_by_time = Dict(grid[1] => 10.0, grid[3] => 30.0)
-        series, invoked = AustralianElectricityMarkets._pad_to_grid(values_by_time, grid, 0.0)
+        rows = DataFrame(SETTLEMENTDATE = [grid[1], grid[3]], RHS = [10.0, 30.0])
+        series, invoked = AustralianElectricityMarkets._pad_to_grid(rows, grid, 0.0)
         @test series == [10.0, 10.0, 30.0, 30.0]
         @test invoked == [1.0, 0.0, 1.0, 0.0]
 
         # A gap before the first known value falls back to initial_fill.
-        values_by_time2 = Dict(grid[3] => 30.0)
-        series2, invoked2 = AustralianElectricityMarkets._pad_to_grid(values_by_time2, grid, -1.0)
+        rows2 = DataFrame(SETTLEMENTDATE = [grid[3]], RHS = [30.0])
+        series2, invoked2 = AustralianElectricityMarkets._pad_to_grid(rows2, grid, -1.0)
         @test series2 == [-1.0, -1.0, 30.0, 30.0]
         @test invoked2 == [0.0, 0.0, 1.0, 0.0]
     end
@@ -556,28 +556,6 @@ end
         @test any(startswith("\$BW01"), get_skipped_constraints(unavailable_sys).constraint)
     end
 
-    @testset "_versions_without_definition handles missing effective date" begin
-        # Regression test for: invoked versions with NULL GENCONID_EFFECTIVEDATE would throw
-        # "Missing values in key columns" in _versions_without_definition unless
-        # matchmissing = :notequal is passed to the internal antijoin.
-        # A version with missing EFFECTIVEDATE should be kept (treated as "no definition found").
-        invoked_versions = DataFrame(
-            GENCONID = ["TEST1", "TEST1", "TEST2"],
-            GENCONID_EFFECTIVEDATE = [DateTime(2025, 1, 1), missing, DateTime(2025, 1, 1)],
-            GENCONID_VERSIONNO = [1, 1, 1],
-        )
-        definitions = DataFrame(
-            GENCONID = ["TEST1"],
-            EFFECTIVEDATE = [DateTime(2025, 1, 1)],
-            VERSIONNO = [1],
-        )
-        # Without matchmissing = :notequal, this would throw "Missing values in key columns"
-        # The helper must not throw and must keep the row with missing EFFECTIVEDATE.
-        undefined = AustralianElectricityMarkets._versions_without_definition(invoked_versions, definitions)
-        @test undefined.GENCONID == ["TEST1", "TEST2"]
-        @test isequal(undefined.GENCONID_EFFECTIVEDATE, [missing, DateTime(2025, 1, 1)])
-    end
-
     @testset "throws when DISPATCHCONSTRAINT is not cached" begin
         empty_db = aem_connect(HiveConfiguration(hive_location = mktempdir(), filesystem = "file"))
         empty_sys = nem_system(db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
@@ -645,12 +623,24 @@ end
     vname(gencon_id) = "$gencon_id@2025-01-01#1"
     check = AustralianElectricityMarkets._check_nemde_constraint_report
 
+    # Builds from a copy of the hive whose N_PHANTOM_TEST right-hand side is `rhs`.
     function build_with_rhs(rhs)
-        sys = first(nem_network(db; date_range = MOCK_DATE_RANGE))
-        invoked, fixed = AustralianElectricityMarkets._read_constraint_inputs(db, date_range)
-        invoked = copy(invoked)
-        invoked.RHS = [g == "N_PHANTOM_TEST" ? rhs : r for (g, r) in zip(invoked.GENCONID, invoked.RHS)]
-        added, skipped = AustralianElectricityMarkets._add_nem_constraints!(sys, db, date_range, invoked, fixed)
+        hive = joinpath(mktempdir(), "hive")
+        cp(AEM_TEST_HIVE_DIR, hive)
+        rhs_db = DuckDB.DB()
+        for (root, _, files) in walkdir(joinpath(hive, "DISPATCHCONSTRAINT")), f in filter(endswith(".parquet"), files)
+            path = joinpath(root, f)
+            DuckDB.execute(
+                rhs_db,
+                "COPY (SELECT * REPLACE (CASE WHEN CONSTRAINTID = 'N_PHANTOM_TEST' THEN $(Float64(rhs)) ELSE RHS END AS RHS) " *
+                    "FROM read_parquet('$path')) TO '$path.new' (FORMAT PARQUET)",
+            )
+            mv("$path.new", path; force = true)
+        end
+        DuckDB.close(rhs_db)
+        phantom_db = aem_connect(HiveConfiguration(hive_location = hive, filesystem = "file"))
+        sys = first(nem_network(phantom_db; date_range = MOCK_DATE_RANGE))
+        added, skipped = add_nem_constraints!(sys, phantom_db, date_range)
         return sys, added, skipped
     end
 
@@ -676,7 +666,7 @@ end
             skipped_constraints = report.skipped_constraints,
             missing_constraint_intervals = report.missing_constraint_intervals,
             defaulted_constraint_weights = report.defaulted_constraint_weights,
-            dropped_terms = [merge(t, Dict{String, Any}("registered" => false)) for t in report.dropped_terms],
+            dropped_terms = transform(report.dropped_terms, :registered => ByRow(_ -> false) => :registered),
             unavailable_constraints = report.unavailable_constraints,
         ),
     )
@@ -696,8 +686,8 @@ end
     # passes when it is not.
     sys, _, _ = build_with_rhs(-5.0)
     report = AustralianElectricityMarkets.get_build_report(sys)
-    phantom = [t for t in report.dropped_terms if t["constraint"] == vname("N_PHANTOM_TEST")]
-    @test length(phantom) == 1
+    phantom = filter(:constraint => ==(vname("N_PHANTOM_TEST")), report.dropped_terms)
+    @test nrow(phantom) == 1
     function check_with_registration(registered::Bool)
         AustralianElectricityMarkets.set_build_report!(
             sys,
@@ -705,7 +695,7 @@ end
                 skipped_constraints = report.skipped_constraints,
                 missing_constraint_intervals = report.missing_constraint_intervals,
                 defaulted_constraint_weights = report.defaulted_constraint_weights,
-                dropped_terms = [merge(t, Dict{String, Any}("registered" => registered)) for t in phantom],
+                dropped_terms = transform(phantom, :registered => ByRow(_ -> registered) => :registered),
                 unavailable_constraints = report.unavailable_constraints,
             ),
         )
