@@ -137,7 +137,8 @@ end
 Like [`read_bids`](@ref), for the FCAS markets in `FCAS_BID_TYPES`, adding the trapezium columns
 `ENABLEMENTMIN`, `ENABLEMENTMAX`, `LOWBREAKPOINT`, `HIGHBREAKPOINT`, `ROCUP` and `ROCDOWN` from
 `BIDPEROFFER_D`. With a vector of `bid_types` the result carries a `BIDTYPE` column (`BidType`).
-With a `resolution` above five minutes, each bucket's trapezium is that of its last interval.
+With a `resolution` above five minutes, each bucket's trapezium is that of its last interval and its
+`ROCUP` and `ROCDOWN` are averaged.
 """
 function read_fcas_bids(db, date_range, bid_type::BidType; resolution::Union{Nothing, Dates.Period} = nothing)
     return select!(read_fcas_bids(db, date_range, [bid_type]; resolution), Not(:BIDTYPE))
@@ -146,15 +147,17 @@ end
 function read_fcas_bids(
         db, date_range, bid_types::AbstractVector{BidType}; resolution::Union{Nothing, Dates.Period} = nothing,
     )
-    bids = _massage_bids(
-        db, first(date_range), last(date_range); bid_types, keep_bid_type = true, resolution,
-        period_columns = _FCAS_TRAPEZIUM_COLUMNS,
-    )
-    return transform!(bids, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
+    resolution = something(resolution, Minute(5))
+    window = (first(date_range) - (resolution - Minute(5)), last(date_range))
+    return @chain read_offers(db, window; markets = bid_types) begin
+        _aggregate_offers(resolution, date_range)
+        select(
+            :SETTLEMENTDATE, :DUID, :DIRECTION, :INTERVAL_DATETIME, :PRICEBANDARRAY, :BANDAVAILARRAY,
+            :MAXAVAIL, :MINIMUMLOAD, :DAILYENERGYCONSTRAINT, :BIDTYPE,
+            :ENABLEMENTMIN, :LOWBREAKPOINT, :HIGHBREAKPOINT, :ENABLEMENTMAX, :ROCUP, :ROCDOWN,
+        )
+    end
 end
-
-# The FCAS trapezium columns of `BIDPEROFFER_D`; `MAXAVAIL` comes with the offer bands instead.
-const _FCAS_TRAPEZIUM_COLUMNS = ["ENABLEMENTMIN", "LOWBREAKPOINT", "HIGHBREAKPOINT", "ENABLEMENTMAX", "ROCUP", "ROCDOWN"]
 
 
 """

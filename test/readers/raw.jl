@@ -147,7 +147,7 @@ let
 
     @testset "read_bids rejects period offers without a price-band row" begin
         partial = mktempdir()
-        for table in ("BIDPEROFFER_D", "BIDDAYOFFER_D")
+        for table in ("BIDPEROFFER_D", "BIDDAYOFFER_D", "BIDDAYOFFER")
             cp(joinpath(hive_dir, table), joinpath(partial, table))
         end
         let ddb = DuckDB.DB(), conn = DuckDB.connect(ddb)
@@ -167,18 +167,15 @@ let
         @test occursin("BW03", err.msg)
     end
 
-    @testset "_extract_power_bids keeps empty bands as zero-width segments on request" begin
+    @testset "_extract_power_bids keeps empty bands as zero-width segments" begin
         row(direction) = (
             DIRECTION = direction, PRICEBANDARRAY = [10.0, 20.0, 30.0], BANDAVAILARRAY = [5.0, 0.0, 7.0],
         )
-        dropped = AustralianElectricityMarkets._extract_power_bids(row("GEN"))
-        @test PowerSystems.get_x_coords(dropped) == [0.0, 5.0, 12.0]
-        @test PowerSystems.get_y_coords(dropped) == [10.0, 30.0]
-        kept = AustralianElectricityMarkets._extract_power_bids(row("GEN"); keep_empty_bands = true)
+        kept = AustralianElectricityMarkets._extract_power_bids(row("GEN"))
         @test PowerSystems.get_x_coords(kept) == [0.0, 5.0, 5.0, 12.0]
         @test PowerSystems.get_y_coords(kept) == [10.0, 20.0, 30.0]
         # LOAD curves list the bands in reverse, so segment k stays the same price band.
-        load = AustralianElectricityMarkets._extract_power_bids(row("LOAD"); keep_empty_bands = true)
+        load = AustralianElectricityMarkets._extract_power_bids(row("LOAD"))
         @test PowerSystems.get_y_coords(load) == [30.0, 20.0, 10.0]
         @test PowerSystems.get_x_coords(load) == [0.0, 7.0, 7.0, 12.0]
     end

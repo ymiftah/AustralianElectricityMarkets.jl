@@ -100,28 +100,23 @@
         @test isequal(select(subset(both, :BIDTYPE => ByRow(==(BidType.RAISEREG))), Not(:BIDTYPE)), reg_bids)
     end
 
-    @testset "FCAS period fields share the price and quantity rows" begin
-        R = AustralianElectricityMarkets.Readers
+    @testset "FCAS bids at a coarse resolution carry the trapezium of the last interval" begin
         markets = [BidType.RAISE6SEC, BidType.RAISEREG]
-        projected = R._massage_bids(
-            db, first(date_range), last(date_range); bid_types = markets,
-            keep_bid_type = true, period_columns = R._FCAS_TRAPEZIUM_COLUMNS,
-        )
-        expected = read_fcas_bids(db, date_range, markets)
-        transform!(projected, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
         keys = [:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION, :BIDTYPE]
-        @test isequal(sort(projected, keys), sort(expected, keys))
-        @test_throws ArgumentError R._massage_bids(
-            db, first(date_range), last(date_range); resolution = Minute(15), in_force = true,
-        )
-        # Each coarse bucket carries the trapezium of its last native interval.
-        trapezium = select(expected, keys, Symbol.(R._FCAS_TRAPEZIUM_COLUMNS))
-        for resolution in (nothing, Minute(5), Minute(15))
-            bands = R._massage_bids(db, first(date_range), last(date_range); bid_types = markets, keep_bid_type = true, resolution)
-            transform!(bands, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
-            legacy = innerjoin(bands, trapezium; on = keys)
+        native = read_fcas_bids(db, date_range, markets)
+        offers = read_offers(db, date_range; markets)
+        @test isequal(sort(select(native, keys, :MAXAVAIL, :ENABLEMENTMIN), keys), sort(select(offers, keys, :MAXAVAIL, :ENABLEMENTMIN), keys))
+        trapezium = [:ENABLEMENTMIN, :LOWBREAKPOINT, :HIGHBREAKPOINT, :ENABLEMENTMAX]
+        for resolution in (Minute(5), Minute(15))
             actual = read_fcas_bids(db, date_range, markets; resolution)
-            @test isequal(sort(actual, keys), sort(legacy, keys))
+            @test all(first(date_range) .<= actual.INTERVAL_DATETIME .< last(date_range))
+            bucketed = transform(native, :INTERVAL_DATETIME => ByRow(t -> ceil(t, resolution)) => :INTERVAL_DATETIME)
+            last_native = @chain bucketed begin
+                groupby(keys)
+                combine(trapezium .=> last .=> trapezium)
+                subset(:INTERVAL_DATETIME => ByRow(t -> first(date_range) <= t < last(date_range)))
+            end
+            @test isequal(sort(select(actual, keys, trapezium), keys), sort(last_native, keys))
         end
     end
 
