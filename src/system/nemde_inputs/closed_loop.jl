@@ -135,10 +135,8 @@ end
 
 function _ramp_inputs!(inputs::ClosedLoopInputs)
     if isnothing(inputs.ramp)
-        telemetry = _nem_unit_data(inputs.device).telemetry
-        up = _bid_series(inputs.device, telemetry.ramp_up_limit, :ramp_up_limit)
-        hours = Dates.value(Millisecond(up.resolution)) / 3_600_000
-        inputs.ramp = _ClosedLoopRamp(_storage_ramp_inputs(inputs.device, up, hours))
+        hours = Dates.value(Millisecond(inputs.resolution)) / 3_600_000
+        inputs.ramp = _ClosedLoopRamp(_storage_ramp_inputs(inputs.device, inputs.stamps, hours))
     end
     return inputs.ramp
 end
@@ -147,8 +145,8 @@ end
 function _fixed_load_inputs!(inputs::ClosedLoopInputs)
     if isnothing(inputs.fixed_load)
         inputs.fixed_load = _ClosedLoopFixedLoad(
-            _fixed_load_mw_series(inputs.device, OfferSide.GEN, inputs.stamps),
-            _fixed_load_mw_series(inputs.device, OfferSide.LOAD, inputs.stamps),
+            _energy_bid_values(inputs.device, OfferSide.GEN, :fixed_load, inputs.stamps),
+            _energy_bid_values(inputs.device, OfferSide.LOAD, :fixed_load, inputs.stamps),
         )
     end
     return inputs.fixed_load

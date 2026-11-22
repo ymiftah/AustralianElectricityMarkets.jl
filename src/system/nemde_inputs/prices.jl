@@ -2,46 +2,36 @@
 
 
 """
-    _day_band_prices(curves::Vector{PiecewiseStepData}, stamps_in_problem::AbstractVector{Bool}, label::AbstractString) -> NTuple{10, Float64}
+    _day_band_prices(curves::Vector{PiecewiseStepData}, label::AbstractString) -> NTuple{10, Float64}
 
-The band prices of `curves` at the first dispatch interval, padded with `0.0` to ten bands. Throws an
-`ArgumentError` when no stamp is a dispatch interval, the prices at any other dispatch interval differ, or a curve in
-the dispatch range has more than ten bands.
+The band prices of `curves`, the offer curves of the dispatch intervals, padded with `0.0` to ten bands. Throws an
+`ArgumentError` when `curves` is empty, the prices differ between intervals, or a curve has more than ten bands.
 
 # Arguments
-- `curves`: the offer curves, one per stamp.
-- `stamps_in_problem`: which stamps are dispatch intervals.
+- `curves`: the offer curves, one per dispatch interval.
 - `label`: names the bid in error messages.
 
 # Returns
 An `NTuple{10, Float64}`.
 """
-function _day_band_prices(
-        curves::Vector{PSY.PiecewiseStepData}, stamps_in_problem::AbstractVector{Bool}, label::AbstractString,
+function _day_band_prices(curves::Vector{PSY.PiecewiseStepData}, label::AbstractString)
+    isempty(curves) && throw(ArgumentError("$label has no offer curve in the dispatch range"))
+    prices = unique(
+        map(curves) do curve
+            y = PSY.get_y_coords(curve)
+            length(y) <= 10 || throw(ArgumentError("$label has $(length(y)) bands, more than the ten NEMDE allows"))
+            return ntuple(i -> i <= length(y) ? Float64(y[i]) : 0.0, 10)
+        end,
     )
-    prices = nothing
-    for (curve, in_problem) in zip(curves, stamps_in_problem)
-        in_problem || continue
-        y = PSY.get_y_coords(curve)
-        length(y) <= 10 || throw(ArgumentError("$label has $(length(y)) bands, more than the ten NEMDE allows"))
-        padded = ntuple(i -> i <= length(y) ? Float64(y[i]) : 0.0, 10)
-        if isnothing(prices)
-            prices = padded
-        elseif padded != prices
-            throw(
-                ArgumentError(
-                    "band prices of $label vary within the dispatch range; a NEMDE system covers one trading day",
-                ),
-            )
-        end
-    end
-    isnothing(prices) && throw(ArgumentError("$label has no offer curve in the dispatch range"))
-    return prices
+    length(prices) == 1 || throw(
+        ArgumentError("band prices of $label vary within the dispatch range; a NEMDE system covers one trading day"),
+    )
+    return only(prices)
 end
 
 
 """
-    _set_band_prices!(sys::PSY.System) -> Nothing
+    _set_band_prices!(sys::PSY.System, grid = _nemde_grid(sys)) -> Nothing
 
 Sets `band_prices` of each energy, FCAS and MNSP bid of `sys` through [`_day_band_prices`](@ref). An energy bid takes
 the prices of its side's `energy_offer` series (loss-factor referred) over the dispatch intervals; an FCAS bid of a
@@ -52,12 +42,14 @@ Requires the energy offer series.
 
 # Arguments
 - `sys`: the `System` whose bids are updated.
+- `grid`: the timestamps the single time series of `sys` share; read from `sys` by default.
 
 # Returns
 `nothing`.
 """
-function _set_band_prices!(sys::PSY.System)
-    dispatch_stamps = Set(_dispatch_interval_stamps(sys))
+function _set_band_prices!(sys::PSY.System, grid = _nemde_grid(sys))
+    # The final stamp of the grid is not a dispatch interval.
+    dispatch(curves) = curves[1:(end - 1)]
     for device in _bidding_devices(sys)
         cost = _nem_offer_cost(device)
         isnothing(cost) && continue
@@ -65,30 +57,20 @@ function _set_band_prices!(sys::PSY.System)
             side = _energy_offer_side(bid.direction)
             view = _energy_offer_view(device, side)
             isnothing(view) && continue
-            label = "$(PSY.get_name(device)) ENERGY $(side)"
-            prices = _day_band_prices(view.curves, [t in dispatch_stamps for t in view.timestamps], label)
+            prices = _day_band_prices(dispatch(view.curves), "$(PSY.get_name(device)) ENERGY $(side)")
             _set_energy_bid!(cost, _with_band_prices(bid, prices))
         end
         for bid in copy(get_fcas_bids(cost))
             isnothing(_fcas_bid_side(device, bid)) && continue
-            name = IS.get_name(_fcas_series_key(device, bid.offer_curves, :offer_curves))
-            series = PSY.get_time_series_array(PSY.SingleTimeSeries, device, name)
-            curves = collect(values(series))
-            label = "$(PSY.get_name(device)) $(bid.service) $(bid.direction)"
-            prices = _day_band_prices(curves, [t in dispatch_stamps for t in PSY.TimeSeries.timestamp(series)], label)
+            curves = _values_on_grid(device, bid.offer_curves, grid; field = :offer_curves)
+            prices = _day_band_prices(dispatch(curves), "$(PSY.get_name(device)) $(bid.service) $(bid.direction)")
             _set_fcas_bid!(cost, _with_band_prices(bid, prices))
         end
     end
     for device in PSY.get_components(PSY.AreaInterchange, sys), bid in collect(PSY.get_supplemental_attributes(NEMMNSPBid, device))
-        curve = bid.offer_curves
-        label = "$(PSY.get_name(device)) MNSP $(bid.direction)"
-        if curve isa PSY.PiecewiseStepData
-            prices = _day_band_prices([curve], [true], label)
-        else
-            series = PSY.get_time_series_array(PSY.SingleTimeSeries, device, IS.get_name(curve))
-            stamps = PSY.TimeSeries.timestamp(series)
-            prices = _day_band_prices(collect(values(series)), [t in dispatch_stamps for t in stamps], label)
-        end
+        # A static curve is its own prices.
+        curves = bid.offer_curves isa PSY.PiecewiseStepData ? [bid.offer_curves] : dispatch(_values_on_grid(device, bid.offer_curves, grid))
+        prices = _day_band_prices(curves, "$(PSY.get_name(device)) MNSP $(bid.direction)")
         PSY.remove_supplemental_attribute!(sys, device, bid)
         PSY.add_supplemental_attribute!(sys, device, _with_band_prices(bid, prices))
     end
@@ -96,20 +78,7 @@ function _set_band_prices!(sys::PSY.System)
 end
 
 # `bid` with its `band_prices` replaced.
-function _with_band_prices(bid::NEMEnergyBid, prices::NTuple{10, Float64})
-    return NEMEnergyBid(;
-        (f => getfield(bid, f) for f in fieldnames(NEMEnergyBid) if f != :band_prices)..., band_prices = prices,
-    )
-end
-
-function _with_band_prices(bid::NEMFCASBid, prices::NTuple{10, Float64})
-    return NEMFCASBid(;
-        (f => getfield(bid, f) for f in fieldnames(NEMFCASBid) if f != :band_prices)..., band_prices = prices,
-    )
-end
-
-function _with_band_prices(bid::NEMMNSPBid, prices::NTuple{10, Float64})
-    return NEMMNSPBid(;
-        (f => getfield(bid, f) for f in fieldnames(NEMMNSPBid) if f ∉ (:band_prices, :internal))..., band_prices = prices,
-    )
+function _with_band_prices(bid, prices::NTuple{10, Float64})
+    fields = (f for f in fieldnames(typeof(bid)) if f ∉ (:band_prices, :internal))
+    return typeof(bid)(; (f => getfield(bid, f) for f in fields)..., band_prices = prices)
 end

@@ -152,36 +152,34 @@ end
 
 
 """
-    _set_fast_start_inputs!(sys::PSY.System) -> Nothing
+    _set_fast_start_inputs!(sys::PSY.System, grid = _nemde_grid(sys)) -> Nothing
 
 Adds, for each NEM dispatch device of `sys` with [`has_fast_start_profile`](@ref) and a time-series observed
-starting output, the series named by [`NEM_FAST_START_SERIES`](@ref) on the timestamps of that output: the
+starting output, the series named by [`NEM_FAST_START_SERIES`](@ref) on `grid`: the
 fast-start flag, the starting mode and the capped time in mode of [`observed_unit_states`](@ref). A repeat call
 replaces the series.
 
 # Arguments
 - `sys`: the system whose observed state and bids [`nem_system`](@ref) attached.
+- `grid`: the timestamps the single time series of `sys` share; read from `sys` by default.
 
 # Returns
 `nothing`.
 """
-function _set_fast_start_inputs!(sys::PSY.System)
+function _set_fast_start_inputs!(sys::PSY.System, grid = _nemde_grid(sys))
     _foreach_nem_dispatch_device(sys) do device
         has_fast_start_profile(device) || return
         observed = get_observed_state(device)
         observed.initial_mw isa IS.StaticTimeSeriesKey || return
-        name = PSY.get_name(observed.initial_mw)
-        stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, name)
-        resolution = IS.get_resolution(PSY.get_time_series(PSY.SingleTimeSeries, device, name))
-        states = observed_unit_states(device, stamps)
-        flags = [is_fast_start(p) ? 1.0 : 0.0 for p in _fast_start_profile_window(device, stamps)]
+        states = observed_unit_states(device, grid)
+        flags = [is_fast_start(p) ? 1.0 : 0.0 for p in _fast_start_profile_window(device, grid)]
         series = (
             NEM_FAST_START_SERIES.flag => flags,
             NEM_FAST_START_SERIES.start_mode => [Float64(s.dispatch_mode) for s in states],
             NEM_FAST_START_SERIES.time_in_mode => [s.time_in_mode for s in states],
         )
         for (series_name, values) in series
-            replace_single_series!(sys, device, single_series(series_name, first(stamps), values, resolution))
+            replace_single_series!(sys, device, single_series(series_name, first(grid), values, step(grid)))
         end
         return
     end

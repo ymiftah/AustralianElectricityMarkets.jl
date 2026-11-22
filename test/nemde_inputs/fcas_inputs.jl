@@ -30,8 +30,8 @@ function _raw_trapeziums(device, service::BidType, start, horizon::Integer; decr
     AEM = AustralianElectricityMarkets
     bid = AEM._fcas_side_bid(device, service, AEM.offer_side(decremental))
     stamps = [start + (i - 1) * Minute(5) for i in 1:horizon]
-    points = AEM._fcas_bid_window(device, bid.trapezium, :trapezium, stamps)
-    max_avail = AEM._fcas_bid_window(device, bid.max_avail, :max_avail, stamps)
+    points = AEM._values_on_grid(device, bid.trapezium, stamps; field = :trapezium)
+    max_avail = AEM._values_on_grid(device, bid.max_avail, stamps; field = :max_avail)
     return [
         AEM.FCASTrapezium(;
             enablement_min = Float64(p[1]), low_breakpoint = Float64(p[2]), high_breakpoint = Float64(p[3]),
@@ -157,11 +157,10 @@ end
                     ]
                     window = _fcas_writer_window(device, start_date, horizon; resolution)
                     # The AGC and UIGF inputs of the writer, read from the same telemetry.
-                    enablement = is_regulation ? AEM._fcas_pair_window(
-                            device,
-                            service == BidType.RAISEREG ? telemetry.raise_reg_enablement : telemetry.lower_reg_enablement,
-                            window.stamps, window.base,
-                        ) : (nothing, nothing)
+                    pairs = AEM._values_on_grid(
+                        device, service == BidType.RAISEREG ? telemetry.raise_reg_enablement : telemetry.lower_reg_enablement, window.stamps,
+                    )
+                    enablement = is_regulation ? ([p[1] / window.base for p in pairs], [p[2] / window.base for p in pairs]) : (nothing, nothing)
                     agc_max = is_regulation ? AEM._fcas_agc_capability(window, device, AEM._fcas_ramp_rate_service(device, service)) : nothing
                     input_at(series, i) = (isnothing(series) || isnan(series[i])) ? nothing : series[i]
                     expected = [

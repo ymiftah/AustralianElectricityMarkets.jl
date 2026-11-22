@@ -19,7 +19,8 @@ include("nemde_inputs/closed_loop.jl")
     _set_nemde_inputs!(sys::PSY.System) -> Nothing
 
 Writes the NEMDE input series derived from the built inputs of `sys`, once and in a fixed order, after checking
-that its single time series are at the five-minute dispatch interval. Called by [`nem_system`](@ref) before its input
+that its single time series are at the five-minute dispatch interval. Every series sits on one grid, which the
+writers read each bid and telemetry field on. Called by [`nem_system`](@ref) before its input
 checks. The writers, in order:
 
 - `_set_referred_energy_offers!`: energy offer curves, band prices referred by the side's loss factor.
@@ -43,16 +44,17 @@ checks. The writers, in order:
 """
 function _set_nemde_inputs!(sys::PSY.System)
     _check_nemde_resolution(sys)
-    _set_referred_energy_offers!(sys)
-    _set_mnsp_fixed_loads!(sys)
-    _set_dispatch_limits!(sys)
-    _set_observed_state_inputs!(sys)
-    _set_fast_start_inputs!(sys)
-    _set_fcas_effective_offers!(sys)
+    grid = _nemde_grid(sys)
+    _set_referred_energy_offers!(sys, grid)
+    _set_mnsp_fixed_loads!(sys, grid)
+    _set_dispatch_limits!(sys, grid)
+    _set_observed_state_inputs!(sys, grid)
+    _set_fast_start_inputs!(sys, grid)
+    _set_fcas_effective_offers!(sys, grid)
     _set_tie_break!(sys)
     _set_loss_demand_coefficients!(sys)
     _set_constraint_availability!(sys)
-    _set_band_prices!(sys)
+    _set_band_prices!(sys, grid)
     _set_nemde_forecasts!(sys)
     _set_nemde_availability!(sys)
     return

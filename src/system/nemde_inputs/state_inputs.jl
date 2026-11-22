@@ -32,14 +32,6 @@ function _unobserved_stamp_mask(device, stamps::AbstractVector{DateTime})
 end
 
 
-# The values of one field of `device`'s observed state over `stamps`, as Float64: a static value is repeated.
-function _observed_grid(device, field::Symbol, stamps::AbstractVector{DateTime})
-    value = getproperty(get_observed_state(device), field)
-    value isa IS.StaticTimeSeriesKey || return fill(Float64(value), length(stamps))
-    return Float64.(IS.get_time_series_values(device, value; start_time = first(stamps), len = length(stamps)))
-end
-
-
 """
     observed_unit_states(device, stamps::AbstractVector{DateTime}) -> Vector{NEMUnitState}
 
@@ -61,9 +53,10 @@ when `device` has no NEM observed state, when the dispatch mode is not finite at
 interval is observed, or when the mode time of a fast-start unit in modes 1 to 4 is not finite.
 """
 function observed_unit_states(device, stamps::AbstractVector{DateTime})::Vector{NEMUnitState}
-    initial = _observed_grid(device, :initial_mw, stamps)
-    mode = _observed_grid(device, :dispatch_mode, stamps)
-    mode_time = _observed_grid(device, :dispatch_mode_time, stamps)
+    observed = get_observed_state(device)
+    initial = _values_on_grid(device, observed.initial_mw, stamps)
+    mode = _values_on_grid(device, observed.dispatch_mode, stamps)
+    mode_time = _values_on_grid(device, observed.dispatch_mode_time, stamps)
     profiles = _fast_start_profile_window(device, stamps)
     unobserved = _unobserved_stamp_mask(device, stamps)
     previous = _unobserved_stamp_mask(device, stamps .- Minute(5))
@@ -101,25 +94,14 @@ end
 # The starting output in MW at each of `stamps`, zero where the build does not observe the unit. It needs
 # only the output, so a stamp with a non-finite dispatch mode still gives its observed output.
 function _initial_mw_series(device, stamps::AbstractVector{DateTime})
-    initial = _observed_grid(device, :initial_mw, stamps)
+    initial = _values_on_grid(device, get_observed_state(device).initial_mw, stamps)
     unobserved = _unobserved_stamp_mask(device, stamps)
     return [unobserved[i] ? 0.0 : initial[i] for i in eachindex(stamps)]
 end
 
 
-# The raw `FIXEDLOAD` of `device`'s `side` energy bid at each of `stamps`, MW; `NaN` where the bid has none.
-function _fixed_load_mw_series(device, side::OfferSide, stamps::AbstractVector{DateTime})
-    cost = _nem_offer_cost(device)
-    bid = isnothing(cost) ? nothing : _energy_bid(cost, side)
-    isnothing(bid) && return fill(NaN, length(stamps))
-    value = bid.fixed_load
-    value isa IS.StaticTimeSeriesKey || return fill(isnothing(value) ? NaN : Float64(value), length(stamps))
-    return Float64.(IS.get_time_series_values(device, value; start_time = first(stamps), len = length(stamps)))
-end
-
-
 """
-    _fixed_load_step_series(device, stamps::AbstractVector{DateTime}; states = observed_unit_states(device, stamps)) -> Vector{NamedTuple}
+    _fixed_load_step_series(device, stamps::AbstractVector{DateTime}) -> Vector{NamedTuple}
 
 The fixed-loading target and invocation of `device` at each of `stamps`, as `(; target, invoked)`. The
 target is on the net-injection axis in MW: the generation side's loading plus the load side's, with a
@@ -129,16 +111,16 @@ loading and the unit's [`observed_unit_states`](@ref) state.
 # Arguments
 - `device`: the NEM device.
 - `stamps`: the first timestamps of the intervals, consecutive at the series' resolution.
-- `states`: the unit's state at each stamp, `initial_mw` in MW; the observed state by default.
 
 # Returns
 A `Vector` the length of `stamps` of `(; target, invoked)` named tuples, `target` in MW and `invoked` a `Bool`.
 """
-function _fixed_load_step_series(device, stamps::AbstractVector{DateTime}; states = observed_unit_states(device, stamps))
-    gens = _fixed_load_mw_series(device, OfferSide.GEN, stamps)
-    loads = _fixed_load_mw_series(device, OfferSide.LOAD, stamps)
+function _fixed_load_step_series(device, stamps::AbstractVector{DateTime})
+    states = observed_unit_states(device, stamps)
+    gens = _energy_bid_values(device, OfferSide.GEN, :fixed_load, stamps)
+    loads = _energy_bid_values(device, OfferSide.LOAD, :fixed_load, stamps)
     storage = device isa PSY.Storage
-    return [_fixed_load_step_at(gens[i], loads[i], states[i], storage) for i in eachindex(stamps)]
+    return _fixed_load_step_at.(gens, loads, states, storage)
 end
 
 
@@ -154,36 +136,34 @@ end
 
 
 """
-    _set_observed_state_inputs!(sys::PSY.System) -> Nothing
+    _set_observed_state_inputs!(sys::PSY.System, grid = _nemde_grid(sys)) -> Nothing
 
 Adds, for each NEM dispatch device of `sys` whose observed starting output is a time series, the series
-named by [`NEM_STATE_INPUT_SERIES`](@ref) on the timestamps of that output: `initial_mw` in MW, zero where
+named by [`NEM_STATE_INPUT_SERIES`](@ref) on `grid`: `initial_mw` in MW, zero where
 the build does not observe the unit. A device whose energy bid carries a fixed loading also gets
 `fixed_load`, the target in system-base per-unit, and `fixed_load_invoked`, `1` or `0`, from
 [`_fixed_load_step_series`](@ref). A device with a static starting output gets none of them.
 
 # Arguments
 - `sys`: the system whose observed state [`nem_system`](@ref) attached.
+- `grid`: the timestamps the single time series of `sys` share; read from `sys` by default.
 
 # Returns
 `nothing`.
 """
-function _set_observed_state_inputs!(sys::PSY.System)
+function _set_observed_state_inputs!(sys::PSY.System, grid = _nemde_grid(sys))
     base = PSY.get_base_power(sys)
     _foreach_nem_dispatch_device(sys) do device
         observed = get_observed_state(device)
         observed.initial_mw isa IS.StaticTimeSeriesKey || return
-        name = PSY.get_name(observed.initial_mw)
-        stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, name)
-        resolution = IS.get_resolution(PSY.get_time_series(PSY.SingleTimeSeries, device, name))
-        initial = _initial_mw_series(device, stamps)
-        PSY.add_time_series!(sys, device, single_series(NEM_STATE_INPUT_SERIES.initial_mw, first(stamps), initial, resolution))
+        initial = _initial_mw_series(device, grid)
+        PSY.add_time_series!(sys, device, single_series(NEM_STATE_INPUT_SERIES.initial_mw, first(grid), initial, step(grid)))
         _has_fixed_load_bid(device) || return
-        steps = _fixed_load_step_series(device, stamps)
+        steps = _fixed_load_step_series(device, grid)
         fixed = [step.target / base for step in steps]
         invoked = [step.invoked ? 1.0 : 0.0 for step in steps]
-        PSY.add_time_series!(sys, device, single_series(NEM_STATE_INPUT_SERIES.fixed_load, first(stamps), fixed, resolution))
-        PSY.add_time_series!(sys, device, single_series(NEM_STATE_INPUT_SERIES.fixed_load_invoked, first(stamps), invoked, resolution))
+        PSY.add_time_series!(sys, device, single_series(NEM_STATE_INPUT_SERIES.fixed_load, first(grid), fixed, step(grid)))
+        PSY.add_time_series!(sys, device, single_series(NEM_STATE_INPUT_SERIES.fixed_load_invoked, first(grid), invoked, step(grid)))
         return
     end
     return

@@ -18,7 +18,7 @@ end
 
 
 """
-    _set_referred_energy_offers!(sys::PSY.System) -> Nothing
+    _set_referred_energy_offers!(sys::PSY.System, grid = _nemde_grid(sys)) -> Nothing
 
 Adds the energy offer curves of each bidding device of `sys`, one series per offer side named by
 [`energy_offer_series_name`](@ref). The band prices are the bid's curve prices referred to the reference
@@ -27,11 +27,12 @@ service map to the same side of a unit, or when an energy bid is static rather t
 
 # Arguments
 - `sys`: the system whose bids [`nem_system`](@ref) attached.
+- `grid`: the timestamps the single time series of `sys` share; read from `sys` by default.
 
 # Returns
 `nothing`.
 """
-function _set_referred_energy_offers!(sys::PSY.System)
+function _set_referred_energy_offers!(sys::PSY.System, grid = _nemde_grid(sys))
     _check_fcas_bid_sides(sys)
     for device in _bidding_devices(sys)
         cost = _nem_offer_cost(device)
@@ -39,15 +40,10 @@ function _set_referred_energy_offers!(sys::PSY.System)
         for side in energy_offer_sides(device)
             bid = _energy_bid(cost, side)
             isnothing(bid) && continue
-            curves = _bid_series(device, bid.offer_curves, :offer_curves)
+            curves = _values_on_grid(device, bid.offer_curves, grid; field = :offer_curves)
             factor = Float64(_loss_factor(device, side))
-            referred = [
-                PSY.PiecewiseStepData(PSY.get_x_coords(c), referred_price.(PSY.get_y_coords(c), factor)) for c in curves.values
-            ]
-            PSY.add_time_series!(
-                sys, device,
-                single_series(energy_offer_series_name(side), first(curves.timestamps), referred, curves.resolution),
-            )
+            referred = [PSY.PiecewiseStepData(PSY.get_x_coords(c), referred_price.(PSY.get_y_coords(c), factor)) for c in curves]
+            PSY.add_time_series!(sys, device, single_series(energy_offer_series_name(side), first(grid), referred, step(grid)))
         end
     end
     return
