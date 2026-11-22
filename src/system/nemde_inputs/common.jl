@@ -39,7 +39,9 @@ _bidding_devices(sys::PSY.System) = Iterators.flatten(
 # The grid every single time series of `sys` sits on: their shared first timestamp, length and resolution.
 function _nemde_grid(sys::PSY.System)
     initial, n = PSY.check_time_series_consistency(sys, PSY.SingleTimeSeries)
-    resolution = only(PSY.get_time_series_resolutions(sys; time_series_type = PSY.SingleTimeSeries))
+    resolutions = PSY.get_time_series_resolutions(sys; time_series_type = PSY.SingleTimeSeries)
+    # A system without single time series has an empty grid.
+    resolution = isempty(resolutions) ? DISPATCH_INTERVAL : only(resolutions)
     return initial:resolution:(initial + (n - 1) * resolution)
 end
 

@@ -10,7 +10,7 @@ using AustralianElectricityMarkets: _mnsp_bid, _MNSP_DIRECTIONS, BidType, Constr
     INTERCONNECTOR_FLOW_CVP_FACTOR, ENERGY_OFFER_CVP_FACTOR, ENERGY_UIGF_CVP_FACTOR, ENERGY_MAX_AVAIL_CVP_FACTOR,
     AREA_BALANCE_CVP_FACTOR, FIXED_LOADING_CVP_FACTOR, MNSP_RAMP_CVP_FACTOR, MNSP_OFFER_CVP_FACTOR,
     MNSP_AVAILABILITY_CVP_FACTOR, constraint_cvp_factor, energy_offer_series_name, offer_side, side_suffix,
-    tie_break_series_name, tie_groups, _tie_break_offers, _tie_break_active_bands, has_registration,
+    tie_break_series_name, tie_groups, _tie_break_active_bands, has_registration,
     is_semi_scheduled, FCASBidDirection, fcas_bid_direction, fcas_series_name, fcas_service_name, get_bid_type,
     get_defaulted_constraint_weights, get_devices, get_dropped_terms, get_duid, get_factor, get_interconnector,
     get_missing_constraint_intervals, get_region, get_sense, get_skipped_constraints, get_terms,
