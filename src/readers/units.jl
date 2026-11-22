@@ -42,9 +42,9 @@ that row's `START_DATE`. Scheduled loads have no `GENUNITS` row, so their `CO2E_
 # Returns
 A `DataFrame` with one row per commissioned `DUID`, including `CO2E_ENERGY_SOURCE`,
 `CO2E_EMISSIONS_FACTOR` and the registration span `REGISTERED_FROM` and `REGISTERED_UNTIL`
-(`2999-12-31` while open) over every overlapping `DUDETAILSUMMARY` row. Throws an `ArgumentError`
-if a unit's `REGIONID`, `DISPATCHTYPE` or `SCHEDULE_TYPE` changes inside the range, and warns about
-currently registered units the range omits.
+(`2999-12-31` while open) over every overlapping `DUDETAILSUMMARY` row, and `CHANGES_IN_RANGE`, `true`
+when the unit's `REGIONID`, `DISPATCHTYPE` or `SCHEDULE_TYPE` changes inside the range. Warns about
+those units and about currently registered units the range omits.
 
 # Example
 ```julia
@@ -130,17 +130,13 @@ function read_units(db, date_range)
         """,
         [through, as_of, as_of],
     )
-    changed = @chain units begin
-        subset([:_REGION_CHANGES, :_DISPATCHTYPE_CHANGES, :_SCHEDULE_CHANGES] => ByRow(|))
-        _.DUID
+    @chain units begin
+        transform!([:_REGION_CHANGES, :_DISPATCHTYPE_CHANGES, :_SCHEDULE_CHANGES] => ByRow(|) => :CHANGES_IN_RANGE)
+        select!(Not([:_REGION_CHANGES, :_DISPATCHTYPE_CHANGES, :_SCHEDULE_CHANGES]))
     end
-    isempty(changed) || throw(
-        ArgumentError(
-            "read_units: $(join(changed, ", ")) change REGIONID/DISPATCHTYPE/SCHEDULE_TYPE inside [$as_of, $through]; " *
-                "a single-chunk system cannot represent it",
-        ),
-    )
-    select!(units, Not([:_REGION_CHANGES, :_DISPATCHTYPE_CHANGES, :_SCHEDULE_CHANGES]))
+    changed = subset(units, :CHANGES_IN_RANGE).DUID
+    isempty(changed) ||
+        @warn "read_units: $(length(changed)) unit(s) change REGIONID/DISPATCHTYPE/SCHEDULE_TYPE inside [$as_of, $through]; the earliest registration row overlapping the range is used throughout" first_changed = first(changed, 5)
     current = _query(
         db,
         """

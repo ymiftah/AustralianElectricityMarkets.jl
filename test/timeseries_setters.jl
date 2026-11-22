@@ -536,6 +536,14 @@
                 end
             )
             @test_throws r"ER01 change REGIONID/DISPATCHTYPE/SCHEDULE_TYPE" nem_network(bad; date_range = at(0):Minute(5):at(10))
+
+            # The regional build keeps the earliest registration row and warns.
+            range = at(0):Minute(5):at(10)
+            units = @test_logs (:warn, r"1 unit\(s\) change") match_mode = :any read_units(bad, range)
+            @test only(subset(units, :CHANGES_IN_RANGE).DUID) == "ER01"
+            @test only(subset(units, :DUID => ByRow(==("ER01")))).SCHEDULE_TYPE != "SEMI-SCHEDULED"
+            regional = first(AustralianElectricityMarkets.RegionModel._nem_network(bad; date_range = range))
+            @test !isnothing(get_component(ThermalStandard, regional, "ER01"))
         end
 
         @testset "a zero static max_active_power throws, naming the DUID" begin

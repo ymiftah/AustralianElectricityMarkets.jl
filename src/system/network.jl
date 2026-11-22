@@ -23,6 +23,14 @@ function _nem_network(db; date_range, nemde::Bool = false, time_series_in_memory
     interconnectors = read_interconnectors(db, date_range)
     bus_df = get_bus_dataframe(interconnectors)
     units = read_units(db, date_range)
+    # A NEMDE run holds one registration per unit for its whole range.
+    changed = subset(units, :CHANGES_IN_RANGE).DUID
+    nemde && !isempty(changed) && throw(
+        ArgumentError(
+            "$(join(changed, ", ")) change REGIONID/DISPATCHTYPE/SCHEDULE_TYPE inside $date_range; " *
+                "a NEMDE system holds one registration per unit",
+        ),
+    )
     unit_df = _map_unit_technology(units)
     @info "parsing loads"
     loads_df = get_load_dataframe(bus_df)
