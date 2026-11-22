@@ -80,7 +80,7 @@ include("derivations/loss_demand.jl")
 
 include("readers/Readers.jl")
 using .Readers
-using .Readers: _table_is_cached, _require_cached
+using .Readers: _table_is_cached, _require_cached, _aggregate_offers
 
 for name in names(Readers)
     name === :Readers && continue

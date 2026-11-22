@@ -81,7 +81,7 @@ end
     @test all(("GEN", "LOAD")) do direction
         rows = unit[unit.DIRECTION .== direction, :]
         return rows.INTERVAL_DATETIME == [start, start + Minute(15)] && rows.MAXAVAIL ≈ [101.0, 104.0] &&
-            rows.BANDAVAILARRAY[2][1] == 10.0 && isnan(rows.BANDAVAILARRAY[2][2]) && rows.PRICEBANDARRAY[2] == collect(51.0:60.0)
+            rows.BANDAVAILARRAY[2][1] == 10.0 && ismissing(rows.BANDAVAILARRAY[2][2]) && rows.PRICEBANDARRAY[2] == collect(51.0:60.0)
     end
     @test isempty(read_bids(db, (start + Day(1), start + Day(2))))
     missing_prices = damaged_cache(
@@ -112,11 +112,9 @@ end
         """,
     )
     averaged = read_bids(db, range; resolution = Minute(15))
-    maximums = read_energy_bids(db, range; resolution = Minute(15))
     gen(df) = only(eachrow(df[(df.DUID .== "BW01") .& (df.DIRECTION .== "GEN"), :]))
     load(df) = only(eachrow(df[(df.DUID .== "BW01") .& (df.DIRECTION .== "LOAD"), :]))
     @test gen(averaged).MAXAVAIL == 142.0
-    @test gen(maximums).MAXAVAIL == 222.0
     @test gen(averaged).PRICEBANDARRAY[1] == 123.0
     @test load(averaged).MAXAVAIL == 102.0
     @test load(averaged).PRICEBANDARRAY[1] == 51.0

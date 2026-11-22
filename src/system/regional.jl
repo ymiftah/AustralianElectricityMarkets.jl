@@ -39,6 +39,7 @@ end
     :STATIONOPERATINGSTATUS,
     :GENUNITS,
     :DUALLOC,
+    :BIDDAYOFFER,
     :BIDDAYOFFER_D,
     :BIDPEROFFER_D,
 """
@@ -52,6 +53,7 @@ AustralianElectricityMarkets.table_requirements(::RegionalNetworkConfiguration) 
     :STATIONOPERATINGSTATUS,
     :GENUNITS,
     :DUALLOC,
+    :BIDDAYOFFER,
     :BIDDAYOFFER_D,
     :BIDPEROFFER_D,
     :DISPATCHLOAD,

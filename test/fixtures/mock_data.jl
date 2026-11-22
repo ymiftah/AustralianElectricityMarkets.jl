@@ -456,7 +456,7 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
         )
     end
     # LOAD-direction FCAS price bands for BW01, matching the BIDPEROFFER_D LOAD block above -
-    # _massage_bids inner-joins on (SETTLEMENTDATE, DUID, DIRECTION).
+    # read_offers requires a price row for (SETTLEMENTDATE, DUID, DIRECTION).
     bid_day_offer_fcas_load = DataFrame()
     for bid_type in fcas_bid_types
         append!(

@@ -224,14 +224,6 @@
             @test all(==(collect(51.0:60.0)), bw04.PRICEBANDARRAY)
             @test all(iszero, unit(read_offers(db, late), "BW02", "GEN").T1)
             @test all(iszero, unit(read_offers(db, late), "PUMP1", "LOAD").T1)
-
-            # Without BIDDAYOFFER cached, every row keeps the BIDDAYOFFER_D values.
-            hive = mktempdir()
-            cp(AEM_TEST_HIVE_DIR, hive; force = true)
-            rm(joinpath(hive, "BIDDAYOFFER"); recursive = true)
-            fallback = unit(read_offers(aem_connect(HiveConfiguration(hive_location = hive)), late), "BW04", "GEN")
-            @test all(==(10.0), fallback.T1)
-            @test all(iszero, fallback.MINIMUMLOAD)
         end
     end
 

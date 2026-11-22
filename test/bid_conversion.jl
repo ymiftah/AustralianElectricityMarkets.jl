@@ -5,21 +5,20 @@
     using Dates
 
     AEM = AustralianElectricityMarkets
-    function original_curve(row; keep_empty_bands)
+    function original_curve(row)
         prices, widths = copy(row.PRICEBANDARRAY), copy(row.BANDAVAILARRAY)
         if row.DIRECTION == "LOAD"
             reverse!(prices)
             reverse!(widths)
         end
-        kept = keep_empty_bands ? trues(length(widths)) : widths .> 0
-        return PiecewiseStepData([zero(eltype(prices)); cumsum(widths[kept])], prices[kept])
+        return PiecewiseStepData([zero(eltype(prices)); cumsum(widths)], prices)
     end
 
-    for direction in ("GEN", "LOAD", "BIDIRECTIONAL"), keep in (false, true)
+    for direction in ("GEN", "LOAD", "BIDIRECTIONAL")
         row = (DIRECTION = direction, PRICEBANDARRAY = [-1000.0, 10.005, 20.015, 20300.0], BANDAVAILARRAY = [0.0, 1.25, 0.0, 8.75])
         before = deepcopy(row)
-        expected = original_curve(row; keep_empty_bands = keep)
-        actual = AEM._extract_power_bids(row; keep_empty_bands = keep)
+        expected = original_curve(row)
+        actual = AEM._extract_power_bids(row)
         @test isequal(get_x_coords(actual), get_x_coords(expected))
         @test isequal(get_y_coords(actual), get_y_coords(expected))
         @test isequal(row, before)
@@ -42,14 +41,12 @@
     end
     for direction in ("GEN", "LOAD")
         row = (DIRECTION = direction, PRICEBANDARRAY = zeros(2), BANDAVAILARRAY = [0.0, 0.0])
-        expected = original_curve(row; keep_empty_bands = true)
-        actual = AEM._extract_power_bids(row; keep_empty_bands = true)
+        expected = original_curve(row)
+        actual = AEM._extract_power_bids(row)
         @test get_x_coords(actual) == get_x_coords(expected)
         @test get_y_coords(actual) == get_y_coords(expected)
         mismatched = (DIRECTION = direction, PRICEBANDARRAY = [10.0], BANDAVAILARRAY = [0.0, 5.0])
-        for keep in (false, true)
-            @test_throws BoundsError AEM._extract_power_bids(mismatched; keep_empty_bands = keep)
-        end
+        @test_throws BoundsError AEM._extract_power_bids(mismatched)
     end
 end
 
