@@ -81,7 +81,7 @@ end
     @test all(("GEN", "LOAD")) do direction
         rows = unit[unit.DIRECTION .== direction, :]
         return rows.INTERVAL_DATETIME == [start, start + Minute(15)] && rows.MAXAVAIL ≈ [101.0, 104.0] &&
-            rows.BANDAVAILARRAY[2][1] == 10.0 && ismissing(rows.BANDAVAILARRAY[2][2]) && rows.PRICEBANDARRAY[2] == collect(51.0:60.0)
+            rows.BANDAVAIL1[2] == 10.0 && ismissing(rows.BANDAVAIL2[2]) && band_vectors(rows[2, :]).prices == collect(51.0:60.0)
     end
     @test isempty(read_bids(db, (start + Day(1), start + Day(2))))
     missing_prices = damaged_cache(
@@ -115,9 +115,9 @@ end
     gen(df) = only(eachrow(df[(df.DUID .== "BW01") .& (df.DIRECTION .== "GEN"), :]))
     load(df) = only(eachrow(df[(df.DUID .== "BW01") .& (df.DIRECTION .== "LOAD"), :]))
     @test gen(averaged).MAXAVAIL == 142.0
-    @test gen(averaged).PRICEBANDARRAY[1] == 123.0
+    @test gen(averaged).PRICEBAND1 == 123.0
     @test load(averaged).MAXAVAIL == 102.0
-    @test load(averaged).PRICEBANDARRAY[1] == 51.0
+    @test load(averaged).PRICEBAND1 == 51.0
     raw = read_bids(db, (start + Minute(10), start + Minute(11)))
     @test gen(raw).MAXAVAIL == 222.0
 end
@@ -146,7 +146,7 @@ end
     gen = sort(bids[bids.DIRECTION .== "GEN", :], :INTERVAL_DATETIME)
     @test gen.INTERVAL_DATETIME == [DateTime(2025, 1, 1, 4), DateTime(2025, 1, 1, 4, 15)]
     @test Date.(gen.SETTLEMENTDATE) == [Date(2024, 12, 31), Date(2025, 1, 1)]
-    @test first.(gen.PRICEBANDARRAY) == [777.0, 51.0]
+    @test gen.PRICEBAND1 == [777.0, 51.0]
 end
 
 @testset "FCAS readers preserve market and direction keys" begin
@@ -157,8 +157,8 @@ end
     @test Set(bids.BIDTYPE) == Set(types)
     battery = bids[bids.DUID .== "BW01", :]
     @test nrow(battery) == 4
-    @test all(==(collect(51.0:60.0)), battery.PRICEBANDARRAY)
-    @test all(==(10), length.(battery.BANDAVAILARRAY))
+    @test all(r -> band_vectors(r).prices == collect(51.0:60.0), eachrow(battery))
+    @test all(r -> length(band_vectors(r).widths) == 10, eachrow(battery))
 end
 
 @testset "Demand reads keep the raw rows of the widened window" begin

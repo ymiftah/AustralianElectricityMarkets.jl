@@ -174,7 +174,7 @@
 
         @test all(
             c in names(offers) for c in [
-                    "PRICEBANDARRAY", "BANDAVAILARRAY", "MAXAVAIL", "MINIMUMLOAD", "DAILYENERGYCONSTRAINT",
+                    "PRICEBAND1", "PRICEBAND10", "BANDAVAIL1", "BANDAVAIL10", "MAXAVAIL", "MINIMUMLOAD", "DAILYENERGYCONSTRAINT",
                     "FIXEDLOAD", "ROCUP", "ROCDOWN", "ENABLEMENTMIN", "LOWBREAKPOINT", "HIGHBREAKPOINT", "ENABLEMENTMAX",
                 ]
         )
@@ -221,7 +221,7 @@
             @test bw04.T1 == [10.0, 12.0, 12.0, 12.0, 0.0, 0.0]
             @test bw04.MINIMUMLOAD == [0.0, 5.0, 5.0, 5.0, 0.0, 0.0]
             # Price bands and the other units stay on BIDDAYOFFER_D.
-            @test all(==(collect(51.0:60.0)), bw04.PRICEBANDARRAY)
+            @test all(r -> band_vectors(r).prices == collect(51.0:60.0), eachrow(bw04))
             @test all(iszero, unit(read_offers(db, late), "BW02", "GEN").T1)
             @test all(iszero, unit(read_offers(db, late), "PUMP1", "LOAD").T1)
         end
@@ -276,7 +276,7 @@
                 # singleton i=0. The ten 10 MW bands sum to 100 MW in every bucket.
                 rows = [only(subset(gen_bids, :INTERVAL_DATETIME => ByRow(==(start_date + Minute(5 * last(is)))))) for is in buckets]
                 @test [r.MAXAVAIL for r in rows] ≈ [mean(100.0 .+ is) for is in buckets] atol = 1.0e-8
-                @test [sum(r.BANDAVAILARRAY) for r in rows] ≈ fill(100.0, length(buckets)) atol = 1.0e-8
+                @test [sum(band_vectors(r).widths) for r in rows] ≈ fill(100.0, length(buckets)) atol = 1.0e-8
             end
         end
     end
@@ -632,7 +632,7 @@
 
         # Read raw bids (unscaled by loss factors) to compare
         raw_bids = read_bids(ldb, date_range; resolution = Minute(5))
-        raw_curve(duid, direction) = AustralianElectricityMarkets._extract_power_bids(first(eachrow(raw_bids[(raw_bids.DUID .== duid) .& (raw_bids.DIRECTION .== direction), :])))
+        raw_curve(duid, direction) = offer_curve(band_vectors(first(eachrow(raw_bids[(raw_bids.DUID .== duid) .& (raw_bids.DIRECTION .== direction), :])))..., direction)
         raw_price(duid, direction) = get_y_coords(raw_curve(duid, direction))
         raw_mw(duid, direction) = get_x_coords(raw_curve(duid, direction))
 

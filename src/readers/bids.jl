@@ -97,12 +97,17 @@ function read_loss_factors(db, date_range)
 end
 
 
+# The ten price band and band availability columns of an offer.
+const PRICE_BAND_COLUMNS = [Symbol("PRICEBAND$i") for i in 1:10]
+const BAND_AVAIL_COLUMNS = [Symbol("BANDAVAIL$i") for i in 1:10]
+
+
 """
     read_bids(db, date_range; resolution = nothing)
 
 Reads energy offers from `BIDPEROFFER_D`/`BIDDAYOFFER_D`: one row per
-`(SETTLEMENTDATE, DUID, DIRECTION, INTERVAL_DATETIME)` with `PRICEBANDARRAY` (connection-point
-prices, not referred to the reference node), `BANDAVAILARRAY` (MW), `MAXAVAIL`, `MINIMUMLOAD` and
+`(SETTLEMENTDATE, DUID, DIRECTION, INTERVAL_DATETIME)` with `PRICEBAND1` to `PRICEBAND10` (connection-point
+prices, not referred to the reference node), `BANDAVAIL1` to `BANDAVAIL10` (MW), `MAXAVAIL`, `MINIMUMLOAD` and
 `DAILYENERGYCONSTRAINT`. With a `resolution`, the offers of each bucket are averaged
 (`INTERVAL_DATETIME` ceiled onto it). See [`read_fcas_bids`](@ref) for the FCAS markets.
 """
@@ -112,7 +117,7 @@ function read_bids(db, date_range; resolution::Union{Nothing, Dates.Period} = no
     return @chain read_offers(db, (start - (resolution - Minute(5)), stop); markets = (BidType.ENERGY,)) begin
         _aggregate_offers(resolution, (start, stop))
         select(
-            :SETTLEMENTDATE, :DUID, :DIRECTION, :INTERVAL_DATETIME, :PRICEBANDARRAY, :BANDAVAILARRAY,
+            :SETTLEMENTDATE, :DUID, :DIRECTION, :INTERVAL_DATETIME, PRICE_BAND_COLUMNS, BAND_AVAIL_COLUMNS,
             :MAXAVAIL, :MINIMUMLOAD, :DAILYENERGYCONSTRAINT,
         )
     end
@@ -148,7 +153,7 @@ includes `BidType.ENERGY`.
 
 # Returns
 A `DataFrame` sorted by `SETTLEMENTDATE`, `INTERVAL_DATETIME`, `DUID`, `DIRECTION` and `BIDTYPE`, with
-those columns, `BIDTYPE` (`BidType`), `PRICEBANDARRAY`, `BANDAVAILARRAY`, `MAXAVAIL`, `MINIMUMLOAD`,
+those columns, `BIDTYPE` (`BidType`), `PRICEBAND1` to `PRICEBAND10`, `BANDAVAIL1` to `BANDAVAIL10`, `MAXAVAIL`, `MINIMUMLOAD`,
 `DAILYENERGYCONSTRAINT`, `T1`, `T2`, `T3`, `T4`, `NORMALSTATUS`, `FIXEDLOAD`, `ROCUP`, `ROCDOWN`,
 `ENERGYLIMIT`, `ENABLEMENTMIN`, `LOWBREAKPOINT`, `HIGHBREAKPOINT` and `ENABLEMENTMAX`.
 Throws an `ArgumentError` when a unit's period offers have no price bands.
@@ -160,8 +165,10 @@ function read_offers(db, date_range; markets = NEM_MARKETS)
     price_source = read_hive(db, :BIDDAYOFFER_D, window)
     # Only energy rows read the in-force version, so an FCAS-only read needs no BIDDAYOFFER.
     version_source = BidType.ENERGY in markets ? read_hive(db, :BIDDAYOFFER, window) : _NO_OFFER_VERSIONS
-    band_avail = join(("BANDAVAIL$i" for i in 1:10), ", ")
-    price_bands = join(("PRICEBAND$i" for i in 1:10), ", ")
+    band_avail = join(BAND_AVAIL_COLUMNS, ", ")
+    price_bands = join(PRICE_BAND_COLUMNS, ", ")
+    day_price_bands = join(("d.$c" for c in PRICE_BAND_COLUMNS), ", ")
+    period_band_avail = join(("p.$c" for c in BAND_AVAIL_COLUMNS), ", ")
     offers = _query(
         db,
         """
@@ -178,7 +185,7 @@ function read_offers(db, date_range; markets = NEM_MARKETS)
         ),
         prices AS (
             SELECT SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE, MINIMUMLOAD, DAILYENERGYCONSTRAINT,
-                   T1, T2, T3, T4, NORMALSTATUS, list_value($price_bands) AS PRICEBANDARRAY
+                   T1, T2, T3, T4, NORMALSTATUS, $price_bands
             FROM $price_source
             WHERE BIDTYPE IN ($(_bid_type_list(markets))) AND SETTLEMENTDATE BETWEEN ? AND ?
             QUALIFY row_number() OVER (
@@ -194,7 +201,7 @@ function read_offers(db, date_range; markets = NEM_MARKETS)
             ) = 1
         )
         SELECT p.SETTLEMENTDATE, p.INTERVAL_DATETIME, p.DUID, p.DIRECTION, p.BIDTYPE,
-               d.PRICEBANDARRAY, list_value($band_avail) AS BANDAVAILARRAY, p.MAXAVAIL,
+               $day_price_bands, $period_band_avail, p.MAXAVAIL,
                CASE WHEN v.DUID IS NULL THEN d.MINIMUMLOAD ELSE v.MINIMUMLOAD END AS MINIMUMLOAD,
                d.DAILYENERGYCONSTRAINT,
                CASE WHEN v.DUID IS NULL THEN d.T1 ELSE v.T1 END AS T1,
@@ -236,27 +243,22 @@ _offer_days(start_date, end_date) = [Date(start_date) - Day(1), Date(end_date) +
 
 
 # Averages the five-minute `offers` onto `resolution`, one row per ceiled `INTERVAL_DATETIME`, and keeps the
-# buckets inside `date_range`. Quantities are averaged over the bucket's present values, the band
-# availabilities element-wise; the price bands and `NORMALSTATUS` come from the bucket's first row
-# and the FCAS trapezium from its last.
+# buckets inside `date_range`. Quantities and band availabilities are averaged over the bucket's present
+# values; the price bands and `NORMALSTATUS` come from the bucket's first row and the FCAS trapezium from its last.
 function _aggregate_offers(offers::DataFrame, resolution::Dates.Period, date_range)
     resolution == Minute(5) && return offers
     keys = [:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION, :BIDTYPE]
-    averaged = [:MAXAVAIL, :MINIMUMLOAD, :DAILYENERGYCONSTRAINT, :T1, :T2, :T3, :T4, :FIXEDLOAD, :ROCUP, :ROCDOWN, :ENERGYLIMIT]
+    averaged = [
+        :MAXAVAIL, :MINIMUMLOAD, :DAILYENERGYCONSTRAINT, :T1, :T2, :T3, :T4, :FIXEDLOAD, :ROCUP, :ROCDOWN, :ENERGYLIMIT,
+        BAND_AVAIL_COLUMNS...,
+    ]
+    first_of = [PRICE_BAND_COLUMNS; :NORMALSTATUS]
     last_of = [:ENABLEMENTMIN, :LOWBREAKPOINT, :HIGHBREAKPOINT, :ENABLEMENTMAX]
     mean_present(x) = all(ismissing, x) ? missing : mean(skipmissing(x))
-    # `Ref` keeps an array value in one row of `combine`.
-    mean_bands(bands) = Ref([mean_present(getindex.(bands, i)) for i in eachindex(first(bands))])
     return @chain offers begin
         transform(:INTERVAL_DATETIME => ByRow(t -> ceil(t, resolution)) => :INTERVAL_DATETIME)
         groupby(keys)
-        combine(
-            averaged .=> mean_present .=> averaged,
-            :PRICEBANDARRAY => (prices -> Ref(first(prices))) => :PRICEBANDARRAY,
-            :NORMALSTATUS => first => :NORMALSTATUS,
-            last_of .=> last .=> last_of,
-            :BANDAVAILARRAY => mean_bands => :BANDAVAILARRAY,
-        )
+        combine(averaged .=> mean_present .=> averaged, first_of .=> first .=> first_of, last_of .=> last .=> last_of)
         subset(:INTERVAL_DATETIME => ByRow(t -> first(date_range) <= t < last(date_range)))
     end
 end

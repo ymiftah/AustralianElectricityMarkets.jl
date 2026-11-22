@@ -48,8 +48,7 @@
 
     @testset "_fcas_trapezium_points accepts well-formed trapeziums and names the unit of a bad one" begin
         base_row = (
-            DIRECTION = "GEN", PRICEBANDARRAY = [10.0, 20.0], BANDAVAILARRAY = [5.0, 5.0],
-            DUID = "BW01", ENABLEMENTMIN = 10.0, LOWBREAKPOINT = 30.0, HIGHBREAKPOINT = 90.0,
+            DIRECTION = "GEN", DUID = "BW01", ENABLEMENTMIN = 10.0, LOWBREAKPOINT = 30.0, HIGHBREAKPOINT = 90.0,
             ENABLEMENTMAX = 100.0, MAXAVAIL = 10.0, ROCUP = missing, ROCDOWN = missing,
         )
         # Well-formed, including the degenerate vertical and triangular shapes.
@@ -89,7 +88,7 @@
         @test all(==(20.0), bids.ENABLEMENTMIN[.!asload])
         @test all(==(100.0), bids.ENABLEMENTMAX[.!asload])
         @test all(==(0.0), bids.ENABLEMENTMAX[asload])
-        @test "PRICEBANDARRAY" in names(bids) && "BANDAVAILARRAY" in names(bids)
+        @test all(in(names(bids)), string.([AustralianElectricityMarkets.PRICE_BAND_COLUMNS; AustralianElectricityMarkets.BAND_AVAIL_COLUMNS]))
 
         reg_bids = read_fcas_bids(db, date_range, BidType.RAISEREG)
         @test !isempty(reg_bids)

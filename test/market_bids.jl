@@ -25,7 +25,7 @@
     _matches(a, b) = length(a) == length(b) && all(isapprox.(a, b))
     # The offer curve of a row, with the bands of a LOAD row in reverse order (as AEMO lists them).
     function row_curve(row, direction::AEM.BidDirection)
-        prices, widths = Float64.(row.PRICEBANDARRAY), Float64.(row.BANDAVAILARRAY)
+        prices, widths = Float64.(band_vectors(row).prices), Float64.(band_vectors(row).widths)
         if direction == AEM.BidDirection.LOAD
             prices, widths = reverse(prices), reverse(widths)
         end

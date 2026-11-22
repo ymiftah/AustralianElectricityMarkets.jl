@@ -152,7 +152,7 @@ function read_fcas_bids(
     return @chain read_offers(db, (start - (resolution - Minute(5)), stop); markets = bid_types) begin
         _aggregate_offers(resolution, (start, stop))
         select(
-            :SETTLEMENTDATE, :DUID, :DIRECTION, :INTERVAL_DATETIME, :PRICEBANDARRAY, :BANDAVAILARRAY,
+            :SETTLEMENTDATE, :DUID, :DIRECTION, :INTERVAL_DATETIME, PRICE_BAND_COLUMNS, BAND_AVAIL_COLUMNS,
             :MAXAVAIL, :MINIMUMLOAD, :DAILYENERGYCONSTRAINT, :BIDTYPE,
             :ENABLEMENTMIN, :LOWBREAKPOINT, :HIGHBREAKPOINT, :ENABLEMENTMAX, :ROCUP, :ROCDOWN,
         )

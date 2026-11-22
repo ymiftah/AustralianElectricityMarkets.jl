@@ -19,16 +19,19 @@ function _precompile_workload()
     attach_nem_unit_data!(sys, generator)
     stamps = [DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 10)]
     rows = DataFrame(;
-        DUID = fill("precompile_generator", 2), DIRECTION = fill("GEN", 2), INTERVAL_DATETIME = stamps,
-        PRICEBANDARRAY = [collect(10.0:10.0:100.0) for _ in 1:2],
-        BANDAVAILARRAY = [fill(10.0, 10) for _ in 1:2], MAXAVAIL = [100.0, 100.0],
+        DUID = fill("precompile_generator", 2), BIDTYPE = fill(BidType.ENERGY, 2), DIRECTION = fill("GEN", 2),
+        INTERVAL_DATETIME = stamps, MAXAVAIL = [100.0, 100.0],
         ROCUP = [1.0, 1.0], ROCDOWN = [1.0, 1.0], FIXEDLOAD = [missing, missing],
         MINIMUMLOAD = [0.0, 0.0], DAILYENERGYCONSTRAINT = [missing, missing],
         T1 = [missing, missing], T2 = [missing, missing], T3 = [missing, missing], T4 = [missing, missing],
         NORMALSTATUS = ["ON", "ON"], ENERGYLIMIT = [missing, missing],
     )
+    for i in 1:10
+        rows[!, PRICE_BAND_COLUMNS[i]] = fill(10.0 * i, 2)
+        rows[!, BAND_AVAIL_COLUMNS[i]] = fill(10.0, 2)
+    end
     grid = [DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 10)]
-    _write_energy_bid!(sys, generator, BidDirection.GEN, rows, grid, first(grid), Minute(5))
+    _write_energy_bid!(sys, generator, BidDirection.GEN, _offers_on_grid(rows, grid), first(grid), Minute(5))
     return nothing
 end
 

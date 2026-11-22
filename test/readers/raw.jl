@@ -171,15 +171,13 @@ let
         @test occursin("BW03", err.msg)
     end
 
-    @testset "_extract_power_bids keeps empty bands as zero-width segments" begin
-        row(direction) = (
-            DIRECTION = direction, PRICEBANDARRAY = [10.0, 20.0, 30.0], BANDAVAILARRAY = [5.0, 0.0, 7.0],
-        )
-        kept = AustralianElectricityMarkets._extract_power_bids(row("GEN"))
+    @testset "offer curves keep empty bands as zero-width segments" begin
+        curve(direction) = offer_curve([10.0, 20.0, 30.0], [5.0, 0.0, 7.0], direction)
+        kept = curve("GEN")
         @test PowerSystems.get_x_coords(kept) == [0.0, 5.0, 5.0, 12.0]
         @test PowerSystems.get_y_coords(kept) == [10.0, 20.0, 30.0]
         # LOAD curves list the bands in reverse, so segment k stays the same price band.
-        load = AustralianElectricityMarkets._extract_power_bids(row("LOAD"))
+        load = curve("LOAD")
         @test PowerSystems.get_y_coords(load) == [30.0, 20.0, 10.0]
         @test PowerSystems.get_x_coords(load) == [0.0, 7.0, 7.0, 12.0]
     end

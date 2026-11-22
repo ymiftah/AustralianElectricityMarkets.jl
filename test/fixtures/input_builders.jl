@@ -21,3 +21,15 @@ function constrained_system(db; date_range, intervention::Integer = 0)
     attach_interconnector_losses!(sys, db, first(date_range))
     return sys, units
 end
+
+# The offer curve of one row from its band `prices` and `widths`, as `set_market_bids!` builds it.
+function offer_curve(prices, widths, direction)
+    column(values) = Tuple([v] for v in values)
+    return only(AustralianElectricityMarkets._offer_curves([true], column(prices), column(widths), direction == "LOAD"))
+end
+
+# The ten band prices and availabilities of an offer row.
+band_vectors(row) = (
+    prices = [row[c] for c in AustralianElectricityMarkets.PRICE_BAND_COLUMNS],
+    widths = [row[c] for c in AustralianElectricityMarkets.BAND_AVAIL_COLUMNS],
+)
