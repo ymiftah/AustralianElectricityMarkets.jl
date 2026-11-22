@@ -1,7 +1,3 @@
-# TODO This module is hard to read. it would be easier to read if more operations were done with DtaFrames jl interfaces
-# with only conversion to our types as a last stage.
-
-
 """
     set_mnsp_offers!(sys, db, date_range; intervention = 0) -> Vector{String}
 
@@ -35,129 +31,165 @@ function set_mnsp_offers!(sys, db, date_range; intervention::Integer = 0)
     intervals = collect(date_range)[1:(end - 1)]
     isempty(intervals) && throw(ArgumentError("set_mnsp_offers!: the range contains no dispatch intervals"))
     start_date = first(date_range)
-    devices = Dict(get_name(d) => d for d in get_components(get_available, AreaInterchange, sys))
-    parameters = read_interconnector_loss_parameters(db; as_of = start_date)
-    types = Dict(r.INTERCONNECTORID => r.ICTYPE for r in eachrow(parameters))
-    for name in sort!(collect(keys(devices)))
-        kind = get(types, name, missing)
-        (kind in ("MNSP", "REGULATED")) === true ||
-            throw(ArgumentError("set_mnsp_offers!: $name has no valid ICTYPE at $start_date"))
+    fail(message) = throw(ArgumentError("set_mnsp_offers!: " * message))
+
+    devices = @chain DataFrame(
+        [
+            (INTERCONNECTORID = get_name(d), device = d, from_area = get_name(get_from_area(d)), to_area = get_name(get_to_area(d)))
+                for d in get_components(get_available, AreaInterchange, sys)
+        ]; copycols = false
+    ) begin
+        leftjoin(select(read_interconnector_loss_parameters(db; as_of = start_date), :INTERCONNECTORID, :ICTYPE); on = :INTERCONNECTORID)
+        leftjoin(
+            select(read_interconnector_loss_parameters(db; as_of = last(intervals)), :INTERCONNECTORID, :ICTYPE => :END_ICTYPE);
+            on = :INTERCONNECTORID,
+        )
+        sort(:INTERCONNECTORID)
     end
-    end_parameters = read_interconnector_loss_parameters(db; as_of = last(intervals))
-    end_types = Dict(r.INTERCONNECTORID => r.ICTYPE for r in eachrow(end_parameters))
-    all(name -> isequal(types[name], get(end_types, name, missing)), keys(devices)) ||
-        throw(ArgumentError("set_mnsp_offers!: ICTYPE differs between the first and last interval; split the run at the change"))
-    required = sort!([name for name in keys(devices) if types[name] == "MNSP"])
+    for row in eachrow(subset(devices, :ICTYPE => ByRow(t -> !coalesce(t in ("MNSP", "REGULATED"), false))))
+        fail("$(row.INTERCONNECTORID) has no valid ICTYPE at $start_date")
+    end
+    isempty(subset(devices, [:ICTYPE, :END_ICTYPE] => ByRow((a, b) -> !isequal(a, b)))) ||
+        fail("ICTYPE differs between the first and last interval; split the run at the change")
+    required = subset(devices, :ICTYPE => ByRow(==("MNSP")))
     isempty(required) && return String[]
     tables = (:MNSP_INTERCONNECTOR, :MNSP_DAYOFFER, :MNSP_BIDOFFERPERIOD, :DISPATCH_MNSPBIDTRK, :DISPATCHINTERCONNECTORRES)
     uncached = filter(t -> !_table_is_cached(db, t), tables)
-    isempty(uncached) || throw(
-        ArgumentError(
-            "set_mnsp_offers!: required MNSP input tables are not cached: $(join(uncached, ", ")). " *
-                "Populate the requested intervals and the offer dates named by DISPATCH_MNSPBIDTRK.",
-        )
+    isempty(uncached) || fail(
+        "required MNSP input tables are not cached: $(join(uncached, ", ")). " *
+            "Populate the requested intervals and the offer dates named by DISPATCH_MNSPBIDTRK.",
     )
-    links = read_mnsp_links(db, start_date)
-    offers = read_mnsp_offers(db, date_range)
-    flows = read_interconnector_limits(db, date_range; intervention)
-    staged = NamedTuple[]
-    for name in required
-        device = devices[name]
-        initial = sort(flows[flows.INTERCONNECTORID .== name, :], :SETTLEMENTDATE)
-        from_area = get_name(get_from_area(device))
-        to_area = get_name(get_to_area(device))
-        group = links[links.INTERCONNECTORID .== name, :]
-        nrow(group) == 2 || throw(ArgumentError("set_mnsp_offers!: MNSP $name requires two registered directional links, found $(nrow(group))"))
-        directions = Set{String}()
-        for link in eachrow(group)
-            direction = if link.FROMREGION == from_area && link.TOREGION == to_area
-                "forward"
-            elseif link.FROMREGION == to_area && link.TOREGION == from_area
-                "reverse"
-            else
-                throw(ArgumentError("set_mnsp_offers!: MNSP $name link $(link.LINKID) has incompatible endpoints"))
-            end
-            direction in directions && throw(ArgumentError("set_mnsp_offers!: MNSP $name has duplicate $direction links"))
-            push!(directions, direction)
-            for column in (:FROM_REGION_TLF, :TO_REGION_TLF, :MAXCAPACITY)
-                value = link[column]
-                value isa Real && isfinite(value) && value > 0 ||
-                    throw(ArgumentError("set_mnsp_offers!: MNSP $name link $(link.LINKID) has invalid $column"))
-            end
-            link.LHSFACTOR isa Real && isfinite(link.LHSFACTOR) ||
-                throw(ArgumentError("set_mnsp_offers!: MNSP $name link $(link.LINKID) has invalid LHSFACTOR"))
-            rows = offers[offers.LINKID .== link.LINKID, :]
-            rows.INTERVAL_DATETIME == intervals || throw(
-                ArgumentError(
-                    "set_mnsp_offers!: MNSP $name link $(link.LINKID) requires exactly one offer for every interval " *
-                        "from $(first(intervals)) to $(last(intervals)); found $(nrow(rows)) rows for $(length(intervals)) intervals. " *
-                        "Populate DISPATCH_MNSPBIDTRK and its referenced MNSP_DAYOFFER/MNSP_BIDOFFERPERIOD, including the previous month when required.",
-                )
-            )
-            initial.SETTLEMENTDATE == intervals && all(v -> v isa Real && isfinite(v), initial.METEREDMWFLOW) ||
-                throw(ArgumentError("set_mnsp_offers!: MNSP $name requires finite metered flow for every interval"))
-            for row in eachrow(rows)
-                for column in (:MAXAVAIL, :RAMPUPRATE, (Symbol("BANDAVAIL$i") for i in 1:10)..., (Symbol("PRICEBAND$i") for i in 1:10)...)
-                    value = row[column]
-                    valid = value isa Real && isfinite(value) && (startswith(string(column), "PRICEBAND") || value >= 0)
-                    valid || throw(ArgumentError("set_mnsp_offers!: MNSP $name link $(link.LINKID) has invalid $column at $(row.INTERVAL_DATETIME)"))
-                end
-            end
-            all(v -> ismissing(v) || (v isa Real && isfinite(v) && v >= 0), rows.FIXEDLOAD) ||
-                throw(ArgumentError("set_mnsp_offers!: MNSP $name link $(link.LINKID) has invalid FIXEDLOAD"))
-            push!(staged, (; device, direction, link, rows, initial, curves = [_mnsp_offer_curve(row) for row in eachrow(rows)]))
-        end
+
+    # One row per link of a required MNSP; each interconnector must have exactly two.
+    registered = innerjoin(required, read_mnsp_links(db, start_date); on = :INTERCONNECTORID)
+    counts = @chain registered begin
+        groupby(:INTERCONNECTORID)
+        combine(nrow => :n)
+        leftjoin(select(required, :INTERCONNECTORID), _; on = :INTERCONNECTORID)
+        transform(:n => ByRow(n -> coalesce(n, 0)) => :n)
     end
-    for (; device, direction, link, rows, initial, curves) in staged
-        tag = Symbol(direction)
-        _remove_link_attributes!(sys, device, direction)
-        if direction == "forward"
+    for row in eachrow(subset(counts, :n => ByRow(!=(2))))
+        fail("MNSP $(row.INTERCONNECTORID) requires two registered directional links, found $(row.n)")
+    end
+    links = @chain registered begin
+        transform(
+            [:FROMREGION, :TOREGION, :from_area, :to_area] => ByRow(
+                (f, t, from, to) -> f == from && t == to ? MNSPDirection.FORWARD : f == to && t == from ? MNSPDirection.REVERSE : missing,
+            ) => :direction,
+        )
+        sort([:INTERCONNECTORID, :direction])
+    end
+    for row in eachrow(subset(links, :direction => ByRow(ismissing)))
+        fail("MNSP $(row.INTERCONNECTORID) link $(row.LINKID) has incompatible endpoints")
+    end
+    duplicates = @chain links begin
+        groupby([:INTERCONNECTORID, :direction])
+        combine(nrow => :n)
+        subset(:n => ByRow(>(1)))
+    end
+    for row in eachrow(duplicates)
+        fail("MNSP $(row.INTERCONNECTORID) has duplicate $(lowercase(string(row.direction))) links")
+    end
+    is_positive(v) = v isa Real && isfinite(v) && v > 0
+    for column in (:FROM_REGION_TLF, :TO_REGION_TLF, :MAXCAPACITY), row in eachrow(subset(links, column => ByRow(!is_positive)))
+        fail("MNSP $(row.INTERCONNECTORID) link $(row.LINKID) has invalid $column")
+    end
+    for row in eachrow(subset(links, :LHSFACTOR => ByRow(v -> !(v isa Real && isfinite(v)))))
+        fail("MNSP $(row.INTERCONNECTORID) link $(row.LINKID) has invalid LHSFACTOR")
+    end
+
+    # Offers: every link needs exactly one offer per interval, with valid bands, ramp and fixed load.
+    offers = @chain read_mnsp_offers(db, date_range) begin
+        semijoin(links; on = :LINKID)
+        sort([:LINKID, :INTERVAL_DATETIME])
+    end
+    offer_coverage = @chain offers begin
+        groupby(:LINKID)
+        combine(:INTERVAL_DATETIME => (t -> t == intervals) => :complete, nrow => :n)
+        leftjoin(links, _; on = :LINKID)
+        transform(:complete => ByRow(c -> coalesce(c, false)) => :complete, :n => ByRow(n -> coalesce(n, 0)) => :n)
+    end
+    for row in eachrow(subset(offer_coverage, :complete => ByRow(!)))
+        fail(
+            "MNSP $(row.INTERCONNECTORID) link $(row.LINKID) requires exactly one offer for every interval " *
+                "from $(first(intervals)) to $(last(intervals)); found $(row.n) rows for $(length(intervals)) intervals. " *
+                "Populate DISPATCH_MNSPBIDTRK and its referenced MNSP_DAYOFFER/MNSP_BIDOFFERPERIOD, including the previous month when required.",
+        )
+    end
+    link_names = Dict(links.LINKID .=> links.INTERCONNECTORID)
+    nonnegative(v) = v isa Real && isfinite(v) && v >= 0
+    finite(v) = v isa Real && isfinite(v)
+    checks = [
+        [(:MAXAVAIL, nonnegative), (:RAMPUPRATE, nonnegative)]
+        [(Symbol("BANDAVAIL$i"), nonnegative) for i in 1:10]
+        [(Symbol("PRICEBAND$i"), finite) for i in 1:10]
+    ]
+    for (column, valid) in checks, row in eachrow(subset(offers, column => ByRow(!valid)))
+        fail("MNSP $(link_names[row.LINKID]) link $(row.LINKID) has invalid $column at $(row.INTERVAL_DATETIME)")
+    end
+    for row in eachrow(subset(offers, :FIXEDLOAD => ByRow(v -> !(ismissing(v) || nonnegative(v)))))
+        fail("MNSP $(link_names[row.LINKID]) link $(row.LINKID) has invalid FIXEDLOAD")
+    end
+
+    # The forward link of each MNSP also carries the metered flow of the whole range.
+    flows = @chain read_interconnector_limits(db, date_range; intervention) begin
+        semijoin(required; on = :INTERCONNECTORID)
+        sort([:INTERCONNECTORID, :SETTLEMENTDATE])
+    end
+    flow_coverage = @chain flows begin
+        groupby(:INTERCONNECTORID)
+        combine([:SETTLEMENTDATE, :METEREDMWFLOW] => ((t, f) -> t == intervals && all(finite, f)) => :complete)
+        leftjoin(select(required, :INTERCONNECTORID), _; on = :INTERCONNECTORID)
+    end
+    for row in eachrow(subset(flow_coverage, :complete => ByRow(c -> !coalesce(c, false))))
+        fail("MNSP $(row.INTERCONNECTORID) requires finite metered flow for every interval")
+    end
+
+    offer_groups = groupby(offers, :LINKID)
+    flow_groups = groupby(flows, :INTERCONNECTORID)
+    for link in eachrow(links)
+        device = link.device
+        rows = offer_groups[(link.LINKID,)]
+        forward = link.direction == MNSPDirection.FORWARD
+        tag = forward ? :forward : :reverse
+        _remove_link_attributes!(sys, device, link.direction)
+        if forward
             for old in (get_supplemental_attributes(NEMMNSPObservedState, device)::Vector{NEMMNSPObservedState})
                 remove_supplemental_attribute!(sys, device, old)
             end
-            replace_single_series!(sys, device, single_series(NEM_MNSP_SERIES.initial_flow, start_date, Float64.(initial.METEREDMWFLOW), Minute(5)))
-        end
-        for (kind, values) in (
-                ("offer", curves), ("max_avail", Float64.(rows.MAXAVAIL)),
-                ("ramp_rate", Float64.(rows.RAMPUPRATE)),
+            initial = flow_groups[(link.INTERCONNECTORID,)].METEREDMWFLOW
+            flow_key = replace_single_series!(
+                sys, device, single_series(NEM_MNSP_SERIES.initial_flow, start_date, Float64.(initial), Minute(5)),
             )
-            series_name = getproperty(NEM_MNSP_SERIES, Symbol(direction, "_", kind))
-            replace_single_series!(sys, device, single_series(series_name, start_date, values, Minute(5)))
+            add_supplemental_attribute!(sys, device, NEMMNSPObservedState(; initial_flow = flow_key))
         end
-        fixed_name = getproperty(NEM_MNSP_SERIES, Symbol(direction, "_fixed_load"))
-        if all(ismissing, rows.FIXEDLOAD)
+        series(kind, values) = replace_single_series!(
+            sys, device, single_series(getproperty(NEM_MNSP_SERIES, Symbol(tag, "_", kind)), start_date, values, Minute(5)),
+        )
+        curves = [_mnsp_offer_curve(row) for row in eachrow(rows)]
+        offer_key = series("offer", curves)
+        max_avail_key = series("max_avail", Float64.(rows.MAXAVAIL))
+        ramp_key = series("ramp_rate", Float64.(rows.RAMPUPRATE))
+        fixed_name = getproperty(NEM_MNSP_SERIES, Symbol(tag, "_fixed_load"))
+        fixed_key = if all(ismissing, rows.FIXEDLOAD)
             remove_single_series!(sys, device, fixed_name)
+            nothing
         else
-            fixed = Float64[ismissing(v) ? NaN : Float64(v) for v in rows.FIXEDLOAD]
-            replace_single_series!(sys, device, single_series(fixed_name, start_date, fixed, Minute(5)))
+            series("fixed_load", Float64[ismissing(v) ? NaN : Float64(v) for v in rows.FIXEDLOAD])
         end
-
-
         add_supplemental_attribute!(
             sys, device,
             NEMMNSPLink(;
-                direction = tag == :forward ? MNSPDirection.FORWARD : MNSPDirection.REVERSE,
-                link_id = link.LINKID, from_region_tlf = link.FROM_REGION_TLF, to_region_tlf = link.TO_REGION_TLF,
-                lhs_factor = link.LHSFACTOR, max_capacity = link.MAXCAPACITY,
+                direction = link.direction, link_id = link.LINKID, from_region_tlf = link.FROM_REGION_TLF,
+                to_region_tlf = link.TO_REGION_TLF, lhs_factor = link.LHSFACTOR, max_capacity = link.MAXCAPACITY,
             ),
         )
         add_supplemental_attribute!(
             sys, device,
-            NEMMNSPBid(;
-                direction = tag == :forward ? MNSPDirection.FORWARD : MNSPDirection.REVERSE,
-                offer_curves = _series_key(device, getproperty(NEM_MNSP_SERIES, Symbol(direction, "_offer"))),
-                max_avail = _series_key(device, getproperty(NEM_MNSP_SERIES, Symbol(direction, "_max_avail"))),
-                ramp_up = _series_key(device, getproperty(NEM_MNSP_SERIES, Symbol(direction, "_ramp_rate"))),
-                fixed_load = all(ismissing, rows.FIXEDLOAD) ? nothing : _series_key(device, fixed_name),
-            ),
+            NEMMNSPBid(; direction = link.direction, offer_curves = offer_key, max_avail = max_avail_key, ramp_up = ramp_key, fixed_load = fixed_key),
         )
-        if direction == "forward"
-            add_supplemental_attribute!(
-                sys, device, NEMMNSPObservedState(; initial_flow = _series_key(device, NEM_MNSP_SERIES.initial_flow)),
-            )
-        end
     end
-    return required
+    return required.INTERCONNECTORID
 end
 
 
@@ -167,10 +199,9 @@ end
 Removes the [`NEMMNSPLink`](@ref) and [`NEMMNSPBid`](@ref) of `device`'s `direction` link, so a repeat call
 replaces them.
 """
-function _remove_link_attributes!(sys, device, direction::AbstractString)
-    dir = direction == "forward" ? MNSPDirection.FORWARD : MNSPDirection.REVERSE
+function _remove_link_attributes!(sys, device, direction::MNSPDirection)
     for T in (NEMMNSPLink, NEMMNSPBid), attribute in collect(get_supplemental_attributes(T, device))
-        attribute.direction == dir && remove_supplemental_attribute!(sys, device, attribute)
+        attribute.direction == direction && remove_supplemental_attribute!(sys, device, attribute)
     end
     return
 end

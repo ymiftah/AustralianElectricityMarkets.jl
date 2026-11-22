@@ -1,22 +1,15 @@
 # AEMO's `FROMREGIONLOSSSHARE` for Basslink is not well defined; nempy sets it to 1 to best match NEMDE.
 const _LOSS_SHARE_OVERRIDES = Dict("T-V-MNSP1" => 1.0)
 
-# Demand coefficients AEMO publishes but MMSDM LOSSFACTORMODEL omits, as
-# (interconnector, region) => (value, valid_from, valid_until). Used only where the table has no
-# value for that pair. V-SA NSW1 for FY2025-26: AEMO, 2025-26 Marginal Loss Factors report,
+# Demand coefficients AEMO publishes but MMSDM LOSSFACTORMODEL omits. Used only where the table has
+# no value for that pair. V-SA NSW1 for FY2025-26: AEMO, 2025-26 Marginal Loss Factors report,
 # section 3 p. 56 and Table 25 p. 59.
-const _DEMAND_COEFFICIENT_PATCHES = Dict(
-    ("V-SA", "NSW1") => (value = 1.6981e-6, valid_from = Date(2025, 7, 1), valid_until = Date(2026, 7, 1)),
-)
-
-function _apply_demand_coefficient_patches!(demand_coefficients, as_of)
-    for ((id, region), p) in _DEMAND_COEFFICIENT_PATCHES
-        p.valid_from <= Date(as_of) < p.valid_until || continue
-        haskey(demand_coefficients, id) || continue
-        get!(demand_coefficients[id], region, p.value)
-    end
-    return demand_coefficients
-end
+const _DEMAND_COEFFICIENT_PATCHES = [
+    (
+        INTERCONNECTORID = "V-SA", REGIONID = "NSW1", DEMANDCOEFFICIENT = 1.6981e-6,
+        valid_from = Date(2025, 7, 1), valid_until = Date(2026, 7, 1),
+    ),
+]
 
 
 """
@@ -37,28 +30,32 @@ function interconnector_loss_models(db, as_of::Union{Date, DateTime})
     coefficients = read_interconnector_demand_coefficients(db; as_of = as_of)
     breakpoints = read_interconnector_loss_breakpoints(db; as_of = as_of)
 
-    # TODO isn't this a groupby combine as array ?
-    by_interconnector = Dict{String, Vector{Float64}}()
-    for row in eachrow(breakpoints)
-        push!(get!(by_interconnector, row.INTERCONNECTORID, Float64[]), row.MWBREAKPOINT)
+    patches = @chain DataFrame(_DEMAND_COEFFICIENT_PATCHES) begin
+        subset(:valid_from => ByRow(<=(Date(as_of))), :valid_until => ByRow(>(Date(as_of))))
+        select(:INTERCONNECTORID, :REGIONID, :DEMANDCOEFFICIENT)
+        semijoin(coefficients; on = :INTERCONNECTORID)
+        antijoin(coefficients; on = [:INTERCONNECTORID, :REGIONID])
     end
-    demand_coefficients = Dict{String, Dict{String, Float64}}()
-    # TODO isn't this a groupby combine as array ?
-    for row in eachrow(coefficients)
-        d = get!(demand_coefficients, row.INTERCONNECTORID, Dict{String, Float64}())
-        d[row.REGIONID] = row.DEMANDCOEFFICIENT
+    demand_coefficients = @chain vcat(coefficients[:, [:INTERCONNECTORID, :REGIONID, :DEMANDCOEFFICIENT]], patches) begin
+        groupby(:INTERCONNECTORID)
+        combine([:REGIONID, :DEMANDCOEFFICIENT] => ((r, c) -> Dict{String, Float64}(zip(r, c))) => :demand_coefficients)
     end
-    _apply_demand_coefficient_patches!(demand_coefficients, as_of)
-
+    sorted_breakpoints = @chain breakpoints begin
+        groupby(:INTERCONNECTORID)
+        combine(:MWBREAKPOINT => (b -> Ref(sort(collect(Float64, b)))) => :breakpoints)
+    end
+    candidates = @chain params begin
+        leftjoin(sorted_breakpoints; on = :INTERCONNECTORID)
+        leftjoin(demand_coefficients; on = :INTERCONNECTORID)
+        transform(
+            :breakpoints => ByRow(b -> coalesce(b, Float64[])) => :breakpoints,
+            :demand_coefficients => ByRow(d -> coalesce(d, Dict{String, Float64}())) => :demand_coefficients,
+        )
+    end
+    skipped = subset(candidates, :breakpoints => ByRow(b -> length(b) < 2)).INTERCONNECTORID
     models = Dict{String, InterconnectorLossModel}()
-    skipped = String[]
-    for row in eachrow(params)
+    for row in eachrow(subset(candidates, :breakpoints => ByRow(b -> length(b) >= 2)))
         id = row.INTERCONNECTORID
-        bps = sort(get(by_interconnector, id, Float64[]))
-        if length(bps) < 2
-            push!(skipped, id)
-            continue
-        end
         models[id] = InterconnectorLossModel(;
             interconnector = id,
             from_region = row.REGIONFROM,
@@ -66,8 +63,8 @@ function interconnector_loss_models(db, as_of::Union{Date, DateTime})
             from_region_loss_share = get(_LOSS_SHARE_OVERRIDES, id, coalesce(row.FROMREGIONLOSSSHARE, 0.5)),
             loss_constant = coalesce(row.LOSSCONSTANT, 1.0),
             loss_flow_coefficient = coalesce(row.LOSSFLOWCOEFFICIENT, 0.0),
-            demand_coefficients = get(demand_coefficients, id, Dict{String, Float64}()),
-            breakpoints = bps,
+            demand_coefficients = row.demand_coefficients,
+            breakpoints = row.breakpoints,
         )
     end
     isempty(skipped) ||
@@ -148,53 +145,47 @@ used to validate simulated flows. A repeat call replaces the earlier limits.
 `nothing`.
 """
 function set_interconnector_flow_limits!(sys, db, date_range; kwargs...)
-    full_grid = collect(date_range)[1:(end - 1)]
-    rows = read_interconnector_limits(db, date_range; kwargs...)
-    by_ic = Dict(
-        key.INTERCONNECTORID => Dict(r.SETTLEMENTDATE => r for r in eachrow(g)) for
-            (key, g) in pairs(groupby(rows, :INTERCONNECTORID))
+    grid = DataFrame(SETTLEMENTDATE = collect(date_range)[1:(end - 1)])
+    published = read_interconnector_limits(db, date_range; kwargs...)
+    isempty(get_components(AreaInterchange, sys)) && return
+    devices = DataFrame(
+        [
+            (
+                INTERCONNECTORID = get_name(d), device = d,
+                static = with_units_base(() -> get_flow_limits(d), sys, "NATURAL_UNITS"),
+            ) for d in get_components(AreaInterchange, sys)
+        ]
     )
-
     # A static limit of zero or less is kept as published, as a fraction of it would be.
     limit_or_static(limit, static) = static > 0 ? limit : static
-    fallbacks = String[]
-    series = Dict{String, NTuple{2, Vector{Float64}}}()
-    for d in get_components(AreaInterchange, sys)
-        name = get_name(d)
-        limits = with_units_base(() -> get_flow_limits(d), sys, "NATURAL_UNITS")
-        from_to = fill(Float64(limits.from_to), length(full_grid))
-        to_from = fill(Float64(limits.to_from), length(full_grid))
-        for (k, t) in enumerate(full_grid)
-            row = get(get(by_ic, name, Dict{DateTime, Any}()), t, nothing)
-            if isnothing(row) || ismissing(row.EXPORTLIMIT) || ismissing(row.IMPORTLIMIT)
-                push!(fallbacks, "$name@$t")
-                continue
-            end
-            # Signed bounds, ordered and clamped into the static envelope [-MAXMWIN, MAXMWOUT].
-            lower = clamp(min(row.IMPORTLIMIT, row.EXPORTLIMIT), -limits.from_to, limits.to_from)
-            upper = clamp(max(row.IMPORTLIMIT, row.EXPORTLIMIT), -limits.from_to, limits.to_from)
-            from_to[k] = limit_or_static(-lower, limits.from_to)
-            to_from[k] = limit_or_static(upper, limits.to_from)
-        end
-        series[name] = (from_to, to_from)
+    # Signed bounds, ordered and clamped into the static envelope [-MAXMWIN, MAXMWOUT].
+    function bounds(static, import_limit, export_limit)
+        (ismissing(import_limit) || ismissing(export_limit)) && return (static.from_to, static.to_from, true)
+        lower = clamp(min(import_limit, export_limit), -static.from_to, static.to_from)
+        upper = clamp(max(import_limit, export_limit), -static.from_to, static.to_from)
+        return (limit_or_static(-lower, static.from_to), limit_or_static(upper, static.to_from), false)
     end
+    limits = @chain crossjoin(devices, grid) begin
+        leftjoin(published; on = [:INTERCONNECTORID, :SETTLEMENTDATE])
+        transform([:static, :IMPORTLIMIT, :EXPORTLIMIT] => ByRow(bounds) => [:from_to, :to_from, :fallback])
+        sort([:INTERCONNECTORID, :SETTLEMENTDATE])
+    end
+    fallbacks = @. string(limits.INTERCONNECTORID[limits.fallback], "@", limits.SETTLEMENTDATE[limits.fallback])
     isempty(fallbacks) ||
         @warn "set_interconnector_flow_limits!: $(length(fallbacks)) interconnector interval(s) kept the static flow limit (no usable published limits)" first_fallbacks = first(fallbacks, 5)
 
-    for d in get_components(AreaInterchange, sys)
-        from_to, to_from = series[get_name(d)]
+    for g in groupby(limits, :INTERCONNECTORID)
+        d = first(g.device)
         for old in (get_supplemental_attributes(NEMInterconnectorLimits, d)::Vector{NEMInterconnectorLimits})
             remove_supplemental_attribute!(sys, d, old)
         end
-        replace_single_series!(sys, d, single_series(NEM_INTERCONNECTOR_SERIES.from_to_limit, full_grid, from_to))
-        replace_single_series!(sys, d, single_series(NEM_INTERCONNECTOR_SERIES.to_from_limit, full_grid, to_from))
-        add_supplemental_attribute!(
-            sys, d,
-            NEMInterconnectorLimits(;
-                from_to_limit = _series_key(d, NEM_INTERCONNECTOR_SERIES.from_to_limit),
-                to_from_limit = _series_key(d, NEM_INTERCONNECTOR_SERIES.to_from_limit),
-            ),
+        from_to_key = replace_single_series!(
+            sys, d, single_series(NEM_INTERCONNECTOR_SERIES.from_to_limit, grid.SETTLEMENTDATE, Float64.(g.from_to)),
         )
+        to_from_key = replace_single_series!(
+            sys, d, single_series(NEM_INTERCONNECTOR_SERIES.to_from_limit, grid.SETTLEMENTDATE, Float64.(g.to_from)),
+        )
+        add_supplemental_attribute!(sys, d, NEMInterconnectorLimits(; from_to_limit = from_to_key, to_from_limit = to_from_key))
     end
     return
 end
