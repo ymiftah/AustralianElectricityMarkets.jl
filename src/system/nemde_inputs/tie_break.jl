@@ -61,26 +61,22 @@ function _tie_break_band_table(sys::PSY.System, grid)
         region = PSY.get_name(PSY.get_area(PSY.get_bus(device)))
         _push_band_rows!(rows, side, region, device, grid, offer.curves)
     end
-    return @chain DataFrame(rows) begin
-        groupby([:side, :name, :band])
-        transform(:width => (w -> any(>(0), w)) => :positive)
-        subset(:positive)
-        select(Not(:positive))
-    end
+    return DataFrame(rows)
 end
 
 const _TieBandRow = @NamedTuple{
     side::OfferSide, region::String, device::PSY.Component, name::String, stamp::DateTime, band::Int, price::Float64, width::Float64,
 }
 
-# Appends one row per (interval, segment) of `device`'s offer `curves` on `grid`.
+# Appends one row per (interval, segment) of `device`'s offer `curves` on `grid`, for the segments with
+# a positive width at some interval.
 function _push_band_rows!(rows, side, region, device, grid, curves)
     name = PSY.get_name(device)
-    for (stamp, curve) in zip(grid, curves)
-        x, y = PSY.get_x_coords(curve), PSY.get_y_coords(curve)
-        for k in 1:(length(x) - 1)
-            push!(rows, (side, region, device, name, stamp, k, y[k], x[k + 1] - x[k]))
-        end
+    width(curve, k) = PSY.get_x_coords(curve)[k + 1] - PSY.get_x_coords(curve)[k]
+    segments = length(PSY.get_x_coords(first(curves))) - 1
+    active = [k for k in 1:segments if any(curve -> width(curve, k) > 0, curves)]
+    for (stamp, curve) in zip(grid, curves), k in active
+        push!(rows, (side, region, device, name, stamp, k, PSY.get_y_coords(curve)[k], width(curve, k)))
     end
     return
 end
@@ -143,13 +139,11 @@ function _set_tie_break!(sys::PSY.System, grid = _nemde_grid(sys))
         groupby([:side, :region, :stamp])
         combine([:price, :device, :name, :band, :width] => _tie_break_scales => AsTable)
     end
-    stamps = DataFrame(; stamp = collect(grid))
+    position(stamp) = (stamp - first(grid)) ÷ step(grid) + 1
     for group in groupby(tied, [:side, :name, :band])
         # The scale is zero at the intervals where the band is not in a tied group.
-        values = @chain stamps begin
-            leftjoin(group; on = :stamp, order = :left)
-            coalesce.(_.scale, 0.0)
-        end
+        values = zeros(length(grid))
+        values[position.(group.stamp)] .= group.scale
         (; side, device, band) = first(group)
         name = tie_break_series_name(band, side == OfferSide.LOAD)
         PSY.add_time_series!(sys, device, single_series(name, first(grid), values, step(grid)))

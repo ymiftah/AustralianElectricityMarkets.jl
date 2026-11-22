@@ -49,7 +49,7 @@ end
 
 
 # Throws `ArgumentError` if `offers` repeats a stamp of a `(DUID, BIDTYPE, DIRECTION)` or has one outside `grid`.
-function _check_stamps_on_grid(offers::DataFrame, grid)
+function _check_stamps_on_grid(offers::AbstractDataFrame, grid)
     duplicate = findfirst(nonunique(offers, [:DUID, :BIDTYPE, :DIRECTION, :INTERVAL_DATETIME]))
     isnothing(duplicate) || throw(
         ArgumentError(
@@ -77,14 +77,17 @@ function _bid_field!(sys, device, name::AbstractString, values, start_date, reso
 end
 
 
-# Every bid of `offers` on `grid`: one row per (DUID, BIDTYPE, DIRECTION) and stamp, in grid order, with
-# `HAS_ROW` false and the offer columns missing where the bid has no row at that stamp.
-function _offers_on_grid(offers::AbstractDataFrame, grid)
-    keys = [:DUID, :BIDTYPE, :DIRECTION]
-    return @chain unique(select(offers, keys)) begin
-        crossjoin(DataFrame(INTERVAL_DATETIME = grid))
-        leftjoin(offers; on = [keys; :INTERVAL_DATETIME], source = :HAS_ROW, order = :left)
-        transform!(:HAS_ROW => ByRow(==("both")) => :HAS_ROW)
+# `offers` with a `HAS_ROW` column, `true` on every row, sharing the columns of `offers`.
+_with_has_row(offers::AbstractDataFrame) = insertcols(offers, :HAS_ROW => true; copycols = false)
+
+# The rows of one bid (with `HAS_ROW`, in time order, every stamp on `grid` and none repeated) on `grid`: the
+# rows themselves when the bid covers every stamp, else a join onto `grid` with `HAS_ROW` false and the offer
+# columns missing at the stamps the bid has no row.
+function _bid_on_grid(rows::AbstractDataFrame, grid)
+    nrow(rows) == length(grid) && issorted(rows.INTERVAL_DATETIME) && return rows
+    return @chain DataFrame(INTERVAL_DATETIME = grid) begin
+        leftjoin(rows; on = :INTERVAL_DATETIME, order = :left)
+        transform!(:HAS_ROW => ByRow(isequal(true)) => :HAS_ROW)
     end
 end
 
@@ -107,7 +110,7 @@ end
     _write_energy_bid!(sys, device, direction, on_grid, start_date, resolution) -> NEMEnergyBid
 
 Writes the energy bid of `device` in `direction` from `on_grid` (its [`read_offers`](@ref) rows of that
-direction on the dispatch grid, see [`_offers_on_grid`](@ref)) as one series per field, named by
+direction on the dispatch grid, see [`_bid_on_grid`](@ref)) as one series per field, named by
 [`bid_series_name`](@ref), and records it in the device's [`NEMOfferCost`](@ref). A NULL
 field over every row is `nothing`; otherwise NULL intervals and intervals without a row hold zero,
 except `fixed_load`, which holds `NaN` so that an unpublished loading is distinct from one of zero
@@ -176,17 +179,30 @@ function _fcas_trapezium_points(row)
 end
 
 
-const _TRAPEZIUM_COLUMNS = (:HAS_ROW, :DUID, :DIRECTION, :INTERVAL_DATETIME, :ENABLEMENTMIN, :LOWBREAKPOINT, :HIGHBREAKPOINT, :ENABLEMENTMAX, :MAXAVAIL)
-
-# The validated trapezium of each row of `on_grid`, zero where there is no row.
+# The validated trapezium of each row of `on_grid`, zero where there is no row. The first row with a missing
+# or out-of-order trapezium throws the error [`_fcas_trapezium_points`](@ref) gives it.
 function _trapezium_on_grid(on_grid::AbstractDataFrame)
-    return _trapezia(Tuple(on_grid[!, c] for c in _TRAPEZIUM_COLUMNS))
+    columns = Tuple(on_grid[!, c] for c in (:ENABLEMENTMIN, :LOWBREAKPOINT, :HIGHBREAKPOINT, :ENABLEMENTMAX, :MAXAVAIL))
+    bad = _first_bad_trapezium(on_grid.HAS_ROW, columns...)
+    isnothing(bad) || _fcas_trapezium_points(NamedTuple(on_grid[bad, :]))
+    return _trapezium_values(on_grid.HAS_ROW, columns...)
 end
 
-# One trapezium per row of the `_TRAPEZIUM_COLUMNS` `columns`, read as typed named tuples.
-function _trapezia(columns)
-    rows = (NamedTuple{_TRAPEZIUM_COLUMNS}(values) for values in zip(columns...))
-    return [row.HAS_ROW ? Tuple(_fcas_trapezium_points(row)) : (0.0, 0.0, 0.0, 0.0) for row in rows]
+# The first present row whose trapezium is missing a point, out of order or has a negative `MAXAVAIL`.
+function _first_bad_trapezium(present, emin, low, high, emax, avail)
+    return findfirst(eachindex(present)) do i
+        present[i] || return false
+        any(ismissing, (emin[i], low[i], high[i], emax[i], avail[i])) && return true
+        return !(emin[i] <= low[i] <= high[i] <= emax[i] && avail[i] >= 0)
+    end
+end
+
+# The four trapezium points of each row, zero where the row is not present.
+function _trapezium_values(present, emin, low, high, emax, _)
+    return [
+        present[i] ? (Float64(emin[i]), Float64(low[i]), Float64(high[i]), Float64(emax[i])) : (0.0, 0.0, 0.0, 0.0)
+            for i in eachindex(present)
+    ]
 end
 
 
@@ -194,7 +210,7 @@ end
     _write_fcas_bid!(sys, device, service, direction, on_grid, start_date, resolution) -> NEMFCASBid
 
 Writes the FCAS bid of `device` for `service` in `direction` from `on_grid` (its [`read_offers`](@ref)
-rows of that market and direction on the dispatch grid, see [`_offers_on_grid`](@ref)) as one series
+rows of that market and direction on the dispatch grid, see [`_bid_on_grid`](@ref)) as one series
 per field, named by [`bid_series_name`](@ref), and records it in the device's [`NEMOfferCost`](@ref). Intervals
 without a row hold a zero-width curve, a zero `MAXAVAIL` and a zero trapezium. Throws `ArgumentError`
 for a row whose trapezium is missing or out of order.
@@ -245,6 +261,7 @@ function _bid_device_energy!(sys, device, groups, grid, start_date, resolution)
     name = get_name(device)
     required = BidDirection.(string.(energy_offer_sides(device)))
     rows_of(direction::BidDirection) = get(groups, (name, BidType.ENERGY, string(direction)), nothing)
+    on_grid_of(direction::BidDirection) = _bid_on_grid(rows_of(direction), grid)
     if any(d -> isnothing(rows_of(d)), required)
         set_available!(device, false)
         return false
@@ -256,13 +273,11 @@ function _bid_device_energy!(sys, device, groups, grid, start_date, resolution)
     set_available!(device, true)
     registration = _require_unit_data(unit.registration, "registration", device)
     for direction in required
-        on_grid = rows_of(direction)
-        _check_registered_bids(device, registration, direction, view(on_grid, on_grid.HAS_ROW, :), grid)
+        _check_registered_bids(device, registration, direction, rows_of(direction), grid)
     end
     for direction in (BidDirection.GEN, BidDirection.LOAD)
-        on_grid = rows_of(direction)
-        isnothing(on_grid) && continue
-        _write_energy_bid!(sys, device, direction, on_grid, start_date, resolution, unit.offer)
+        isnothing(rows_of(direction)) && continue
+        _write_energy_bid!(sys, device, direction, on_grid_of(direction), start_date, resolution, unit.offer)
     end
     return true
 end
@@ -317,11 +332,11 @@ end
 _is_nemde_system(sys) = any(has_nem_unit_data, get_components(Device, sys))
 
 
-# The energy offer curve of each stamp of `on_grid` (one bid on the dispatch grid), with its prices divided
-# by `loss_factor` and its quantity capped at the stamp's `MAXAVAIL` (zero where there is no row).
-function _referred_curves_on_grid(on_grid, loss_factor::Float64)
+# The energy offer curve of each stamp of `on_grid` (one bid in `direction` on the dispatch grid), with its prices
+# divided by `loss_factor` and its quantity capped at the stamp's `MAXAVAIL` (zero where there is no row).
+function _referred_curves_on_grid(on_grid, direction::BidDirection, loss_factor::Float64)
     max_avail = Float64.(coalesce.(on_grid.MAXAVAIL, 0.0))
-    return map(_curves_on_grid(on_grid, first(on_grid.DIRECTION)), max_avail) do curve, cap
+    return map(_curves_on_grid(on_grid, string(direction)), max_avail) do curve, cap
         return PiecewiseStepData(min.(get_x_coords(curve), cap), get_y_coords(curve) ./ loss_factor)
     end
 end
@@ -346,9 +361,10 @@ function _set_regional_market_bids!(sys, offers::DataFrame, factors::DataFrame, 
     offers = @chain offers begin
         subset(:BIDTYPE => ByRow(==(BidType.ENERGY)))
         _aggregate_offers(resolution, date_range)
+        _with_has_row
     end
     _check_stamps_on_grid(offers, grid)
-    groups = groupby(_offers_on_grid(offers, grid), [:DUID, :DIRECTION])
+    groups = groupby(offers, [:DUID, :DIRECTION])
     loss_factor = Dict(String(r.DUID) => (gen = Float64(r.GEN_LOSS_FACTOR), load = Float64(r.LOAD_LOSS_FACTOR)) for r in eachrow(factors))
     unbid = String[]
     for device in (d for T in (Generator, ControllableLoad, Storage) for d in get_components(T, sys))
@@ -371,7 +387,9 @@ function _set_regional_market_bids!(sys, offers::DataFrame, factors::DataFrame, 
         )
         for (direction, direction_rows) in zip(required, rows)
             gen = direction == BidDirection.GEN
-            curves = _referred_curves_on_grid(direction_rows, gen ? loss_factor[name].gen : loss_factor[name].load)
+            curves = _referred_curves_on_grid(
+                _bid_on_grid(direction_rows, grid), direction, gen ? loss_factor[name].gen : loss_factor[name].load,
+            )
             prefix = gen ? "incremental" : "decremental"
             initial = gen ? zeros(length(grid)) : first.(get_y_coords.(curves))
             for series_name in ("$(prefix)_variable_cost", "$(prefix)_initial_input")
@@ -399,24 +417,25 @@ function _set_market_bids!(sys, offers::DataFrame, date_range; markets = NEM_MAR
     grid = _dispatch_grid(date_range, resolution)
     sys_units = Set(get_name(c) for T in (Generator, ControllableLoad, Storage) for c in get_components(T, sys))
     offers = @chain offers begin
-        subset(:DUID => ByRow(in(sys_units)))
         _aggregate_offers(resolution, date_range)
+        _with_has_row
+        subset(:DUID => ByRow(in(sys_units)); view = true)
     end
     _check_stamps_on_grid(offers, grid)
 
-    groups = groupby(_offers_on_grid(offers, grid), [:DUID, :BIDTYPE, :DIRECTION])
+    groups = groupby(offers, [:DUID, :BIDTYPE, :DIRECTION])
     energy_rows(name, direction) = get(groups, (name, BidType.ENERGY, string(direction)), nothing)
 
     device_by_name = Dict{String, Device}(
         get_name(d) => d for T in (Generator, ControllableLoad, Storage) for d in get_components(T, sys)
     )
     fcas_types = filter(in(markets), FCAS_BID_TYPES)
-    for (key, on_grid) in pairs(groups)
+    for (key, rows) in pairs(groups)
         service = key.BIDTYPE
         service in fcas_types || continue
         device = device_by_name[key.DUID]
         direction = BidDirection(key.DIRECTION)
-        _write_fcas_bid!(sys, device, service, direction, on_grid, start_date, resolution)
+        _write_fcas_bid!(sys, device, service, direction, _bid_on_grid(rows, grid), start_date, resolution)
         if device isa ControllableLoad && is_non_scheduled_load(device) && is_commissioned(device) &&
                 direction == BidDirection.LOAD
             set_available!(device, true)

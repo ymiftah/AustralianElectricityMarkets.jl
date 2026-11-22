@@ -57,17 +57,17 @@ function set_unit_conditions!(sys, db, date_range; intervention::Integer = 0)
     end
 
     # One row per device and interval: the metered conditions, and the previous interval's dispatch mode.
-    metered = transform(conditions, :DUID => ByRow(String) => :DUID, :DUID => ByRow(_ -> true) => :HAS_ROW)
+    metered = transform!(conditions, :DUID => ByRow(String) => :DUID, :DUID => ByRow(_ -> true) => :HAS_ROW)
     previous = select(
         metered, :DUID, :SETTLEMENTDATE => ByRow(t -> t + Minute(5)) => :SETTLEMENTDATE,
         :DISPATCHMODE => :PREV_MODE, :DISPATCHMODETIME => :PREV_MODE_TIME,
     )
+    # `crossjoin` lists each device's stamps in grid order, and `leftjoin!` keeps that order.
     rows = @chain crossjoin(devices, DataFrame(SETTLEMENTDATE = grid)) begin
-        leftjoin(metered; on = [:DUID, :SETTLEMENTDATE])
-        leftjoin(previous; on = [:DUID, :SETTLEMENTDATE])
-        sort([:order, :SETTLEMENTDATE])
-        transform(:HAS_ROW => ByRow(!ismissing) => :HAS_ROW)
-        transform([:registration, :SETTLEMENTDATE] => ByRow(_is_registered) => :registered)
+        leftjoin!(metered; on = [:DUID, :SETTLEMENTDATE])
+        leftjoin!(previous; on = [:DUID, :SETTLEMENTDATE])
+        transform!(:HAS_ROW => ByRow(!ismissing) => :HAS_ROW)
+        transform!([:registration, :SETTLEMENTDATE] => ByRow(_is_registered) => :registered)
     end
 
     # Each problem kind is one subset. A device reports its first: device-wide problems, then the earliest

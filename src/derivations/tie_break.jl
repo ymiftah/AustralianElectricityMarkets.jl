@@ -32,7 +32,7 @@ function tie_groups(bands)
     start = 1
     for k in eachindex(order)
         (k == length(order) || bands[order[k + 1]].price - bands[order[k]].price > TIE_BREAK_CVP_FACTOR) || continue
-        group = order[start:k]
+        group = view(order, start:k)
         start = k + 1
         lo, hi = bands[first(group)], bands[last(group)]
         hi.price - lo.price > TIE_BREAK_CVP_FACTOR && throw(
@@ -41,7 +41,7 @@ function tie_groups(bands)
                     "($(hi.price)) are tied only through bands between them; transitive ties are not supported.",
             ),
         )
-        length(unique(bands[i].name for i in group)) > 1 && push!(groups, group)
+        any(i -> bands[i].name != lo.name, group) && push!(groups, collect(group))
     end
     return groups
 end

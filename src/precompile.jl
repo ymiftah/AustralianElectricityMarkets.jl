@@ -31,7 +31,7 @@ function _precompile_workload()
         rows[!, BAND_AVAIL_COLUMNS[i]] = fill(10.0, 2)
     end
     grid = [DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 10)]
-    _write_energy_bid!(sys, generator, BidDirection.GEN, _offers_on_grid(rows, grid), first(grid), Minute(5))
+    _write_energy_bid!(sys, generator, BidDirection.GEN, _bid_on_grid(_with_has_row(rows), grid), first(grid), Minute(5))
     return nothing
 end
 
