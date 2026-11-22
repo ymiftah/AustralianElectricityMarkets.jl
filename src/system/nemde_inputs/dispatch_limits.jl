@@ -1,5 +1,5 @@
 """
-    _set_dispatch_limits!(sys::PSY.System) -> Nothing
+    _set_dispatch_limits!(sys::PSY.System, grid = _nemde_grid(sys)) -> Nothing
 
 Adds the ramp rates and AGC ramp rates of each NEMDE unit of `sys` that carries telemetry: the
 `NEM_SERIES.ramp_up_rate` and `NEM_SERIES.ramp_down_rate` series in system-base per-unit per minute, and
@@ -10,85 +10,58 @@ gets no series.
 
 # Arguments
 - `sys`: the system whose telemetry [`set_unit_conditions!`](@ref) attached.
+- `grid`: the timestamps the single time series of `sys` share; read from `sys` by default.
 
 # Returns
 `nothing`.
 """
-function _set_dispatch_limits!(sys::PSY.System)
+function _set_dispatch_limits!(sys::PSY.System, grid = _nemde_grid(sys))
     base = PSY.get_base_power(sys)
+    n = length(grid)
+    interval_hours = Dates.value(Millisecond(step(grid))) / 3_600_000
     _foreach_nem_dispatch_device(sys) do device
         telemetry = _nem_unit_data(device).telemetry
         # A unit without telemetry gets no limit series; the NEMDE input check names it.
         isnothing(telemetry) && return
-        up = _bid_series(device, telemetry.ramp_up_limit, :ramp_up_limit)
-        down = _bid_series(device, telemetry.ramp_down_limit, :ramp_down_limit)
-        interval_hours = Dates.value(Millisecond(up.resolution)) / (1000 * 60 * 60)
-        ramp_up_rate, ramp_down_rate = _ramp_rate_values(device, up, down, base)
-        PSY.add_time_series!(sys, device, single_series(NEM_SERIES.ramp_up_rate, first(up.timestamps), ramp_up_rate, up.resolution))
-        PSY.add_time_series!(sys, device, single_series(NEM_SERIES.ramp_down_rate, first(down.timestamps), ramp_down_rate, down.resolution))
-        _set_agc_ramp_rates!(sys, device, telemetry, up, down, base, interval_hours)
+        up = _values_on_grid(device, telemetry.ramp_up_limit, grid; field = :ramp_up_limit)
+        down = _values_on_grid(device, telemetry.ramp_down_limit, grid; field = :ramp_down_limit)
+        # The per-interval ramp limits in MW/h: a device bid on both sides of the energy market takes the composite
+        # cross-zero rate of both its bids, every other device its per-side rate, each capped by the telemetered limit.
+        if is_non_scheduled_load(device)
+            effective_up, effective_down = zeros(n), zeros(n)
+        elseif device isa PSY.Storage
+            inputs = _storage_ramp_inputs(device, grid, interval_hours)
+            initial = _values_on_grid(device, get_observed_state(device).initial_mw, grid)
+            rates = [_storage_ramp_at(inputs, i, initial[i]) for i in 1:n]
+            effective_up, effective_down = first.(rates), last.(rates)
+        else
+            side = first(energy_offer_sides(device))
+            effective_up = effective_ramp_limit.(_energy_bid_values(device, side, :roc_up, grid), up)
+            effective_down = effective_ramp_limit.(_energy_bid_values(device, side, :roc_down, grid), down)
+        end
+        ramp_up_rate = replace(effective_up ./ 60 ./ base, NaN => 0.0)
+        ramp_down_rate = replace(effective_down ./ 60 ./ base, NaN => 0.0)
+        PSY.add_time_series!(sys, device, single_series(NEM_SERIES.ramp_up_rate, first(grid), ramp_up_rate, step(grid)))
+        PSY.add_time_series!(sys, device, single_series(NEM_SERIES.ramp_down_rate, first(grid), ramp_down_rate, step(grid)))
+        _set_agc_ramp_rates!(sys, device, telemetry, up, down, base, interval_hours, grid)
         return
     end
     return
 end
 
 
-# The bid ramp rate of `device` on `side` in MW/min over the grid of `like`; `NaN` where the device
-# has no bid on that side or the bid publishes no rate.
-function _bid_ramp_rates(device, side::OfferSide, field::Symbol, like)
-    cost = _nem_offer_cost(device)
-    isnothing(cost) && return fill(NaN, length(like.values))
-    bid = _energy_bid(cost, side)
-    isnothing(bid) && return fill(NaN, length(like.values))
-    value = getproperty(bid, field)
-    isnothing(value) && return fill(NaN, length(like.values))
-    return _aligned_values(device, value, like)
-end
-
-
-# The ramp rates of `device` over the grid of `up` in system-base per-unit per minute, as the NEMDE inputs
-# write them: zero for a non-scheduled load and where no rate applies. `initial` overrides the observed
-# starting output in MW (one value per stamp), which only a storage device's composite rate reads.
-function _ramp_rate_values(device, up, down, base::Real; initial = nothing)
-    is_non_scheduled_load(device) && return zeros(length(up.values)), zeros(length(down.values))
-    interval_hours = Dates.value(Millisecond(up.resolution)) / (1000 * 60 * 60)
-    effective_up, effective_down = _effective_ramp_rates(device, up, down, interval_hours; initial)
-    return replace(effective_up ./ 60 ./ base, NaN => 0.0), replace(effective_down ./ 60 ./ base, NaN => 0.0)
-end
-
-
-# The per-interval ramp limits of `device` in MW/h over the grid of `up`: a device bid on both sides
-# of the energy market takes the composite cross-zero rate of both its bids, and every other device
-# the per-side rate, each capped by the telemetered limit. A stamp the inputs do not cover is NaN,
-# which leaves the telemetered rate. `initial` overrides the observed starting output in MW.
-function _effective_ramp_rates(device, up, down, interval_hours::Real; initial = nothing)
-    if !(device isa PSY.Storage)
-        side = first(energy_offer_sides(device))
-        bid_up = _bid_ramp_rates(device, side, :roc_up, up)
-        bid_down = _bid_ramp_rates(device, side, :roc_down, down)
-        return (
-            [effective_ramp_limit(bid_up[i], up.values[i]) for i in eachindex(up.values)],
-            [effective_ramp_limit(bid_down[i], down.values[i]) for i in eachindex(down.values)],
-        )
-    end
-    inputs = _storage_ramp_inputs(device, up, interval_hours)
-    initial = something(initial, _aligned_values(device, get_observed_state(device).initial_mw, up))
-    rates = [_storage_ramp_at(inputs, i, initial[i]) for i in eachindex(up.values)]
-    return first.(rates), last.(rates)
-end
-
-
-# The state-independent inputs of a storage device's composite ramp over the grid of `up`: its bid rates on both
-# sides in MW/min and its telemetered limits in MW/h.
-function _storage_ramp_inputs(device, up, interval_hours::Real)
+# The state-independent inputs of a storage device's composite ramp on `grid`: its bid rates on both sides in
+# MW/min and its telemetered limits in MW/h.
+function _storage_ramp_inputs(device, grid, interval_hours::Real)
+    telemetry = _nem_unit_data(device).telemetry
     return (;
         minutes = interval_hours * 60,
-        gen_up = _bid_ramp_rates(device, OfferSide.GEN, :roc_up, up),
-        gen_down = _bid_ramp_rates(device, OfferSide.GEN, :roc_down, up),
-        load_up = _bid_ramp_rates(device, OfferSide.LOAD, :roc_up, up),
-        load_down = _bid_ramp_rates(device, OfferSide.LOAD, :roc_down, up),
-        up = up.values,
-        down = _aligned_values(device, _nem_unit_data(device).telemetry.ramp_down_limit, up),
+        gen_up = _energy_bid_values(device, OfferSide.GEN, :roc_up, grid),
+        gen_down = _energy_bid_values(device, OfferSide.GEN, :roc_down, grid),
+        load_up = _energy_bid_values(device, OfferSide.LOAD, :roc_up, grid),
+        load_down = _energy_bid_values(device, OfferSide.LOAD, :roc_down, grid),
+        up = _values_on_grid(device, telemetry.ramp_up_limit, grid; field = :ramp_up_limit),
+        down = _values_on_grid(device, telemetry.ramp_down_limit, grid),
     )
 end
 
@@ -104,33 +77,22 @@ function _storage_ramp_at(inputs, i::Int, initial_mw::Real)
 end
 
 
-# The regulation FCAS bid `MAXAVAIL` of `device` over the grid of `like` in MW: the sum of its bids for
-# `service`, the max availability of a bidirectional unit's combined trapezium, or `NaN` when it has no
-# bid for the service or a bid misses an interval, which leaves the telemetered availability.
-function _regulation_bid_max_avail(device, service::BidType, like)
-    cost = _nem_offer_cost(device)
-    isnothing(cost) && return fill(NaN, length(like.values))
-    values = [_aligned_values(device, bid.max_avail, like) for bid in get_fcas_bids(cost) if bid.service == service]
-    isempty(values) && return fill(NaN, length(like.values))
-    return reduce((a, b) -> a .+ b, values)
-end
-
-
-# The effective availability of `service` over the grid of `like`, per unit of the system base.
-function _regulation_availability(device, service::BidType, key, like, base::Real)
-    telemetry = _aligned_values(device, key, like)
-    bid = _regulation_bid_max_avail(device, service, like)
-    return [effective_regulation_max_avail(bid[i], telemetry[i]) for i in eachindex(telemetry)] ./ base
-end
-
-
 # Adds `fcas_agc_ramp_rate_<service>` for both regulation services, from the effective regulation
 # availability. A `ControllableLoad` reads its raise regulation from the lower availability and the
 # ramp-up rate, and its lower regulation from the ramp-down rate and the raise availability.
-function _set_agc_ramp_rates!(sys::PSY.System, device, telemetry, up, down, base::Real, interval_hours::Real)
-    raise_availability = _regulation_availability(device, BidType.RAISEREG, telemetry.raise_reg_max_avail, up, base)
-    lower_availability = _regulation_availability(device, BidType.LOWERREG, telemetry.lower_reg_max_avail, up, base)
-    ramp_up, ramp_down = up.values ./ base, down.values ./ base
+function _set_agc_ramp_rates!(sys::PSY.System, device, telemetry, up, down, base::Real, interval_hours::Real, grid)
+    n = length(grid)
+    cost = _nem_offer_cost(device)
+    fcas_bids = isnothing(cost) ? NEMFCASBid[] : get_fcas_bids(cost)
+    # The regulation MAXAVAIL of a service is the sum of its bids, NaN without one, and caps the telemetered availability.
+    function regulation_availability(service, telemetry_key)
+        bids = [_values_on_grid(device, bid.max_avail, grid) for bid in fcas_bids if bid.service == service]
+        bid_max_avail = isempty(bids) ? fill(NaN, n) : reduce(.+, bids)
+        return effective_regulation_max_avail.(bid_max_avail, _values_on_grid(device, telemetry_key, grid)) ./ base
+    end
+    raise_availability = regulation_availability(BidType.RAISEREG, telemetry.raise_reg_max_avail)
+    lower_availability = regulation_availability(BidType.LOWERREG, telemetry.lower_reg_max_avail)
+    ramp_up, ramp_down = up ./ base, down ./ base
     if device isa PSY.ControllableLoad
         sides = (ramp_up => lower_availability, ramp_down => raise_availability)
     else
@@ -138,11 +100,10 @@ function _set_agc_ramp_rates!(sys::PSY.System, device, telemetry, up, down, base
     end
     for (service, (ramp, availability)) in zip((BidType.RAISEREG, BidType.LOWERREG), sides)
         all(isnan, availability) && continue
-        values = [agc_ramp_rate(ramp[i], availability[i], interval_hours) for i in eachindex(ramp)]
+        values = agc_ramp_rate.(ramp, availability, interval_hours)
         all(isnan, values) && continue
         PSY.add_time_series!(
-            sys, device,
-            single_series(fcas_series_name("fcas_agc_ramp_rate", service), first(up.timestamps), values, up.resolution),
+            sys, device, single_series(fcas_series_name("fcas_agc_ramp_rate", service), first(grid), values, step(grid)),
         )
     end
     return

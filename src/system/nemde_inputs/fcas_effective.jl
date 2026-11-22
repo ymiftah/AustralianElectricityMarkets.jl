@@ -96,41 +96,6 @@ function _fcas_side_bid(device, bid_type::BidType, side::OfferSide)
 end
 
 
-# The key of a series-backed FCAS bid field; a static field has no series to read the bid from.
-function _fcas_series_key(device, value, field::Symbol)
-    value isa IS.StaticTimeSeriesKey || throw(
-        ArgumentError(
-            "\"$(PSY.get_name(device))\" has a static `$(field)` field; FCAS trapeziums and MAXAVAIL need " *
-                "series-backed bid inputs (offer curves included), as set_market_bids! writes them.",
-        ),
-    )
-    return value
-end
-
-
-# The values of a series-backed FCAS bid field over `stamps`, as the series stores them.
-function _fcas_bid_window(device, value, field::Symbol, stamps::Vector{DateTime})
-    key = _fcas_series_key(device, value, field)
-    return IS.get_time_series_values(device, key; start_time = first(stamps), len = length(stamps))
-end
-
-
-# The values of a telemetry field over `stamps` as stored: a static value is repeated, and an absent field is `nothing`.
-function _fcas_telemetry_window(device, value, stamps::Vector{DateTime})
-    isnothing(value) && return nothing
-    value isa IS.StaticTimeSeriesKey || return fill(Float64(value), length(stamps))
-    return Float64.(IS.get_time_series_values(device, value; start_time = first(stamps), len = length(stamps)))
-end
-
-
-# The `(min, max)` pair of a telemetry enablement field over `stamps` per-unit of `base`, as its two vectors.
-function _fcas_pair_window(device, value, stamps::Vector{DateTime}, base::Float64)
-    pairs = value isa IS.StaticTimeSeriesKey ?
-        IS.get_time_series_values(device, value; start_time = first(stamps), len = length(stamps)) : fill(value, length(stamps))
-    return ([p[1] / base for p in pairs], [p[2] / base for p in pairs])
-end
-
-
 # The per-interval fast-start flags of `device`: whether a bid side's profile is fast-start (`is_fast_start`).
 # A `FastStartProfile` held as a static bid value applies to every interval.
 function _fcas_fast_start_flags(device, stamps::Vector{DateTime})
@@ -154,14 +119,14 @@ end
 # overrides the observed state at each stamp, with `initial_mw` in MW.
 function _fcas_window(device, stamps::Vector{DateTime}, resolution::Dates.Period, base::Float64; states = nothing)
     telemetry = get_telemetry(device)
-    status = _fcas_telemetry_window(device, telemetry.agc_status, stamps)
-    uigf = _fcas_telemetry_window(device, telemetry.uigf, stamps)
+    status = _values_on_grid(device, telemetry.agc_status, stamps)
+    uigf = isnothing(telemetry.uigf) ? nothing : _values_on_grid(device, telemetry.uigf, stamps)
     states = [NEMUnitState(s.initial_mw / base, s.dispatch_mode, s.time_in_mode) for s in something(states, observed_unit_states(device, stamps))]
     return _FCASWindow(
         stamps, resolution, base, states, _fcas_fast_start_flags(device, stamps),
         isnothing(uigf) ? nothing : uigf ./ base,
         [isnan(v) ? -1 : round(Int, v) for v in status],
-        _fcas_telemetry_window(device, telemetry.ramp_up_limit, stamps),
+        _values_on_grid(device, telemetry.ramp_up_limit, stamps),
     )
 end
 
@@ -188,7 +153,7 @@ function _fcas_energy_max_avail(window::_FCASWindow, device, side::OfferSide)
     cost = _nem_offer_cost(device)
     bid = isnothing(cost) ? nothing : _energy_bid(cost, side)
     isnothing(bid) && return nothing
-    return Float64.(_fcas_bid_window(device, bid.max_avail, :max_avail, window.stamps)) ./ window.base
+    return _values_on_grid(device, bid.max_avail, window.stamps; field = :max_avail) ./ window.base
 end
 
 
@@ -234,14 +199,16 @@ function _fcas_scaled_trapeziums(window::_FCASWindow, device, bid_type::BidType,
         ArgumentError("\"$(PSY.get_name(device))\" has no FCAS bid for $(string(bid_type)) on $(string(side)); call set_market_bids! first."),
     )
     n = length(window.stamps)
-    points = _fcas_bid_window(device, bid.trapezium, :trapezium, window.stamps)
-    max_avail = Float64.(_fcas_bid_window(device, bid.max_avail, :max_avail, window.stamps))
+    points = _values_on_grid(device, bid.trapezium, window.stamps; field = :trapezium)
+    max_avail = _values_on_grid(device, bid.max_avail, window.stamps; field = :max_avail)
     is_regulation = bid_type in FCAS_REGULATION_MARKETS
     telemetry = get_telemetry(device)
     enablement = if is_regulation
-        _fcas_pair_window(
-            device, bid_type == BidType.RAISEREG ? telemetry.raise_reg_enablement : telemetry.lower_reg_enablement, window.stamps, window.base,
+        pairs = _values_on_grid(
+            device, bid_type == BidType.RAISEREG ? telemetry.raise_reg_enablement : telemetry.lower_reg_enablement, window.stamps;
+            absent = (NaN, NaN),
         )
+        ([p[1] / window.base for p in pairs], [p[2] / window.base for p in pairs])
     else
         (nothing, nothing)
     end
@@ -402,19 +369,6 @@ function _fcas_effective_values(prep::_FCASPrepared, device, bid_type::BidType)
 end
 
 
-# The timestamps and resolution of `device`'s FCAS bid series for `bid_type`, from its trapezium series, for a device
-# with a bid in that market and `nothing` otherwise.
-function _fcas_bid_stamps(device::PSY.Device, bid_type::BidType)
-    direction = fcas_bid_direction(device, bid_type)
-    direction == FCASBidDirection.NONE && return nothing
-    side = direction == FCASBidDirection.DECREMENTAL ? OfferSide.LOAD : OfferSide.GEN
-    bid = _fcas_side_bid(device, bid_type, side)
-    isnothing(bid) && throw(ArgumentError("\"$(PSY.get_name(device))\" has no FCAS bid for $(string(bid_type)) on $(string(side))."))
-    name = IS.get_name(_fcas_series_key(device, bid.trapezium, :trapezium))
-    return PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, name), IS.get_resolution(PSY.get_time_series(PSY.SingleTimeSeries, device, name))
-end
-
-
 """
     _attach_fcas_effective_series!(sys, device, bid_type, window, energy)
 
@@ -449,7 +403,7 @@ end
 
 
 """
-    _set_fcas_effective_offers!(sys)
+    _set_fcas_effective_offers!(sys, grid = _nemde_grid(sys))
 
 Adds the effective FCAS offers and regulation ramping limits of every available device contributing to an
 [`FCASService`](@ref), named by [`fcas_effective_series_name`](@ref) and [`fcas_ramping_series_name`](@ref), per-unit
@@ -457,12 +411,14 @@ of the system base. The AGC ramp rates it reads must already be written by [`_se
 
 # Arguments
 - `sys`: the `System` to add to.
+- `grid`: the timestamps the single time series of `sys` share; read from `sys` by default.
 
 # Returns
 `nothing`.
 """
-function _set_fcas_effective_offers!(sys::PSY.System)
+function _set_fcas_effective_offers!(sys::PSY.System, grid = _nemde_grid(sys))
     base = PSY.get_base_power(sys)
+    stamps = collect(grid)
     index = _contributing_device_index(sys)
     markets = Dict{Base.UUID, Vector{BidType}}()
     devices = PSY.Device[]
@@ -481,12 +437,10 @@ function _set_fcas_effective_offers!(sys::PSY.System)
         window = nothing
         energy = nothing
         for bid_type in markets[IS.get_uuid(device)]
-            found = _fcas_bid_stamps(device, bid_type)
-            isnothing(found) && continue
-            stamps, resolution = found
-            # The window and energy limits are read once per device, and again only if a market's bid series differ.
-            if isnothing(window) || window.stamps != stamps || window.resolution != resolution
-                window = _fcas_window(device, stamps, resolution, base)
+            fcas_bid_direction(device, bid_type) == FCASBidDirection.NONE && continue
+            # The window and energy limits are read once per device.
+            if isnothing(window)
+                window = _fcas_window(device, stamps, step(grid), base)
                 energy = _fcas_energy_limits(window, device)
             end
             _attach_fcas_effective_series!(sys, device, bid_type, window, energy)

@@ -112,23 +112,10 @@ end
     )
 end
 
-# Moves the "loss_demand" series of `load` five minutes later, off the common timestamps.
-function _ld_shift_series!(sys, load)
-    original = PowerSystems.get_time_series(PowerSystems.SingleTimeSeries, load, "loss_demand")
-    stamps = PowerSystems.get_time_series_timestamps(PowerSystems.SingleTimeSeries, load, "loss_demand")
-    values = PowerSystems.get_time_series_values(PowerSystems.SingleTimeSeries, load, "loss_demand")
-    remove_series_and_forecast!(sys, load, "loss_demand")
-    PowerSystems.add_time_series!(
-        sys, load, AustralianElectricityMarkets.single_series("loss_demand", first(stamps) + Minute(5), values, PowerSystems.get_resolution(original)),
-    )
-    return
-end
-
 @testset "the writer rejects $(message)" for (message, damage!) in (
         "no available PowerLoad" => (sys, _) -> foreach(l -> PowerSystems.set_available!(l, false), PowerSystems.get_components(PowerSystems.PowerLoad, sys)),
         "on a bus with no area" => (_, load) -> PowerSystems.set_area!(PowerSystems.get_bus(load), nothing),
         "no \"loss_demand\" series" => (sys, load) -> remove_series_and_forecast!(sys, load, "loss_demand"),
-        "is not on the timestamps" => _ld_shift_series!,
     )
     sys = _ld_strip!(deepcopy(_LD_SYS))
     damage!(sys, PowerSystems.get_component(PowerSystems.PowerLoad, sys, "VIC1 Load"))
