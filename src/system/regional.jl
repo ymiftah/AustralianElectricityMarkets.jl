@@ -1,11 +1,8 @@
-# TODO This should live in `@network_configurations`
-
-
 """
-    _base_system(db; date_range, kwargs...)
+    nem_system(db, ::RegionalNetworkConfiguration; date_range, kwargs...)
 
-Assembles the energy-only regional `PowerSystems.System` built from the database, as
-[`RegionalNetworkConfiguration`](@ref) returns it.
+Assembles the energy-only regional `PowerSystems.System` built from the database: the NEM network
+(see [`nem_network`](@ref)) with the ISP operating cost of every generator.
 
 # Arguments
 - `db`: The database connection.
@@ -23,16 +20,9 @@ sys = nem_system(db, RegionalNetworkConfiguration(); date_range = DateTime(2025,
 println(sys)
 ```
 """
-function _base_system(db; date_range, kwargs...)
-    sys, _ = _regional_system(db; date_range, kwargs...)
-    return sys
-end
-
-
-function _regional_system(db; date_range, kwargs...)
-    sys, units, gen_df = _nem_network(db; date_range, kwargs...)
-    _set_isp_generation_costs!(sys, gen_df)
-    return sys, units
+function AustralianElectricityMarkets.nem_system(db, ::RegionalNetworkConfiguration; date_range, kwargs...)
+    sys, _, gen_df = _nem_network(db; date_range, kwargs...)
+    return _set_isp_generation_costs!(sys, gen_df)
 end
 
 
@@ -66,6 +56,3 @@ AustralianElectricityMarkets.table_requirements(::RegionalNetworkConfiguration) 
     :BIDPEROFFER_D,
     :DISPATCHLOAD,
 ]
-
-
-AustralianElectricityMarkets.nem_system(db, ::RegionalNetworkConfiguration; date_range, kwargs...) = _base_system(db; date_range, kwargs...)

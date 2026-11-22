@@ -66,8 +66,7 @@ export fcas_series_name, fcas_effective_series_name, fcas_ramping_series_name, F
 
 include("constants.jl")
 include("types/bid_types.jl")
-include("network_configurations/NetworkConfigurations.jl")
-using .NetworkConfigurations: NetworkConfiguration, RegionalNetworkConfiguration, NEMDEConfiguration
+include("network_configurations.jl")
 include("types/fcas.jl")
 include("types/generic_constraints.jl")
 include("types/interconnector_losses.jl")
@@ -123,8 +122,6 @@ export nem_network
 
 @doc (@doc AustralianElectricityMarketsCache.HiveConfiguration) HiveConfiguration
 @doc (@doc AustralianElectricityMarketsCache.aem_connect) aem_connect
-@doc (@doc NetworkConfigurations.RegionalNetworkConfiguration) RegionalNetworkConfiguration
-@doc (@doc NetworkConfigurations.NEMDEConfiguration) NEMDEConfiguration
 @doc (@doc RegionModel.nem_network) nem_network
 
 include("precompile.jl")

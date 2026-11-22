@@ -1,7 +1,6 @@
 module RegionModel
 
 using ..AustralianElectricityMarkets
-using ..NetworkConfigurations: RegionalNetworkConfiguration, NEMDEConfiguration
 using DataFrames, Chain, Statistics
 using PowerSystems
 import PowerSystems as PSY

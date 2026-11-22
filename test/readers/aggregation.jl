@@ -10,9 +10,9 @@ using DataFrames, Statistics
     regions(df) = Set(vcat(df.REGIONFROM, df.REGIONTO))
     @test "SNOWY1" in regions(read_interconnectors(db, mock_range_at(early)))
     @test !("SNOWY1" in regions(read_interconnectors(db, mock_range_at(late))))
-    buses = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db, mock_range_at(early))
+    buses = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(read_interconnectors(db, mock_range_at(early)))
     @test "SNOWY1" in buses.region
-    late_buses = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db, mock_range_at(late))
+    late_buses = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(read_interconnectors(db, mock_range_at(late)))
     @test !("SNOWY1" in late_buses.region)
     @test_throws ArgumentError read_interconnectors(db, mock_range_at(Date(2024, 1, 1)))
 end
