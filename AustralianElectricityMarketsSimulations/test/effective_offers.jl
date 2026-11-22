@@ -100,10 +100,10 @@ end
     Δ = interval_hours(Minute(5))
 
     @testset "effective_energy_availability limits MAXAVAIL by UIGF and zeroes the excluded intervals" begin
-        @test AEM.effective_energy_availability([10.0, 10.0], [8.0, 12.0], [60.0, 60.0], false) == [8.0, 10.0]
-        @test AEM.effective_energy_availability([10.0, 10.0], nothing, [60.0, 60.0], false) == [10.0, 10.0]
-        @test AEM.effective_energy_availability([10.0, 10.0], nothing, [60.0, NaN], false) == [10.0, 0.0]
-        @test AEM.effective_energy_availability([10.0, 10.0], [8.0, 8.0], [60.0, 60.0], true) == [0.0, 0.0]
+        @test AEM.effective_energy_availability.([10.0, 10.0], [8.0, 12.0], [60.0, 60.0], false) == [8.0, 10.0]
+        @test AEM.effective_energy_availability.([10.0, 10.0], nothing, [60.0, 60.0], false) == [10.0, 10.0]
+        @test AEM.effective_energy_availability.([10.0, 10.0], nothing, [60.0, NaN], false) == [10.0, 0.0]
+        @test AEM.effective_energy_availability.([10.0, 10.0], [8.0, 8.0], [60.0, 60.0], true) == [0.0, 0.0]
     end
 
     @testset "a device with no FCAS bid gets no FCAS effective series" begin

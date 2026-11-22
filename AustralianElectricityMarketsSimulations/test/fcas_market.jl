@@ -530,7 +530,8 @@ end
     )
     bat = get_component(EnergyReservoirStorage, sys, "BAT1")
     window = AustralianElectricityMarkets._fcas_window(bat, [TOY_START], TOY_RESOLUTION, get_base_power(sys))
-    trap = only(AustralianElectricityMarkets._fcas_side(window, bat, BidType.LOWERREG, true).trapeziums)
+    market = AustralianElectricityMarkets._fcas_market(window, bat, BidType.LOWERREG, fcas_bid_direction(bat, BidType.LOWERREG); offer_curves = false)
+    trap = AustralianElectricityMarkets._fcas_scaled_trapezium(market, market.load, 1)
     @test collect(Tuple(trap)[1:5]) .* get_base_power(sys) ≈ [-10.0, -8.0, -2.0, 0.0, 4.0]
 end
 

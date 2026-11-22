@@ -219,7 +219,8 @@ end
                     # The writer's per-unit window and scaled trapeziums, against the bid's own raw values per-unit.
                     stamps = [first(date_range) + (i - 1) * Minute(5) for i in 1:horizon]
                     window = AEM._fcas_window(d, stamps, Minute(5), AEM._fcas_system_base(d))
-                    scaled = AEM._fcas_side(window, d, bid_type, decremental).trapeziums
+                    market = AEM._fcas_market(window, d, bid_type, direction; offer_curves = false)
+                    scaled = [AEM._fcas_scaled_trapezium(market, decremental ? market.load : market.gen, t) for t in 1:horizon]
                     bid = AEM._fcas_side_bid(d, bid_type, AEM.offer_side(decremental))
                     raw_max_avail = AEM._values_on_grid(d, bid.max_avail, stamps; field = :max_avail)
                     points = AEM._values_on_grid(d, bid.trapezium, stamps; field = :trapezium)
