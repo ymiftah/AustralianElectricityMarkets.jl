@@ -1,3 +1,8 @@
+# The regional semi-scheduled UIGF columns of DISPATCHREGIONSUM as an empty relation. A union by name with
+# it reads them as NULL in months AEMO did not publish them.
+const _REGIONAL_UIGF_COLUMNS = "(SELECT NULL AS SS_SOLAR_UIGF, NULL AS SS_WIND_UIGF WHERE false)"
+
+
 """
     read_demand(db, date_range; resolution::Dates.Period = Dates.Minute(5), intervention::Integer = 0)
 
@@ -63,7 +68,10 @@ function read_demand(db, date_range; resolution::Dates.Period = Dates.Minute(5),
             GROUP BY ALL
         ),
         demand_run AS (
-            SELECT * FROM $(read_hive(db, :DISPATCHREGIONSUM, window))
+            SELECT * FROM (
+                SELECT * FROM $(read_hive(db, :DISPATCHREGIONSUM, window))
+                UNION ALL BY NAME SELECT * FROM $_REGIONAL_UIGF_COLUMNS
+            )
             WHERE SETTLEMENTDATE > ? AND SETTLEMENTDATE <= ?
             QUALIFY COALESCE(INTERVENTION, 0) = CASE WHEN ? = 0 THEN 0
                 ELSE max(COALESCE(INTERVENTION, 0)) OVER (PARTITION BY SETTLEMENTDATE) END

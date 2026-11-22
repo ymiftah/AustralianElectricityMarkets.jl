@@ -160,6 +160,13 @@ function read_fcas_bids(
 end
 
 
+# Every FCAS target and availability column of DISPATCHLOAD as an empty relation. A union by name with it
+# reads a column as NULL in months AEMO did not publish it (the 1-second markets before October 2023).
+const _FCAS_DISPATCH_COLUMNS = "(SELECT " *
+    join(("NULL AS $(m)$(c)" for m in string.(FCAS_BID_TYPES) for c in ("", "ACTUALAVAILABILITY")), ", ") *
+    " WHERE false)"
+
+
 """
     read_fcas_dispatch(db, date_range; intervention = 0)
 
@@ -178,7 +185,7 @@ function read_fcas_dispatch(db, date_range; intervention::Integer = 0)
         db,
         """
         WITH run AS (
-            SELECT * FROM $source
+            SELECT * FROM (SELECT * FROM $source UNION ALL BY NAME SELECT * FROM $_FCAS_DISPATCH_COLUMNS)
             WHERE SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ?
             QUALIFY COALESCE(INTERVENTION, 0) = CASE WHEN ? = 0 THEN 0
                 ELSE max(COALESCE(INTERVENTION, 0)) OVER (PARTITION BY SETTLEMENTDATE) END

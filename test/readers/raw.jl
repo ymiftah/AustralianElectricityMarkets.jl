@@ -223,6 +223,35 @@ let
         @test tas.MAXCAPACITY == 594
     end
 
+    @testset "months without the 1-second FCAS or regional UIGF columns read them as missing" begin
+        BT = AustralianElectricityMarkets.BidType
+        one_second = ("RAISE1SEC", "LOWER1SEC")
+        drop(columns) = ["ALTER TABLE input DROP COLUMN IF EXISTS $c" for c in columns]
+        one_second_market(df) = df.BIDTYPE .∈ Ref((BT.RAISE1SEC, BT.LOWER1SEC))
+        range = MOCK_DATE_RANGE
+
+        prices = read_fcas_prices(db, range)
+        old_prices = read_fcas_prices(
+            damaged_cache(hive_dir, :DISPATCHPRICE, drop([m * c for m in one_second for c in ("RRP", "ROP", "APCFLAG")])), range,
+        )
+        @test nrow(old_prices) == nrow(prices)
+        @test all(ismissing, old_prices.RRP[one_second_market(old_prices)])
+        @test isequal(old_prices[.!one_second_market(old_prices), :], prices[.!one_second_market(prices), :])
+
+        dispatch = read_fcas_dispatch(db, range)
+        old_dispatch = read_fcas_dispatch(
+            damaged_cache(hive_dir, :DISPATCHLOAD, drop([m * c for m in one_second for c in ("", "ACTUALAVAILABILITY")])), range,
+        )
+        @test nrow(old_dispatch) == nrow(dispatch)
+        @test all(ismissing, old_dispatch.TARGET[one_second_market(old_dispatch)])
+        @test isequal(old_dispatch[.!one_second_market(old_dispatch), :], dispatch[.!one_second_market(dispatch), :])
+
+        demand = read_demand(db, range)
+        old_demand = read_demand(damaged_cache(hive_dir, :DISPATCHREGIONSUM, drop(["SS_SOLAR_UIGF", "SS_WIND_UIGF"])), range)
+        @test all(ismissing, old_demand.SS_SOLAR_UIGF) && all(ismissing, old_demand.SS_WIND_UIGF)
+        @test isequal(old_demand.TOTALDEMAND, demand.TOTALDEMAND)
+    end
+
     @testset "read_hive date range" begin
         # The mock names months YYYY-MM and the real cache YYYY-MM-01; both must match by month.
         # DUDETAIL is cached for 2025-01 only; MNSP_DAYOFFER for 2024-12 and 2025-01.
