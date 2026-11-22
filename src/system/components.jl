@@ -44,17 +44,11 @@ const MATCH_TYPE_TO_PRIMEMOVER = Dict(
 )
 
 
-"""
-    _map_primemover!(df)
-
-Add a `:primemover::PrimeMovers` column to an ISP2025-reader DataFrame
-(`read_isp_variable_opex`, `read_isp_fixed_opex`), derived from its raw `:isp_technology`
-column via `PM_MAPPING`. The ISP readers return the raw technology string.
-"""
-function _map_primemover!(df)
-    transform!(df, :isp_technology => ByRow(x -> AustralianElectricityMarkets.PM_MAPPING[x]) => :primemover)
-    return df
-end
+const _GENERATOR_KINDS = Dict(
+    primemover => kind for (kind, type) in (
+            :renewable => :RenewableDispatch, :hydro => :HydroDispatch, :thermal => :ThermalStandard,
+        ) for primemover in MATCH_TYPE_TO_PRIMEMOVER[type]
+)
 
 
 """
@@ -74,14 +68,13 @@ end
 
 
 """
-    get_bus_dataframe(db, date_range)
+    get_bus_dataframe(interconnectors)
 
-Generates a DataFrame of bus information.
+Generates a DataFrame of bus information: a generator bus and a load bus for every region an
+interconnector connects.
 
 # Arguments
-- `db`: The database connection.
-- `date_range`: The half-open range of interval-ending stamps the interconnectors and regions are
-  resolved at (see [`read_interconnectors`](@ref)).
+- `interconnectors`: A `DataFrame` of interconnector data, as returned by [`read_interconnectors`](@ref).
 
 # Returns
 A `DataFrame` containing bus details.
@@ -90,16 +83,11 @@ A `DataFrame` containing bus details.
 ```julia
 db = aem_connect()
 date_range = DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 2)
-bus_df = get_bus_dataframe(db, date_range)
+bus_df = get_bus_dataframe(read_interconnectors(db, date_range))
 println(bus_df)
 ```
 """
-function get_bus_dataframe(db, date_range)
-    return _bus_dataframe(read_interconnectors(db, date_range))
-end
-
-
-function _bus_dataframe(interconnectors)
+function get_bus_dataframe(interconnectors)
     regions = @chain interconnectors begin
         select(:REGIONFROM => :region)
         vcat(select(interconnectors, :REGIONTO => :region))
@@ -111,7 +99,6 @@ function _bus_dataframe(interconnectors)
     ref_bus = first(regions.region)
     gen_buses = @chain regions begin
         insertcols!(
-            :voltage => 1,
             :angle => 0.0,
             :base_voltage => 130,
             :voltage_limits_min => 0.9,
@@ -151,7 +138,7 @@ A `DataFrame` containing load details.
 ```julia
 db = aem_connect()
 date_range = DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 2)
-bus_df = get_bus_dataframe(db, date_range)
+bus_df = get_bus_dataframe(read_interconnectors(db, date_range))
 load_df = get_load_dataframe(bus_df)
 println(load_df)
 ```
@@ -188,7 +175,7 @@ A `DataFrame` containing branch details.
 ```julia
 db = aem_connect()
 date_range = DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 2)
-bus_df = get_bus_dataframe(db, date_range)
+bus_df = get_bus_dataframe(read_interconnectors(db, date_range))
 branch_df = get_branch_dataframe(bus_df, read_interconnectors(db, date_range))
 println(branch_df)
 ```
@@ -232,11 +219,13 @@ end
 """
     get_generators_dataframe(bus_df, units)
 
-Generates a DataFrame of generator information.
+Generates a DataFrame of generator information, one row per non-load unit with a technology. The
+`kind` column is `:renewable`, `:hydro`, `:thermal` or `:other`, from the unit's prime mover, and
+`ramp_limits` is `nothing` or an `(up, down)` tuple per-unitized by `base_power`.
 
 # Arguments
 - `bus_df`: A `DataFrame` of bus data, as returned by `get_bus_dataframe`.
-- `units`: A `DataFrame` of unit data, as returned by `read_units`.
+- `units`: A `DataFrame` of unit data, as returned by `read_units` and mapped by `_map_unit_technology`.
 
 # Returns
 A `DataFrame` containing generator details.
@@ -245,60 +234,39 @@ A `DataFrame` containing generator details.
 ```julia
 db = aem_connect()
 date_range = DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 2)
-bus_df = get_bus_dataframe(db, date_range)
-gen_df = get_generators_dataframe(bus_df, read_units(db, date_range))
+bus_df = get_bus_dataframe(read_interconnectors(db, date_range))
+gen_df = get_generators_dataframe(bus_df, _map_unit_technology(read_units(db, date_range)))
 println(gen_df)
 ```
 """
 function get_generators_dataframe(bus_df, units)
     bus = select(bus_df, :bus_id, :name)
-    units = _map_unit_technology(units)
-    # Scheduled loads (some have a GENUNITS row) are built by `get_scheduled_loads_dataframe`.
-    subset!(units, :DISPATCHTYPE => ByRow(!isequal("LOAD")))
-    # A battery registered as separate generator and load units: its generator half has no storage data.
-    units.legacy_battery = isequal.(units.TECHNOLOGY, Ref(PrimeMovers.BA)) .& isequal.(units.DISPATCHTYPE, "GENERATOR")
-
+    ramp(rate, capacity) = capacity > 0 ? rate / capacity : 0
     return @chain units begin
-        select!(
-            :legacy_battery,
+        # Scheduled loads (some have a GENUNITS row) are built by `get_scheduled_loads_dataframe`.
+        subset(:DISPATCHTYPE => ByRow(!isequal("LOAD")))
+        select(
+            # A battery registered as separate generator and load units: its generator half has no storage data.
+            [:TECHNOLOGY, :DISPATCHTYPE] =>
+                ByRow((t, d) -> isequal(t, PrimeMovers.BA) && isequal(d, "GENERATOR")) => :legacy_battery,
+            :TECHNOLOGY => ByRow(t -> get(_GENERATOR_KINDS, t, :other)) => :kind,
             :REGIONID => ByRow(x -> x * GEN_SUFFIX) => :bus_name,
             :REGIONID => :region,
             :DUID => :name,
             :REGISTEREDCAPACITY => :base_power,
-            [:MINCAPACITY, :REGISTEREDCAPACITY] =>
-                ByRow((m, r) -> r > 0 ? m / r : 0) => :min_active_power,
-            [:MAXCAPACITY, :REGISTEREDCAPACITY] =>
-                ByRow((m, r) -> r > 0 ? m / r : 0) => :max_active_power,
-            [:MAXRATEOFCHANGEUP, :REGISTEREDCAPACITY] =>
-                ByRow((m, r) -> r > 0 ? m / r : 0) => :max_ramp_up,
-            [:MAXRATEOFCHANGEDOWN, :REGISTEREDCAPACITY] =>
-                ByRow((m, r) -> r > 0 ? m / r : 0) => :max_ramp_down,
+            [:MINCAPACITY, :REGISTEREDCAPACITY] => ByRow(ramp) => :min_active_power,
+            [:MAXCAPACITY, :REGISTEREDCAPACITY] => ByRow(ramp) => :max_active_power,
+            [:MAXRATEOFCHANGEUP, :MAXRATEOFCHANGEDOWN, :REGISTEREDCAPACITY] =>
+                ByRow((up, down, r) -> ismissing(up) ? nothing : (up = ramp(up, r), down = ramp(down, r))) => :ramp_limits,
             :STATIONID => :station_id,
             :STATIONNAME => :station_name,
             :TECHNOLOGY => :technology,
             :FUELTYPE => :fuel_type,
             :POSTCODE => :postcode,
         )
-        insertcols!(
-            :rating => 1.0,
-            :available => true,
-            :active_power => 0.0,
-            :reactive_power => 0.0,
-            :output_point_0 => 0.0,
-            :output_point_1 => 1.0,
-            :max_reactive_power => 1.0,
-            :reactive_power_limits_max => 1.0,
-            :reactive_power_limits_min => -1.0,
-            :heat_rate_avg_0 => 0.0,
-            :heat_rate_incr_1 => 0.0,
-        )
+        insertcols!(:rating => 1.0, :available => true, :active_power => 0.0, :reactive_power => 0.0)
         leftjoin!(bus; on = :bus_name => :name)
-        # Make hydro generators unavailable
-        transform!(
-            :min_active_power => ByRow(x -> coalesce(x, 0)) => :min_active_power,
-            :max_ramp_up => ByRow(x -> coalesce(x, nothing)) => :max_ramp_up,
-            :max_ramp_down => ByRow(x -> coalesce(x, nothing)) => :max_ramp_down,
-        )
+        transform!(:min_active_power => ByRow(x -> coalesce(x, 0)) => :min_active_power)
         dropmissing!(:technology)
         unique!(:name; keep = :first)
     end
@@ -312,7 +280,7 @@ Generates a DataFrame of Battery information.
 
 # Arguments
 - `bus_df`: A `DataFrame` of bus data, as returned by `get_bus_dataframe`.
-- `units`: A `DataFrame` of unit data, as returned by `read_units`.
+- `units`: A `DataFrame` of unit data, as returned by `read_units` and mapped by `_map_unit_technology`.
 
 # Returns
 A `DataFrame` containing batteries details.
@@ -321,20 +289,18 @@ A `DataFrame` containing batteries details.
 ```julia
 db = aem_connect()
 date_range = DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 2)
-bus_df = get_bus_dataframe(db, date_range)
-branch_df = get_batteries_dataframe(bus_df, read_units(db, date_range))
+bus_df = get_bus_dataframe(read_interconnectors(db, date_range))
+branch_df = get_batteries_dataframe(bus_df, _map_unit_technology(read_units(db, date_range)))
 println(branch_df)
 ```
 """
 function get_batteries_dataframe(bus_df, units)
     bus = select(bus_df, :bus_id, :name)
-    units = _map_unit_technology(units)
-    dropmissing!(units, :TECHNOLOGY)  # TODO make assumptions when technology is missing ?
-    dropmissing!(units, :STORAGEIMPORTEFFICIENCYFACTOR) # TODO make assumptions when efficiency is  missing ?
-    subset!(units, :TECHNOLOGY => ByRow(==(PrimeMovers.BA)))
-    batteries = select!(
-        units,
-        [
+    # TODO make assumptions when technology or efficiency is missing ?
+    batteries = @chain units begin
+        dropmissing([:TECHNOLOGY, :STORAGEIMPORTEFFICIENCYFACTOR])
+        subset(:TECHNOLOGY => ByRow(==(PrimeMovers.BA)))
+        select(
             :DUID => :name,
             :STATUS => ByRow(==("COMMISSIONED")) => :available,
             :REGIONID => ByRow(x -> x * GEN_SUFFIX) => :bus_name,
@@ -344,20 +310,17 @@ function get_batteries_dataframe(bus_df, units)
             :MAXSTORAGECAPACITY => :storage_capacity,
             [:STORAGEIMPORTEFFICIENCYFACTOR, :STORAGEEXPORTEFFICIENCYFACTOR] => ByRow(tuple) => :efficiency,
             :MAXCAPACITY => :base_power,
-        ]
-    )
-    leftjoin!(batteries, bus; on = :bus_name => :name)
-    insertcols!(
-        batteries,
-        :rating => 1.0,
-        :active_power => 0.0,
-        :reactive_power => 0.0,
-        :max_reactive_power => 1.0,
-        :reactive_power_limits => (-1.0, 1.0),
-        :storage_level_limits => (0.0, 1.0),
-        :initial_storage_capacity_level => 0.5,
-    )
-    dropmissing!(batteries)
+        )
+        leftjoin(bus; on = :bus_name => :name)
+        insertcols!(
+            :rating => 1.0,
+            :active_power => 0.0,
+            :reactive_power => 0.0,
+            :storage_level_limits => (0.0, 1.0),
+            :initial_storage_capacity_level => 0.5,
+        )
+        dropmissing!
+    end
     unique!(batteries) # TODO verify where duplication happens
     return batteries
 end
@@ -408,7 +371,8 @@ end
 """
     get_interfaces_dataframe(interconnectors)
 
-Generates a DataFrame of Interfaces information.
+Generates a DataFrame of Interfaces information. `kind` is the interconnector's
+`InterconnectorKind`, `missing` for an unknown `ICTYPE`.
 
 # Arguments
 - `interconnectors`: A `DataFrame` of interconnector data, as returned by `read_interconnectors`.
@@ -432,7 +396,7 @@ function get_interfaces_dataframe(interconnectors)
         :REGIONTO => :to_area,
         :MAXMWIN => :max_flow_from,
         :MAXMWOUT => :max_flow_to,
-        :ICTYPE => :ic_type,
+        :ICTYPE => ByRow(t -> get(_INTERCONNECTOR_KINDS, t, missing)) => :kind,
         # Make SNOWY interfaces unavailable by default, review status of this interconnector
         [:REGIONFROM, :REGIONTO] => ByRow((from_, to_) -> (from_ != "SNOWY1") && (to_ != "SNOWY1")) => :available
     )
@@ -527,33 +491,68 @@ _fill_missing_median(x) = all(ismissing.(x)) ? missing : median(skipmissing(x))
 
 
 """
-    _fill_opex!(df, variable_opex_df, fixed_opex_df, pm_var_medians, pm_fix_medians; extra_median_cols = Symbol[])
+    _fill_opex!(df, variable_opex_df, fixed_opex_df, pm_var_medians, pm_fix_medians)
 
-Fills the OPEX columns of `df` in place, taking for each missing value the first available of:
+Fills the OPEX columns of the generators `df` (with a `:kind` column) in place and returns it, taking for
+each missing value the first available of:
 1. the unit's own value (`:name => :unit`);
 2. the prime-mover median (`:technology => :primemover`);
-3. the `isp_technology` group median;
-4. the median across all units.
+3. the median of its `kind` and `isp_technology` group;
+4. the median of its `kind`.
 
-`extra_median_cols` are filled by steps 3 and 4 only.
+The thermal heat-rate and fuel-price columns are filled by steps 3 and 4 only.
 """
-function _fill_opex!(df, variable_opex_df, fixed_opex_df, pm_var_medians, pm_fix_medians; extra_median_cols = Symbol[])
-    # step 1: per-unit join
+function _fill_opex!(df, variable_opex_df, fixed_opex_df, pm_var_medians, pm_fix_medians)
     leftjoin!(df, variable_opex_df; on = :name => :unit)
     leftjoin!(df, select(fixed_opex_df, :unit, :fixed_opex_aud_kw_year); on = :name => :unit)
-    # step 2: primemover-level median for still-missing values
     leftjoin!(df, pm_var_medians; on = :technology => :primemover)
     leftjoin!(df, pm_fix_medians; on = :technology => :primemover)
     df.variable_opex_aud_mwh = coalesce.(df.variable_opex_aud_mwh, df.variable_opex_aud_mwh_pm)
     df.fixed_opex_aud_kw_year = coalesce.(df.fixed_opex_aud_kw_year, df.fixed_opex_aud_kw_year_pm)
     select!(df, Not([:variable_opex_aud_mwh_pm, :fixed_opex_aud_kw_year_pm]))
-    # steps 3 & 4: isp_technology group median, then global median
-    median_cols = [:variable_opex_aud_mwh, :fixed_opex_aud_kw_year, extra_median_cols...]
+    median_cols = [
+        :variable_opex_aud_mwh, :fixed_opex_aud_kw_year,
+        :price_aud, :no_load_heat_input_GJ_per_h, :marginal_heat_rate_GJ_per_MWH,
+    ]
     return @chain df begin
-        groupby(:isp_technology)
+        groupby([:kind, :isp_technology])
         transform(median_cols .=> _fill_missing_median .=> median_cols)
+        groupby(:kind)
         transform(median_cols .=> _fill_missing_median .=> median_cols)
     end
+end
+
+
+# Generator of a `kind` from a row of `get_generators_dataframe`, with a zero operation cost.
+function _generator(::Val{:renewable}, row, bus)
+    return RenewableDispatch(;
+        name = row.name, available = row.available, bus, active_power = row.active_power,
+        reactive_power = row.reactive_power, rating = row.rating, prime_mover_type = row.technology,
+        reactive_power_limits = nothing, power_factor = 1.0,
+        operation_cost = RenewableGenerationCost(nothing), base_power = row.base_power,
+    )
+end
+
+function _generator(::Val{:hydro}, row, bus)
+    return HydroDispatch(;
+        name = row.name, available = row.available, bus, active_power = row.active_power,
+        reactive_power = row.reactive_power, rating = row.rating, prime_mover_type = row.technology,
+        active_power_limits = (min = row.min_active_power, max = row.max_active_power),
+        reactive_power_limits = nothing, ramp_limits = row.ramp_limits, time_limits = nothing,
+        operation_cost = HydroGenerationCost(nothing), base_power = row.base_power,
+    )
+end
+
+function _generator(::Val{:thermal}, row, bus)
+    return ThermalStandard(;
+        name = row.name, available = row.available, status = true, bus, active_power = row.active_power,
+        reactive_power = row.reactive_power, rating = row.rating,
+        active_power_limits = (min = row.min_active_power, max = row.max_active_power),
+        reactive_power_limits = nothing, ramp_limits = row.ramp_limits,
+        operation_cost = ThermalGenerationCost(nothing), base_power = row.base_power,
+        time_limits = (up = 8.0, down = 8.0), must_run = false, prime_mover_type = row.technology,
+        fuel = row.fuel_type,
+    )
 end
 
 
@@ -561,8 +560,8 @@ end
     _add_generation!(sys, gen_df; legacy_batteries = false)
 
 Adds the renewable, hydro and thermal generators of `gen_df` to `sys` with zero operation costs,
-each with its station attached as a [`NEMStation`](@ref). `_set_isp_generation_costs!` replaces
-those costs with the ISP operating costs.
+each with its station attached as a [`NEMStation`](@ref) shared among the units of one station.
+`_set_isp_generation_costs!` replaces those costs with the ISP operating costs.
 
 # Arguments
 - `sys`: The `PowerSystems.System` object.
@@ -574,120 +573,40 @@ those costs with the ISP operating costs.
 `sys`.
 """
 function _add_generation!(sys, gen_df; legacy_batteries::Bool = false)
-    stations = Dict{String, NEMStation}()
-    renewable = subset(
-        gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:RenewableDispatch]))
+    stations = Dict(
+        String(r.station_id) => NEMStation(; station_id = String(r.station_id), station_name = r.station_name, postcode = r.postcode)
+            for r in eachrow(unique(gen_df, :station_id))
     )
-    renewable_components = (
-        RenewableDispatch(;
-            name = row[:name],
-            available = row[:available],
-            bus = get_bus(sys, row[:bus_id]),
-            active_power = row[:active_power],
-            reactive_power = row[:reactive_power],
-            rating = row[:rating], # MW per-unitized by device base_power
-            prime_mover_type = row[:technology],
-            reactive_power_limits = nothing,  # (min = row[:reactive_power_limits_min], max = row[:reactive_power_limits_max]), # 0 MVAR to 0.25 MVAR per-unitized by device base_power
-            power_factor = 1.0,
-            operation_cost = RenewableGenerationCost(nothing),
-            base_power = row[:base_power], # MVA
-        ) for row in eachrow(renewable)
-    )
-    add_components!(sys, renewable_components)
-    _attach_stations!(sys, renewable, stations)
-
-    hydro = subset(
-        gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:HydroDispatch]))
-    )
-    hydro_components = (
-        HydroDispatch(;
-            name = row[:name],
-            available = row[:available],
-            bus = get_bus(sys, row[:bus_id]),
-            active_power = row[:active_power],
-            reactive_power = row[:reactive_power],
-            rating = row[:rating],
-            prime_mover_type = row[:technology],
-            active_power_limits = (min = row[:min_active_power], max = row[:max_active_power]),
-            reactive_power_limits = nothing,
-            ramp_limits = (
-                if isnothing(row[:max_ramp_up])
-                    nothing
-                else
-                    (up = row[:max_ramp_up], down = row[:max_ramp_down])
-                end
-            ),
-            time_limits = nothing,
-            operation_cost = HydroGenerationCost(nothing),
-            base_power = row[:base_power],
-        ) for row in eachrow(hydro)
-    )
-    add_components!(sys, hydro_components)
-    _attach_stations!(sys, hydro, stations)
-
-    thermal = subset(
-        gen_df,
-        [:technology, :legacy_battery] =>
-            ByRow((t, b) -> t in MATCH_TYPE_TO_PRIMEMOVER[:ThermalStandard] || (legacy_batteries && b)),
-    )
-    thermal_components = (
-        ThermalStandard(;
-            name = row[:name],
-            available = row[:available],
-            status = true,
-            bus = get_bus(sys, row[:bus_id]),
-            active_power = row[:active_power],
-            reactive_power = row[:reactive_power],
-            rating = row[:rating], # MW per-unitized by device base_power
-            active_power_limits = (min = row[:min_active_power], max = row[:max_active_power]), # 6 MW to 30 MW per-unitized by device base_power
-            reactive_power_limits = nothing, # Per-unitized by device base_power
-            ramp_limits = (
-                if isnothing(row[:max_ramp_up])
-                    nothing # per-unitized by device base_power per minute
-                else
-                    (up = row[:max_ramp_up], down = row[:max_ramp_down]) # per-unitized by device base_power per minute
-                end
-            ), # per-unitized by device base_power per minute
-            operation_cost = ThermalGenerationCost(nothing),
-            base_power = row[:base_power], # MVA
-            time_limits = (up = 8.0, down = 8.0), # Hours
-            must_run = false,
-            prime_mover_type = row[:technology],
-            fuel = row[:fuel_type],
-        ) for row in eachrow(thermal)
-    )
-    add_components!(sys, thermal_components)
-    _attach_stations!(sys, thermal, stations)
-
+    for row in eachrow(gen_df)
+        kind = legacy_batteries && row.legacy_battery ? :thermal : row.kind
+        kind === :other && continue
+        generator = _generator(Val(kind), row, get_bus(sys, row.bus_id))
+        add_component!(sys, generator)
+        add_supplemental_attribute!(sys, generator, stations[String(row.station_id)])
+    end
     return sys
 end
 
 
-"""
-    _attach_stations!(sys, devices, stations)
+# Operation cost of a `kind` from a row of `_fill_opex!`'s output.
+function _isp_operation_cost(::Val{:renewable}, row, variable, fixed)
+    # ISP2025: wind and large-scale solar PV O&M are included in the fixed O&M costs, so the variable cost is 0.
+    return RenewableGenerationCost(; variable = CostCurve(LinearCurve(variable, 0.0)), fixed)
+end
 
-Attaches to each device of `devices` its station as one [`NEMStation`](@ref), sharing a single
-instance among the devices of one station. `devices` is a generators data frame, whose rows carry
-their unit's `station_id`, `station_name` and `postcode`; `stations` accumulates the instances
-attached so far, so callers add one station's devices in any number of groups.
+function _isp_operation_cost(::Val{:hydro}, row, variable, fixed)
+    return HydroGenerationCost(; variable = CostCurve(LinearCurve(variable)), fixed)
+end
 
-# Arguments
-- `sys`: The `PowerSystems.System` holding the devices.
-- `devices`: A generators `DataFrame` with `name`, `station_id`, `station_name` and `postcode` columns.
-- `stations`: A `Dict` from station id to the [`NEMStation`](@ref) already created, updated in place.
-
-# Returns
-Nothing.
-"""
-function _attach_stations!(sys, devices, stations)
-    for row in eachrow(devices)
-        station_id = String(row[:station_id])
-        station = get!(stations, station_id) do
-            NEMStation(; station_id, station_name = row[:station_name], postcode = row[:postcode])
-        end
-        add_supplemental_attribute!(sys, get_component(Device, sys, row[:name]), station)
-    end
-    return
+function _isp_operation_cost(::Val{:thermal}, row, variable, fixed)
+    return ThermalGenerationCost(;
+        variable = FuelCurve(;
+            value_curve = LinearCurve(row.marginal_heat_rate_GJ_per_MWH, row.no_load_heat_input_GJ_per_h),
+            fuel_cost = row.price_aud,
+            vom_cost = LinearCurve(variable),
+        ),
+        fixed, start_up = 100.0, shut_down = 100.0,
+    )
 end
 
 
@@ -707,10 +626,9 @@ parameters. Generators must already be in `sys`, as added by `_add_generation!`.
 `sys`.
 """
 function _set_isp_generation_costs!(sys, gen_df)
-    variable_opex_df = _map_primemover!(read_isp_variable_opex())
-    fixed_opex_df = _map_primemover!(read_isp_fixed_opex())
-
-    # Primemover-level medians used in step 2 of the 4-step fill cascade
+    primemover(x) = AustralianElectricityMarkets.PM_MAPPING[x]
+    variable_opex_df = transform(read_isp_variable_opex(), :isp_technology => ByRow(primemover) => :primemover)
+    fixed_opex_df = transform(read_isp_fixed_opex(), :isp_technology => ByRow(primemover) => :primemover)
     pm_var_medians = combine(
         groupby(variable_opex_df, :primemover),
         :variable_opex_aud_mwh => median ∘ skipmissing => :variable_opex_aud_mwh_pm,
@@ -719,70 +637,19 @@ function _set_isp_generation_costs!(sys, gen_df)
         groupby(fixed_opex_df, :primemover),
         :fixed_opex_aud_kw_year => median ∘ skipmissing => :fixed_opex_aud_kw_year_pm,
     )
+    # TODO scenario and year are hardcoded, work on interface
+    affine_heatrates = read_isp_thermal_costs_parameters(2025, "Step Change")
 
-    renewable = subset(
-        gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:RenewableDispatch]))
-    )
-    renewable = _fill_opex!(renewable, variable_opex_df, fixed_opex_df, pm_var_medians, pm_fix_medians)
-    for row in eachrow(renewable)
-        set_operation_cost!(
-            get_component(RenewableDispatch, sys, row[:name]),
-            RenewableGenerationCost(;
-                # per ISP2025: "Wind and Large-scale Solar PV O&M costs are assumed to be included in the Fixed O&M costs"
-                # so the variable cost below should be 0
-                variable = CostCurve(LinearCurve(coalesce(row[:variable_opex_aud_mwh], 0.0), 0.0)),
-                fixed = coalesce(row[:fixed_opex_aud_kw_year], 0.0) * row[:base_power] * 1000.0 / 8760.0,
-            ),
-        )
+    costs = @chain gen_df begin
+        subset(:kind => ByRow(!=(:other)))
+        leftjoin(affine_heatrates; on = :name => :unit, makeunique = true)
+        _fill_opex!(variable_opex_df, fixed_opex_df, pm_var_medians, pm_fix_medians)
     end
-
-    hydro = subset(
-        gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:HydroDispatch]))
-    )
-    hydro_with_costs = _fill_opex!(hydro, variable_opex_df, fixed_opex_df, pm_var_medians, pm_fix_medians)
-    for row in eachrow(hydro_with_costs)
-        set_operation_cost!(
-            get_component(HydroDispatch, sys, row[:name]),
-            HydroGenerationCost(;
-                variable = CostCurve(LinearCurve(coalesce(row[:variable_opex_aud_mwh], 0.0))),
-                fixed = coalesce(row[:fixed_opex_aud_kw_year], 0.0) * row[:base_power] * 1000.0 / 8760.0,
-            ),
-        )
+    for row in eachrow(costs)
+        variable = coalesce(row.variable_opex_aud_mwh, 0.0)
+        fixed = coalesce(row.fixed_opex_aud_kw_year, 0.0) * row.base_power * 1000.0 / 8760.0
+        set_operation_cost!(get_component(Generator, sys, row.name), _isp_operation_cost(Val(row.kind), row, variable, fixed))
     end
-
-    thermal = subset(
-        gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:ThermalStandard]))
-    )
-    # look up affine costs from isp
-    affine_heatrates = read_isp_thermal_costs_parameters(
-        # TODO hardcoded for now, todo work on interface
-        2025, "Step Change"
-    )
-    # per-unit join of thermal-specific affine heat-rate/fuel-price parameters
-    leftjoin!(thermal, affine_heatrates, on = :name => :unit; makeunique = true)
-    thermal_with_costs = _fill_opex!(
-        thermal, variable_opex_df, fixed_opex_df, pm_var_medians, pm_fix_medians;
-        extra_median_cols = [:price_aud, :no_load_heat_input_GJ_per_h, :marginal_heat_rate_GJ_per_MWH],
-    )
-    for row in eachrow(thermal_with_costs)
-        set_operation_cost!(
-            get_component(ThermalStandard, sys, row[:name]),
-            ThermalGenerationCost(;
-                variable = FuelCurve(;
-                    value_curve = LinearCurve(
-                        row[:marginal_heat_rate_GJ_per_MWH],
-                        row[:no_load_heat_input_GJ_per_h]
-                    ),
-                    fuel_cost = row[:price_aud],
-                    vom_cost = LinearCurve(coalesce(row[:variable_opex_aud_mwh], 0.0)),
-                ),
-                fixed = coalesce(row[:fixed_opex_aud_kw_year], 0.0) * row[:base_power] * 1000.0 / 8760.0,
-                start_up = 100.0,
-                shut_down = 100.0
-            ),
-        )
-    end
-
     return sys
 end
 
@@ -851,25 +718,19 @@ function _add_scheduled_loads!(sys, scheduled_loads_df; nemde::Bool = false)
 end
 
 
-function _add_area_interfaces!(sys, interconnectors)
-    area_interchanges = (
-        AreaInterchange(;
-            name = row[:name],
-            available = row[:available],
+function _add_area_interfaces!(sys, interfaces_df)
+    for row in eachrow(interfaces_df)
+        ismissing(row.kind) && throw(ArgumentError("interconnector $(row.name) has no valid ICTYPE"))
+        interchange = AreaInterchange(;
+            name = row.name,
+            available = row.available,
             active_power_flow = 0.0,
-            from_area = get_component(Area, sys, row[:from_area]),
-            to_area = get_component(Area, sys, row[:to_area]),
-            flow_limits = (row[:max_flow_from] / BASE_POWER, row[:max_flow_to] / BASE_POWER),
-        ) for row in eachrow(interconnectors)
-    )
-    add_components!(sys, area_interchanges)
-    for row in eachrow(interconnectors)
-        kind = get(_INTERCONNECTOR_KINDS, row[:ic_type], nothing)
-        isnothing(kind) && throw(ArgumentError("interconnector $(row[:name]) has no valid ICTYPE ($(repr(row[:ic_type])))"))
-        add_supplemental_attribute!(
-            sys, get_component(AreaInterchange, sys, row[:name]),
-            NEMInterconnectorRegistration(; kind),
+            from_area = get_component(Area, sys, row.from_area),
+            to_area = get_component(Area, sys, row.to_area),
+            flow_limits = (row.max_flow_from / BASE_POWER, row.max_flow_to / BASE_POWER),
         )
+        add_component!(sys, interchange)
+        add_supplemental_attribute!(sys, interchange, NEMInterconnectorRegistration(; kind = row.kind))
     end
     return
 end

@@ -24,7 +24,6 @@ makedocs(;
         AustralianElectricityMarketsCache,
         AustralianElectricityMarketsSimulations,
         AustralianElectricityMarkets.RegionModel,
-        AustralianElectricityMarkets.NetworkConfigurations,
         AustralianElectricityMarkets.BidTypeModule,
     ],
     authors = "Youssef Miftah <miftahyo@outlook.fr> and contributors",

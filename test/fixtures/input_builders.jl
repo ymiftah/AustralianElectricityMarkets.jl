@@ -6,7 +6,7 @@ end
 
 function attach_demand!(sys, db, date_range; resolution = Minute(5))
     demand = AustralianElectricityMarkets.read_demand(db, date_range; resolution)
-    return AustralianElectricityMarkets._set_demand!(sys, demand, date_range; resolution)
+    return AustralianElectricityMarkets.set_demand!(sys, demand, date_range; resolution)
 end
 
 function attach_dispatch_limits!(sys, db, date_range)

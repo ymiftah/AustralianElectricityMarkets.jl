@@ -21,16 +21,17 @@ A tuple `(sys, units, gen_df)`.
 function _nem_network(db; date_range, nemde::Bool = false, time_series_in_memory = true, kwargs...)
     @info "parsing buses"
     interconnectors = read_interconnectors(db, date_range)
-    bus_df = _bus_dataframe(interconnectors)
+    bus_df = get_bus_dataframe(interconnectors)
     units = read_units(db, date_range)
+    unit_df = _map_unit_technology(units)
     @info "parsing loads"
     loads_df = get_load_dataframe(bus_df)
     @info "parsing branches"
     branch_df = get_branch_dataframe(bus_df, interconnectors)
     @info "parsing generators"
-    gen_df = get_generators_dataframe(bus_df, units)
+    gen_df = get_generators_dataframe(bus_df, unit_df)
     @info "parsing batteries"
-    batteries_df = get_batteries_dataframe(bus_df, units)
+    batteries_df = get_batteries_dataframe(bus_df, unit_df)
     @info "parsing scheduled loads"
     scheduled_loads_df = get_scheduled_loads_dataframe(bus_df, units)
 
@@ -86,23 +87,31 @@ its row of `units` ([`read_units`](@ref)) and its loss factors ([`read_loss_fact
 `ArgumentError` naming a device with no unit row, a unit with no loss factor, or an unknown schedule type.
 """
 function _set_registrations!(sys, units, factors)
-    unit_rows = Dict(String(r.DUID) => r for r in eachrow(units))
-    factor_rows = Dict(String(r.DUID) => r for r in eachrow(factors))
-    for T in (Generator, ControllableLoad, Storage), device in get_components(T, sys)
+    devices = [d for T in (Generator, ControllableLoad, Storage) for d in get_components(T, sys)]
+    registrations = @chain units begin
+        subset(:DUID => ByRow(in(Set(get_name.(devices)))))
+        leftjoin(factors; on = :DUID)
+        transform(:SCHEDULE_TYPE => ByRow(t -> get(_SCHEDULE_TYPES, t, missing)) => :schedule_type)
+    end
+    invalid = subset(
+        registrations,
+        [:GEN_LOSS_FACTOR, :LOAD_LOSS_FACTOR] => ByRow((g, l) -> ismissing(g) || ismissing(l)),
+    )
+    isempty(invalid) || throw(ArgumentError("No DUDETAILSUMMARY loss factor for $(first(invalid.DUID))."))
+    unknown = subset(registrations, :schedule_type => ByRow(ismissing))
+    isempty(unknown) ||
+        throw(ArgumentError("$(first(unknown.DUID)) has an unknown SCHEDULE_TYPE $(repr(first(unknown.SCHEDULE_TYPE)))"))
+    rows = Dict(String(r.DUID) => r for r in eachrow(registrations))
+    for device in devices
         name = get_name(device)
-        unit = get(unit_rows, name, nothing)
-        isnothing(unit) && throw(ArgumentError("$name has no DUDETAILSUMMARY row, so it has no registration"))
-        factor = get(factor_rows, name, nothing)
-        (isnothing(factor) || ismissing(factor.GEN_LOSS_FACTOR) || ismissing(factor.LOAD_LOSS_FACTOR)) &&
-            throw(ArgumentError("No DUDETAILSUMMARY loss factor for $name."))
-        schedule = get(_SCHEDULE_TYPES, unit.SCHEDULE_TYPE, nothing)
-        isnothing(schedule) && throw(ArgumentError("$name has an unknown SCHEDULE_TYPE $(repr(unit.SCHEDULE_TYPE))"))
+        haskey(rows, name) || throw(ArgumentError("$name has no DUDETAILSUMMARY row, so it has no registration"))
+        row = rows[name]
         set_registration!(
             device,
             NEMRegistration(;
-                schedule_type = schedule, gen_loss_factor = factor.GEN_LOSS_FACTOR,
-                load_loss_factor = factor.LOAD_LOSS_FACTOR, registered_from = unit.REGISTERED_FROM,
-                registered_until = unit.REGISTERED_UNTIL, commissioned = unit.STATUS == "COMMISSIONED",
+                schedule_type = row.schedule_type, gen_loss_factor = row.GEN_LOSS_FACTOR,
+                load_loss_factor = row.LOAD_LOSS_FACTOR, registered_from = row.REGISTERED_FROM,
+                registered_until = row.REGISTERED_UNTIL, commissioned = row.STATUS == "COMMISSIONED",
             ),
         )
     end

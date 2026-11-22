@@ -235,7 +235,7 @@ end
     @test isequal(units, read_units(db, grid))
     demand = read_demand(db, grid; resolution = Minute(5))
     demand_before = deepcopy(demand)
-    AustralianElectricityMarkets._set_demand!(shared, demand, grid; resolution = Minute(5))
+    AustralianElectricityMarkets.set_demand!(shared, demand, grid; resolution = Minute(5))
     attach_demand!(independent, db, grid; resolution = Minute(5))
     @test isequal(demand, demand_before)
     for sys in (shared, independent)
