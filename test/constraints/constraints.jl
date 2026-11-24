@@ -5,14 +5,14 @@
 
     @testset "_pad_to_grid carries the last known value forward" begin
         grid = [DateTime(2025, 1, 1, 0, 5 * i) for i in 0:3]
-        values_by_time = Dict(grid[1] => 10.0, grid[3] => 30.0)
-        series, invoked = AustralianElectricityMarkets._pad_to_grid(values_by_time, grid, 0.0)
+        rows = DataFrame(SETTLEMENTDATE = [grid[1], grid[3]], RHS = [10.0, 30.0])
+        series, invoked = AustralianElectricityMarkets._pad_to_grid(rows, grid, 0.0)
         @test series == [10.0, 10.0, 30.0, 30.0]
         @test invoked == [1.0, 0.0, 1.0, 0.0]
 
         # A gap before the first known value falls back to initial_fill.
-        values_by_time2 = Dict(grid[3] => 30.0)
-        series2, invoked2 = AustralianElectricityMarkets._pad_to_grid(values_by_time2, grid, -1.0)
+        rows2 = DataFrame(SETTLEMENTDATE = [grid[3]], RHS = [30.0])
+        series2, invoked2 = AustralianElectricityMarkets._pad_to_grid(rows2, grid, -1.0)
         @test series2 == [-1.0, -1.0, 30.0, 30.0]
         @test invoked2 == [0.0, 0.0, 1.0, 0.0]
     end
@@ -184,7 +184,7 @@ end
     start_date = DateTime(2025, 1, 1, 0, 0)
     date_range = start_date:Minute(5):(start_date + Hour(1))
 
-    sys = first(nem_network(db))
+    sys = first(nem_network(db; date_range = MOCK_DATE_RANGE))
     added, skipped = build_constraints!(sys, db, date_range)
 
     # Every GENCONID in mock_data.jl has exactly one invoked GENCONDATA/SPD* version, always
@@ -293,7 +293,7 @@ end
         @test Set(nsw1_names) == Set(expected_nsw1)
 
         # An FCAS term also reaches the region's loads that offer FCAS; an ENERGY term does not.
-        fcas_sys = first(nem_network(db))
+        fcas_sys = first(nem_network(db; date_range = MOCK_DATE_RANGE))
         set_market_bids!(fcas_sys, db, date_range)
         fcas_names = resolve_term_devices(fcas_sys, RegionTerm("NSW1", BidType.RAISE6SEC, 1.0))
         generator_names = get_name.(AustralianElectricityMarkets._region_devices(fcas_sys, "NSW1"))
@@ -304,7 +304,7 @@ end
     @testset "empty RegionTerm devices throw, leaving sys untouched" begin
         # Relocating TAS1's only unit onto NSW1's bus leaves its UnitTerm resolvable, so this
         # exercises the empty-region-devices case independently of :unknown_duid/:unknown_region.
-        sys_relocated = nem_system(db, RegionalNetworkConfiguration())
+        sys_relocated = nem_system(db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
         er01 = get_component(Device, sys_relocated, "ER01")
         set_bus!(er01, get_bus(sys_relocated, "NSW1_GEN_BUS"))
         @test isempty(AustralianElectricityMarkets._region_devices(sys_relocated, "TAS1"))
@@ -341,7 +341,7 @@ end
         @test gap_time ∉ unique(invoked_gap.SETTLEMENTDATE)
         @test length(unique(invoked_gap.SETTLEMENTDATE)) == length(date_range) - 2
 
-        gap_sys = nem_system(gap_db, RegionalNetworkConfiguration())
+        gap_sys = nem_system(gap_db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
         build_constraints!(gap_sys, gap_db, date_range)
         gap_gc = get_component(GenericConstraint, gap_sys, vname("N_BAYSW_THERMAL"))
         rhs_len = length(_constraint_series(gap_gc, :rhs))
@@ -370,7 +370,7 @@ end
         mv(new_dir, constraint_dir)
 
         misaligned_db = aem_connect(HiveConfiguration(hive_location = misaligned_hive, filesystem = "file"))
-        misaligned_sys = nem_system(misaligned_db, RegionalNetworkConfiguration())
+        misaligned_sys = nem_system(misaligned_db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
         @test_throws r"fall outside date_range's grid" build_constraints!(misaligned_sys, misaligned_db, date_range)
     end
 
@@ -441,7 +441,7 @@ end
         )
 
         zero_db = aem_connect(HiveConfiguration(hive_location = zero_hive, filesystem = "file"))
-        zero_sys = nem_system(zero_db, RegionalNetworkConfiguration())
+        zero_sys = nem_system(zero_db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
         added_z, skipped_z = nothing, nothing
         @test_logs (:warn, r"TV_ZERO is invoked at an unrecognised version") match_mode = :any begin
             added_z, skipped_z = build_constraints!(zero_sys, zero_db, date_range)
@@ -527,7 +527,7 @@ end
         loads = read_fixed_loads(fixed_db, fixed_range)
         @test Set(loads.DIRECTION) == Set(["GEN", "LOAD"])
 
-        fixed_sys = nem_system(fixed_db, RegionalNetworkConfiguration())
+        fixed_sys = nem_system(fixed_db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
         added_f = nothing
         @test_logs (:warn, r"skipped") match_mode = :any begin
             added_f, _ = build_constraints!(fixed_sys, fixed_db, fixed_range)
@@ -546,41 +546,33 @@ end
         rm(joinpath(missing_bids_hive, "BIDDAYOFFER_D"); recursive = true)
         missing_bids_db = aem_connect(HiveConfiguration(hive_location = missing_bids_hive, filesystem = "file"))
         @test_throws r"BIDDAYOFFER_D is not cached" build_constraints!(
-            nem_system(missing_bids_db, RegionalNetworkConfiguration()), missing_bids_db, fixed_range,
+            nem_system(missing_bids_db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE), missing_bids_db, fixed_range,
         )
 
         # An unavailable unit's fixed loading is ignored; its `$` row is then reported as skipped.
-        unavailable_sys = nem_system(fixed_db, RegionalNetworkConfiguration())
+        unavailable_sys = nem_system(fixed_db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
         set_available!(get_component(Device, unavailable_sys, "BW01"), false)
         build_constraints!(unavailable_sys, fixed_db, fixed_range)
         @test any(startswith("\$BW01"), get_skipped_constraints(unavailable_sys).constraint)
     end
 
-    @testset "_versions_without_definition handles missing effective date" begin
-        # Regression test for: invoked versions with NULL GENCONID_EFFECTIVEDATE would throw
-        # "Missing values in key columns" in _versions_without_definition unless
-        # matchmissing = :notequal is passed to the internal antijoin.
-        # A version with missing EFFECTIVEDATE should be kept (treated as "no definition found").
-        invoked_versions = DataFrame(
-            GENCONID = ["TEST1", "TEST1", "TEST2"],
-            GENCONID_EFFECTIVEDATE = [DateTime(2025, 1, 1), missing, DateTime(2025, 1, 1)],
-            GENCONID_VERSIONNO = [1, 1, 1],
+    @testset "zero-flow version with a missing effective date is skipped" begin
+        versions = DataFrame(
+            GENCONID = ["VT_ZERO", "VT_ZERO"],
+            GENCONID_EFFECTIVEDATE = [missing, DateTime(2013, 8, 21)],
+            GENCONID_VERSIONNO = [1, 1],
         )
-        definitions = DataFrame(
-            GENCONID = ["TEST1"],
-            EFFECTIVEDATE = [DateTime(2025, 1, 1)],
-            VERSIONNO = [1],
-        )
-        # Without matchmissing = :notequal, this would throw "Missing values in key columns"
-        # The helper must not throw and must keep the row with missing EFFECTIVEDATE.
-        undefined = AustralianElectricityMarkets._versions_without_definition(invoked_versions, definitions)
-        @test undefined.GENCONID == ["TEST1", "TEST2"]
-        @test isequal(undefined.GENCONID_EFFECTIVEDATE, [missing, DateTime(2025, 1, 1)])
+        definitions, terms = @test_logs (:warn, r"unrecognised version") begin
+            AustralianElectricityMarkets._zero_flow_constraint_definitions(versions)
+        end
+        @test definitions.GENCONID == ["VT_ZERO"]
+        @test definitions.EFFECTIVEDATE == [DateTime(2013, 8, 21)]
+        @test nrow(terms) == 1
     end
 
     @testset "throws when DISPATCHCONSTRAINT is not cached" begin
         empty_db = aem_connect(HiveConfiguration(hive_location = mktempdir(), filesystem = "file"))
-        empty_sys = nem_system(db, RegionalNetworkConfiguration())
+        empty_sys = nem_system(db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
         err = (@test_throws ArgumentError build_constraints!(empty_sys, empty_db, date_range)).value
         @test occursin("DISPATCHCONSTRAINT", err.msg)
     end
@@ -590,7 +582,7 @@ end
         # real answer, not missing data, so this must warn rather than throw (contrast with
         # the "not cached at all" case above).
         far_future_range = DateTime(2025, 1, 20):Minute(5):(DateTime(2025, 1, 20) + Hour(1))
-        far_sys = nem_system(db, RegionalNetworkConfiguration())
+        far_sys = nem_system(db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
         added_far, skipped_far = nothing, nothing
         @test_logs (:warn, r"No constraints invoked") match_mode = :any begin
             added_far, skipped_far = build_constraints!(far_sys, db, far_future_range)
@@ -603,20 +595,20 @@ end
         # The mock constraints cover 00:00 to 04:00, so the last two hours of this range have none.
         late = DateTime(2025, 1, 1, 3, 0)
         late_range = late:Minute(5):(late + Hour(3))
-        late_sys = nem_system(db, RegionalNetworkConfiguration())
+        late_sys = nem_system(db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
         build_constraints!(late_sys, db, late_range)
         expected = collect(DateTime(2025, 1, 1, 4, 5):Minute(5):DateTime(2025, 1, 1, 5, 55))
         @test get_missing_constraint_intervals(late_sys) == expected
 
         # A range wholly outside the cache records every interval.
         none = DateTime(2025, 1, 20):Minute(5):DateTime(2025, 1, 20, 0, 15)
-        none_sys = nem_system(db, RegionalNetworkConfiguration())
+        none_sys = nem_system(db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
         build_constraints!(none_sys, db, none)
         @test get_missing_constraint_intervals(none_sys) == collect(none)[1:(end - 1)]
 
         # A NULL GENERICCONSTRAINTWEIGHT builds with weight 1.0 and is recorded.
         weight_db = damaged_cache(AEM_TEST_HIVE_DIR, :GENCONDATA, "UPDATE input SET GENERICCONSTRAINTWEIGHT = NULL WHERE GENCONID = 'N_BAYSW_THERMAL'")
-        weight_sys = nem_system(weight_db, RegionalNetworkConfiguration())
+        weight_sys = nem_system(weight_db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
         @test_logs (:warn, r"NULL GENERICCONSTRAINTWEIGHT") match_mode = :any build_constraints!(weight_sys, weight_db, date_range)
         @test get_defaulted_constraint_weights(weight_sys) == [vname("N_BAYSW_THERMAL")]
         @test get_constraint_weight(get_component(GenericConstraint, weight_sys, vname("N_BAYSW_THERMAL"))) == 1.0
@@ -634,7 +626,7 @@ end
     start_date = DateTime(2025, 1, 1, 0, 0)
     date_range = start_date:Minute(5):(start_date + Hour(1))
     bad = damaged_cache(AEM_TEST_HIVE_DIR, :GENCONDATA, "UPDATE input SET CONSTRAINTTYPE = '<' WHERE GENCONID = 'N_BAYSW_THERMAL'")
-    sys = first(nem_network(bad))
+    sys = first(nem_network(bad; date_range = MOCK_DATE_RANGE))
     @test_throws r"N_BAYSW_THERMAL has CONSTRAINTTYPE \"<\"" build_constraints!(sys, bad, date_range)
 end
 
@@ -645,12 +637,24 @@ end
     vname(gencon_id) = "$gencon_id@2025-01-01#1"
     check = AustralianElectricityMarkets._check_nemde_constraint_report
 
+    # Builds from a copy of the hive whose N_PHANTOM_TEST right-hand side is `rhs`.
     function build_with_rhs(rhs)
-        sys = first(nem_network(db))
-        invoked, fixed = AustralianElectricityMarkets._read_constraint_inputs(db, date_range)
-        invoked = copy(invoked)
-        invoked.RHS = [g == "N_PHANTOM_TEST" ? rhs : r for (g, r) in zip(invoked.GENCONID, invoked.RHS)]
-        added, skipped = AustralianElectricityMarkets._add_nem_constraints!(sys, db, date_range, invoked, fixed)
+        hive = joinpath(mktempdir(), "hive")
+        cp(AEM_TEST_HIVE_DIR, hive)
+        rhs_db = DuckDB.DB()
+        for (root, _, files) in walkdir(joinpath(hive, "DISPATCHCONSTRAINT")), f in filter(endswith(".parquet"), files)
+            path = joinpath(root, f)
+            DuckDB.execute(
+                rhs_db,
+                "COPY (SELECT * REPLACE (CASE WHEN CONSTRAINTID = 'N_PHANTOM_TEST' THEN $(Float64(rhs)) ELSE RHS END AS RHS) " *
+                    "FROM read_parquet('$path')) TO '$path.new' (FORMAT PARQUET)",
+            )
+            mv("$path.new", path; force = true)
+        end
+        DuckDB.close(rhs_db)
+        phantom_db = aem_connect(HiveConfiguration(hive_location = hive, filesystem = "file"))
+        sys = first(nem_network(phantom_db; date_range = MOCK_DATE_RANGE))
+        added, skipped = add_nem_constraints!(sys, phantom_db, date_range)
         return sys, added, skipped
     end
 
@@ -676,15 +680,15 @@ end
             skipped_constraints = report.skipped_constraints,
             missing_constraint_intervals = report.missing_constraint_intervals,
             defaulted_constraint_weights = report.defaulted_constraint_weights,
-            dropped_terms = [merge(t, Dict{String, Any}("registered" => false)) for t in report.dropped_terms],
+            dropped_terms = transform(report.dropped_terms, :registered => ByRow(_ -> false) => :registered),
             unavailable_constraints = report.unavailable_constraints,
         ),
     )
     @test isnothing(check(sys))
     registered = AustralianElectricityMarkets.Readers._registered_duids
-    @test registered(db, ["PHANTOM1", "BW01", "NOT_A_DUID"], first(date_range), last(date_range)) == Set(["PHANTOM1", "BW01"])
-    @test registered(db, ["BW01"], DateTime(1990, 1, 1), DateTime(1990, 1, 2)) == Set{String}()
-    @test isempty(registered(db, String[], first(date_range), last(date_range)))
+    @test registered(db, ["PHANTOM1", "BW01", "NOT_A_DUID"], date_range) == Set(["PHANTOM1", "BW01"])
+    @test registered(db, ["BW01"], DateTime(1990, 1, 1):Minute(5):DateTime(1990, 1, 2)) == Set{String}()
+    @test isempty(registered(db, String[], date_range))
 
     # A violated zero left-hand side (0 >= 5) is never silently omitted.
     sys, added, skipped = build_with_rhs(5.0)
@@ -696,8 +700,8 @@ end
     # passes when it is not.
     sys, _, _ = build_with_rhs(-5.0)
     report = AustralianElectricityMarkets.get_build_report(sys)
-    phantom = [t for t in report.dropped_terms if t["constraint"] == vname("N_PHANTOM_TEST")]
-    @test length(phantom) == 1
+    phantom = filter(:constraint => ==(vname("N_PHANTOM_TEST")), report.dropped_terms)
+    @test nrow(phantom) == 1
     function check_with_registration(registered::Bool)
         AustralianElectricityMarkets.set_build_report!(
             sys,
@@ -705,7 +709,7 @@ end
                 skipped_constraints = report.skipped_constraints,
                 missing_constraint_intervals = report.missing_constraint_intervals,
                 defaulted_constraint_weights = report.defaulted_constraint_weights,
-                dropped_terms = [merge(t, Dict{String, Any}("registered" => registered)) for t in phantom],
+                dropped_terms = transform(phantom, :registered => ByRow(_ -> registered) => :registered),
                 unavailable_constraints = report.unavailable_constraints,
             ),
         )

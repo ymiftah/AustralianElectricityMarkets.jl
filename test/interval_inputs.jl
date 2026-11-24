@@ -40,7 +40,7 @@
         @test Set(names(rows)) == Set(["SETTLEMENTDATE", "INTERCONNECTORID", "METEREDMWFLOW", "EXPORTLIMIT", "IMPORTLIMIT"])
         @test nrow(rows) == 3 * length(grid) - 1
 
-        sys = nem_system(db, RegionalNetworkConfiguration())
+        sys = nem_system(db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
         set_interconnector_flow_limits!(sys, limits_db, date_range)
         # The values of the interchange's flow limit `field` (:from_to_limit or :to_from_limit), in MW.
         function series(name, field)
@@ -75,8 +75,8 @@
         from_to(sys) = with_units_base(
             () -> get_flow_limits(get_component(AreaInterchange, sys, "IC1")).from_to, sys, "NATURAL_UNITS",
         )
-        @test from_to(nem_system(vdb, RegionalNetworkConfiguration())) == 300.0
-        @test from_to(nem_system(vdb, RegionalNetworkConfiguration(); as_of = DateTime(2025, 3, 1))) == 500.0
+        @test from_to(nem_system(vdb, RegionalNetworkConfiguration(); date_range = mock_range_at(DateTime(2025, 8, 1)))) == 300.0
+        @test from_to(nem_system(vdb, RegionalNetworkConfiguration(); date_range = mock_range_at(DateTime(2025, 3, 1)))) == 500.0
         constrained, _ = constrained_system(vdb; date_range = date_range)
         @test from_to(constrained) == 500.0
     end

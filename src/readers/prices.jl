@@ -12,13 +12,39 @@ administered price cap event). See [`read_fcas_prices`](@ref) for the FCAS marke
 - `intervention`: `0` for the pricing run. `1` for the physical run where the interval has one, else the pricing run.
 
 # Returns
-A `DataFrame` with `SETTLEMENTDATE`, `REGIONID`, `RRP`, `ROP` and `APCFLAG` (`missing` for cached
-partitions without the column).
+A `DataFrame` with `SETTLEMENTDATE`, `REGIONID`, `RRP`, `ROP` and `APCFLAG`, sorted by
+`SETTLEMENTDATE` and `REGIONID`.
 """
 function read_prices(db, date_range; intervention::Integer = 0)
-    df = _read_dispatch_table(schema -> _price_columns(schema, ""), db, :DISPATCHPRICE, "REGIONID", date_range; intervention)
-    return _price_block(df, "")
+    _check_intervention(intervention)
+    source = read_hive(db, :DISPATCHPRICE, date_range)
+    return _query(
+        db,
+        """
+        WITH run AS (
+            SELECT * FROM $source
+            WHERE SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ?
+            QUALIFY COALESCE(INTERVENTION, 0) = CASE WHEN ? = 0 THEN 0
+                ELSE max(COALESCE(INTERVENTION, 0)) OVER (PARTITION BY SETTLEMENTDATE) END
+        )
+        SELECT SETTLEMENTDATE, REGIONID,
+               TRY_CAST(RRP AS DOUBLE) AS RRP,
+               TRY_CAST(ROP AS DOUBLE) AS ROP,
+               TRY_CAST(APCFLAG AS INTEGER) AS APCFLAG
+        FROM run
+        QUALIFY row_number() OVER (PARTITION BY SETTLEMENTDATE, REGIONID ORDER BY archive_month DESC) = 1
+        ORDER BY SETTLEMENTDATE, REGIONID
+        """,
+        [first(date_range), last(date_range), intervention],
+    )
 end
+
+
+# Every FCAS price column of DISPATCHPRICE as an empty relation. A union by name with it reads a column
+# as NULL in months AEMO did not publish it (the 1-second markets before October 2023).
+const _FCAS_PRICE_COLUMNS = "(SELECT " *
+    join(("NULL AS $(m)$(c)" for m in string.(FCAS_BID_TYPES) for c in ("RRP", "ROP", "APCFLAG")), ", ") *
+    " WHERE false)"
 
 
 """
@@ -35,39 +61,48 @@ that interval (not `RRP`, which may additionally be capped).
 - `intervention`: `0` for the pricing run. `1` for the physical run where the interval has one, else the pricing run.
 
 # Returns
-A `DataFrame` with `SETTLEMENTDATE`, `REGIONID`, `RRP`, `ROP`, `APCFLAG` and `BIDTYPE`. Markets
-without cached price columns are absent; `APCFLAG` is `missing` where its column is not cached.
+A `DataFrame` with `SETTLEMENTDATE`, `REGIONID`, `RRP`, `ROP`, `APCFLAG` and `BIDTYPE`, one row per
+FCAS market in `FCAS_BID_TYPES`, sorted by `SETTLEMENTDATE`, `REGIONID` and `BIDTYPE`.
 """
 function read_fcas_prices(db, date_range; intervention::Integer = 0)
-    markets = string.(FCAS_BID_TYPES)
-    cached(schema, market) = all(in(schema), ("$(market)RRP", "$(market)ROP"))
-    df = _read_dispatch_table(db, :DISPATCHPRICE, "REGIONID", date_range; intervention) do schema
-        return reduce(vcat, (_price_columns(schema, m) for m in markets if cached(schema, m)); init = String[])
-    end
-    long = DataFrame()
-    for (bid_type, market) in zip(FCAS_BID_TYPES, markets)
-        "$(market)RRP" in names(df) || continue
-        block = _price_block(df, market)
-        block[!, :BIDTYPE] = fill(bid_type, nrow(block))
-        append!(long, block; promote = true)
-    end
-    return long
-end
-
-
-# `DISPATCHPRICE` columns `<prefix>RRP`, `<prefix>ROP` and, when cached, `<prefix>APCFLAG`.
-function _price_columns(schema, prefix::AbstractString)
-    rrp, rop, apc = "$(prefix)RRP", "$(prefix)ROP", "$(prefix)APCFLAG"
-    cols = [_cast_double(rrp), _cast_double(rop)]
-    apc in schema && push!(cols, "TRY_CAST($apc AS INTEGER) AS $apc")
-    return cols
-end
-
-
-# One market's `SETTLEMENTDATE`, `REGIONID`, `RRP`, `ROP`, `APCFLAG` (`missing` when not cached).
-function _price_block(df, prefix::AbstractString)
-    apc = "$(prefix)APCFLAG"
-    block = select(df, :SETTLEMENTDATE, :REGIONID, "$(prefix)RRP" => :RRP, "$(prefix)ROP" => :ROP)
-    block[!, :APCFLAG] = apc in names(df) ? df[!, apc] : fill(missing, nrow(block))
-    return block
+    _check_intervention(intervention)
+    source = read_hive(db, :DISPATCHPRICE, date_range)
+    prices = _query(
+        db,
+        """
+        WITH run AS (
+            SELECT * FROM (SELECT * FROM $source UNION ALL BY NAME SELECT * FROM $_FCAS_PRICE_COLUMNS)
+            WHERE SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ?
+            QUALIFY COALESCE(INTERVENTION, 0) = CASE WHEN ? = 0 THEN 0
+                ELSE max(COALESCE(INTERVENTION, 0)) OVER (PARTITION BY SETTLEMENTDATE) END
+        ),
+        wide AS (
+            SELECT * EXCLUDE (RRP, ROP, APCFLAG) FROM run
+            QUALIFY row_number() OVER (PARTITION BY SETTLEMENTDATE, REGIONID ORDER BY archive_month DESC) = 1
+        )
+        SELECT SETTLEMENTDATE, REGIONID,
+               TRY_CAST(RRP AS DOUBLE) AS RRP,
+               TRY_CAST(ROP AS DOUBLE) AS ROP,
+               TRY_CAST(APCFLAG AS INTEGER) AS APCFLAG,
+               BIDTYPE
+        FROM wide
+        UNPIVOT INCLUDE NULLS (
+            (RRP, ROP, APCFLAG) FOR BIDTYPE IN (
+                (RAISE1SECRRP, RAISE1SECROP, RAISE1SECAPCFLAG) AS RAISE1SEC,
+                (LOWER1SECRRP, LOWER1SECROP, LOWER1SECAPCFLAG) AS LOWER1SEC,
+                (RAISE6SECRRP, RAISE6SECROP, RAISE6SECAPCFLAG) AS RAISE6SEC,
+                (LOWER6SECRRP, LOWER6SECROP, LOWER6SECAPCFLAG) AS LOWER6SEC,
+                (RAISE60SECRRP, RAISE60SECROP, RAISE60SECAPCFLAG) AS RAISE60SEC,
+                (LOWER60SECRRP, LOWER60SECROP, LOWER60SECAPCFLAG) AS LOWER60SEC,
+                (RAISE5MINRRP, RAISE5MINROP, RAISE5MINAPCFLAG) AS RAISE5MIN,
+                (LOWER5MINRRP, LOWER5MINROP, LOWER5MINAPCFLAG) AS LOWER5MIN,
+                (RAISEREGRRP, RAISEREGROP, RAISEREGAPCFLAG) AS RAISEREG,
+                (LOWERREGRRP, LOWERREGROP, LOWERREGAPCFLAG) AS LOWERREG
+            )
+        )
+        ORDER BY SETTLEMENTDATE, REGIONID, BIDTYPE
+        """,
+        [first(date_range), last(date_range), intervention],
+    )
+    return transform!(prices, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
 end

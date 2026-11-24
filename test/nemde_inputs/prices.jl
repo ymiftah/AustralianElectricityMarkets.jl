@@ -5,16 +5,16 @@ const _PR_SYS = nemde_test_system()
 
 _prices_curve(prices) = PowerSystems.PiecewiseStepData(collect(0.0:10.0:(10.0 * length(prices))), prices)
 
-@testset "_day_band_prices pads to ten, ignores stamps outside the dispatch range and throws on variation" begin
+@testset "_day_band_prices pads to ten and throws on variation or no curve" begin
     AEM = AustralianElectricityMarkets
     curves = [_prices_curve([5.0, 50.0]), _prices_curve([5.0, 50.0]), _prices_curve([7.0, 50.0, 90.0])]
-    @test AEM._day_band_prices(curves, [true, true, false], "X") == (5.0, 50.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    @test AEM._day_band_prices(curves[1:2], "X") == (5.0, 50.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     @test_throws r"band prices of X vary within the dispatch range; a NEMDE system covers one trading day" AEM._day_band_prices(
-        curves, [true, true, true], "X",
+        curves, "X",
     )
-    @test_throws r"X has no offer curve in the dispatch range" AEM._day_band_prices(curves, [false, false, false], "X")
+    @test_throws r"X has no offer curve in the dispatch range" AEM._day_band_prices(typeof(curves)(), "X")
     wide = [_prices_curve(collect(1.0:11.0))]
-    @test_throws r"11 bands" AEM._day_band_prices(wide, [true], "X")
+    @test_throws r"11 bands" AEM._day_band_prices(wide, "X")
 end
 
 @testset "bids of a built system carry the referred prices of their energy offer series" begin

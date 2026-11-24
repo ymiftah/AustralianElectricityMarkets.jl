@@ -25,7 +25,7 @@ an interval and bands empty throughout the unit's offer series are left out.
 `Dict{Tuple{Bool, String, Int}, Vector{_TieBand}}`.
 """
 function _tie_break_bands(container::PSI.OptimizationContainer, sys::PSY.System)
-    active = _tie_break_active_bands(_tie_break_offers(sys))
+    active = _tie_break_active_bands(sys)
     groups = Dict{Tuple{Bool, String, Int}, Vector{_TieBand}}()
     for (key, variables) in PSI.get_variables(container)
         PSI.IS.Optimization.get_entry_type(key) === EnergyOfferBandVariable || continue
@@ -41,7 +41,7 @@ function _tie_break_bands(container::PSI.OptimizationContainer, sys::PSY.System)
             curves = _tie_break_curves(container, device, decremental)
             for (band, t, var) in cells
                 prices = PSY.get_y_coords(curves[t])
-                band <= length(prices) && band in active[(decremental, name)] || continue
+                band <= length(prices) && (decremental, name, band) in active || continue
                 push!(get!(groups, (decremental, region, t), _TieBand[]), (; price = prices[band], var, name, band, type = T))
             end
         end

@@ -1,6 +1,6 @@
 using DataFrames, Statistics
 
-@testset "Historical regions and loss-reader keywords" begin
+@testset "Historical regions" begin
     db = damaged_cache(
         AEM_TEST_HIVE_DIR, :DISPATCHREGIONSUM,
         "DELETE FROM input WHERE REGIONID = 'SNOWY1' AND SETTLEMENTDATE >= TIMESTAMP '2025-01-01 00:15'",
@@ -8,20 +8,13 @@ using DataFrames, Statistics
     early = DateTime(2025, 1, 1, 0, 10)
     late = DateTime(2025, 1, 1, 0, 20)
     regions(df) = Set(vcat(df.REGIONFROM, df.REGIONTO))
-    @test "SNOWY1" in regions(read_interconnectors(db; as_of = early))
-    @test !("SNOWY1" in regions(read_interconnectors(db; as_of = late)))
-    @test !("SNOWY1" in regions(read_interconnectors(db)))
-    buses = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db; as_of = early)
+    @test "SNOWY1" in regions(read_interconnectors(db, mock_range_at(early)))
+    @test !("SNOWY1" in regions(read_interconnectors(db, mock_range_at(late))))
+    buses = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(read_interconnectors(db, mock_range_at(early)))
     @test "SNOWY1" in buses.region
-    late_buses = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db; as_of = late)
+    late_buses = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(read_interconnectors(db, mock_range_at(late)))
     @test !("SNOWY1" in late_buses.region)
-    @test_throws ArgumentError read_interconnectors(db; as_of = Date(2024, 1, 1))
-    for reader in (
-            read_interconnector_loss_breakpoints, read_interconnector_demand_coefficients,
-            read_interconnector_loss_parameters,
-        )
-        @test isequal(reader(db; as_of = early), reader(db, early)) && isequal(reader(db; as_of = Date(early)), reader(db, Date(early)))
-    end
+    @test_throws ArgumentError read_interconnectors(db, mock_range_at(Date(2024, 1, 1)))
 end
 
 @testset "SQL ceiling preserves Julia bucket boundaries" begin
@@ -51,7 +44,7 @@ end
     )
     stamp = DateTime(2025, 1, 1, 0, 5)
     nsw(df) = df.TOTALDEMAND[(df.REGIONID .== "NSW1") .& (df.SETTLEMENTDATE .== stamp)]
-    @test (nsw(read_demand(db)), nsw(read_demand(db; intervention = 1))) == ([1010.0], [1510.0])
+    @test (nsw(read_demand(db, MOCK_DATE_RANGE)), nsw(read_demand(db, MOCK_DATE_RANGE; intervention = 1))) == ([1010.0], [1510.0])
 end
 
 @testset "Demand aggregation keeps nulls, charging and range boundaries" begin
@@ -88,7 +81,7 @@ end
     @test all(("GEN", "LOAD")) do direction
         rows = unit[unit.DIRECTION .== direction, :]
         return rows.INTERVAL_DATETIME == [start, start + Minute(15)] && rows.MAXAVAIL ≈ [101.0, 104.0] &&
-            rows.BANDAVAILARRAY[2][1] == 10.0 && isnan(rows.BANDAVAILARRAY[2][2]) && rows.PRICEBANDARRAY[2] == collect(51.0:60.0)
+            rows.BANDAVAIL1[2] == 10.0 && ismissing(rows.BANDAVAIL2[2]) && band_vectors(rows[2, :]).prices == collect(51.0:60.0)
     end
     @test isempty(read_bids(db, (start + Day(1), start + Day(2))))
     missing_prices = damaged_cache(
@@ -119,14 +112,12 @@ end
         """,
     )
     averaged = read_bids(db, range; resolution = Minute(15))
-    maximums = read_energy_bids(db, range; resolution = Minute(15))
     gen(df) = only(eachrow(df[(df.DUID .== "BW01") .& (df.DIRECTION .== "GEN"), :]))
     load(df) = only(eachrow(df[(df.DUID .== "BW01") .& (df.DIRECTION .== "LOAD"), :]))
     @test gen(averaged).MAXAVAIL == 142.0
-    @test gen(maximums).MAXAVAIL == 222.0
-    @test gen(averaged).PRICEBANDARRAY[1] == 123.0
+    @test gen(averaged).PRICEBAND1 == 123.0
     @test load(averaged).MAXAVAIL == 102.0
-    @test load(averaged).PRICEBANDARRAY[1] == 51.0
+    @test load(averaged).PRICEBAND1 == 51.0
     raw = read_bids(db, (start + Minute(10), start + Minute(11)))
     @test gen(raw).MAXAVAIL == 222.0
 end
@@ -155,7 +146,7 @@ end
     gen = sort(bids[bids.DIRECTION .== "GEN", :], :INTERVAL_DATETIME)
     @test gen.INTERVAL_DATETIME == [DateTime(2025, 1, 1, 4), DateTime(2025, 1, 1, 4, 15)]
     @test Date.(gen.SETTLEMENTDATE) == [Date(2024, 12, 31), Date(2025, 1, 1)]
-    @test first.(gen.PRICEBANDARRAY) == [777.0, 51.0]
+    @test gen.PRICEBAND1 == [777.0, 51.0]
 end
 
 @testset "FCAS readers preserve market and direction keys" begin
@@ -166,8 +157,8 @@ end
     @test Set(bids.BIDTYPE) == Set(types)
     battery = bids[bids.DUID .== "BW01", :]
     @test nrow(battery) == 4
-    @test all(==(collect(51.0:60.0)), battery.PRICEBANDARRAY)
-    @test all(==(10), length.(battery.BANDAVAILARRAY))
+    @test all(r -> band_vectors(r).prices == collect(51.0:60.0), eachrow(battery))
+    @test all(r -> length(band_vectors(r).widths) == 10, eachrow(battery))
 end
 
 @testset "Demand reads keep the raw rows of the widened window" begin
@@ -181,12 +172,9 @@ end
     window = (bucket, bucket + Hour(6))
     inwindow(df) = filter(:SETTLEMENTDATE => t -> window[1] <= t < window[2], df)
     sorted(df) = sort(df, [:SETTLEMENTDATE, :REGIONID])
-    expected = inwindow(read_demand(db; resolution = Week(1)))
+    # The reference windows start a month earlier, so they read every cached partition the bucket needs.
+    expected = inwindow(read_demand(db, (bucket - Month(1), window[2]); resolution = Week(1)))
     @test !isempty(expected)
     @test isequal(sorted(read_demand(db, window; resolution = Week(1))), sorted(expected))
-    uigf = AustralianElectricityMarkets.Readers._read_regional_renewable_uigf
-    # The reference window starts a month earlier, so it reads every cached partition the bucket needs.
-    expected_uigf = inwindow(uigf(db, (bucket - Month(1), window[2]); resolution = Week(1), intervention = 0))
-    @test !isempty(expected_uigf)
-    @test isequal(sorted(uigf(db, window; resolution = Week(1), intervention = 0)), sorted(expected_uigf))
+    @test any(!ismissing, expected.SS_SOLAR_UIGF)
 end

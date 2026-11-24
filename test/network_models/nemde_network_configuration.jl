@@ -13,10 +13,9 @@ end
     hive = _NEMDE_HIVE
     db = aem_connect(HiveConfiguration(hive_location = hive))
     interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
-    as_of, through = first(interval), last(interval) - Minute(5)
-    sys, units = nem_network(db; as_of, through)
+    sys, units = nem_network(db; date_range = interval)
     units_by_duid = Dict(String(r.DUID) => r for r in eachrow(units))
-    factors = Dict(String(r.DUID) => r for r in eachrow(read_loss_factors(db; as_of, through)))
+    factors = Dict(String(r.DUID) => r for r in eachrow(read_loss_factors(db, interval)))
     schedule_types = Dict(
         "SCHEDULED" => ScheduleType.SCHEDULED, "SEMI-SCHEDULED" => ScheduleType.SEMI_SCHEDULED,
         "NON-SCHEDULED" => ScheduleType.NON_SCHEDULED,
@@ -233,10 +232,10 @@ end
     grid = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
     shared, units = constrained_system(db; date_range = grid)
     independent, _ = constrained_system(db; date_range = grid)
-    @test isequal(units, read_units(db; as_of = first(grid)))
+    @test isequal(units, read_units(db, grid))
     demand = read_demand(db, grid; resolution = Minute(5))
     demand_before = deepcopy(demand)
-    AustralianElectricityMarkets._set_demand!(shared, demand, grid; resolution = Minute(5))
+    AustralianElectricityMarkets.set_demand!(shared, demand, grid; resolution = Minute(5))
     attach_demand!(independent, db, grid; resolution = Minute(5))
     @test isequal(demand, demand_before)
     for sys in (shared, independent)
@@ -275,7 +274,7 @@ end
     AEM = AustralianElectricityMarkets
     hive = _NEMDE_HIVE
     db = aem_connect(HiveConfiguration(hive_location = hive))
-    sys, _, _ = AustralianElectricityMarkets.RegionModel._nem_network(db)
+    sys, _, _ = AustralianElectricityMarkets.RegionModel._nem_network(db; date_range = MOCK_DATE_RANGE)
     generators = collect(get_components(Generator, sys))
     @test !isempty(generators)
     @test all(g -> get_operation_cost(g) isa Union{RenewableGenerationCost, HydroGenerationCost, ThermalGenerationCost}, generators)
@@ -424,7 +423,7 @@ end
 
     @testset "the as-of network keeps units in force at the first stamp" begin
         # The regional build itself needs a region with generators left, so the unit table is checked directly.
-        network, units, _ = AustralianElectricityMarkets.RegionModel._nem_network(connect(late_hive); as_of = DateTime(2025, 1, 1, 0, 5))
+        network, units, _ = AustralianElectricityMarkets.RegionModel._nem_network(connect(late_hive); date_range = mock_range_at(DateTime(2025, 1, 1, 0, 5)))
         @test !("BW02" in units.DUID)
         @test isnothing(get_component(Generator, network, "BW02"))
     end

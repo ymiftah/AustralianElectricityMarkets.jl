@@ -141,6 +141,29 @@ end
     @test _tb_scale(sys, expensive, 2) ≈ fill(1.0, _TB_N)
 end
 
+@testset "a band tied at some intervals only carries its scales at those intervals" begin
+    AEM = AustralianElectricityMarkets
+    sys = _tb_strip!(deepcopy(_TB_SYS))
+    wide, narrow = _tb_units(sys, AEM.OfferSide.GEN, 2)
+    _tb_write_offers!(sys, wide, AEM.OfferSide.GEN, fill(_tb_curve([20.0], [60.0]), _TB_N))
+    # The narrow unit ties at $20 at the second and fourth intervals only.
+    tied, apart = _tb_curve([20.0], [30.0]), _tb_curve([25.0], [30.0])
+    _tb_write_offers!(sys, narrow, AEM.OfferSide.GEN, [apart, tied, apart, tied])
+    AEM._set_tie_break!(sys)
+    @test _tb_scale(sys, narrow, 1) ≈ [0.0, 0.5, 0.0, 0.5]
+    @test _tb_scale(sys, wide, 1) ≈ [0.0, 1.0, 0.0, 1.0]
+end
+
+@testset "a system without energy offer series writes no tie-break scale" begin
+    AEM = AustralianElectricityMarkets
+    sys = _tb_strip!(deepcopy(_TB_SYS))
+    AEM._set_tie_break!(sys)
+    @test isempty(AEM._tie_break_active_bands(sys))
+    for device in PowerSystems.get_components(PowerSystems.StaticInjection, sys)
+        @test !any(k -> startswith(PowerSystems.IS.get_name(k), "tie_break_scale_"), PowerSystems.get_time_series_keys(device))
+    end
+end
+
 @testset "the decremental side is scaled by its own tie groups" begin
     AEM = AustralianElectricityMarkets
     sys = _tb_strip!(deepcopy(_TB_SYS))

@@ -46,8 +46,8 @@ end
 
 db = aem_connect();
 
-# Instantiate the system using a regional network configuration. `as_of` selects the units registered on that date.
-sys = nem_system(db, RegionalNetworkConfiguration(); as_of = Date(2025, 1, 2))
+# Instantiate the system using a regional network configuration. `date_range` selects the units registered during that day.
+sys = nem_system(db, RegionalNetworkConfiguration(); date_range = DateTime(2025, 1, 2):Minute(5):DateTime(2025, 1, 3))
 
 # Set the horizon and resolution for the simulation. Batteries are often more interesting to
 # observe at higher resolutions or over longer periods where their energy constraints become
@@ -172,7 +172,7 @@ begin
     select!(gens_long, :DateTime, :name => :DUID, :value)
 
     by_fuel = @chain select(
-        read_units(db),
+        read_units(db, date_range),
         [:DUID, :STATIONID, :CO2E_ENERGY_SOURCE, :REGIONID]
     ) begin
         rightjoin(gens_long, on = :DUID)

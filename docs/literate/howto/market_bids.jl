@@ -42,9 +42,9 @@ using HiGHS
 db = aem_connect();
 nothing #hide
 
-# Instantiate the system. `as_of` selects the units registered on that date.
+# Instantiate the system. `date_range` selects the units registered during that day.
 
-sys = nem_system(db, RegionalNetworkConfiguration(); as_of = Date(2025, 1, 2))
+sys = nem_system(db, RegionalNetworkConfiguration(); date_range = DateTime(2025, 1, 2):Minute(5):DateTime(2025, 1, 3))
 
 # Set the horizon to consider for the simulation.
 
@@ -109,7 +109,7 @@ begin
     select!(gens_long, :DateTime, :name => :DUID, :value)
 
     by_fuel = @chain select(
-        read_units(db),
+        read_units(db, date_range),
         [:DUID, :STATIONID, :CO2E_ENERGY_SOURCE, :REGIONID]
     ) begin
         rightjoin(gens_long, on = :DUID)

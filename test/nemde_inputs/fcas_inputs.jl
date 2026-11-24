@@ -10,8 +10,11 @@ end
 
 # The scaled FCAS trapeziums of `device`'s bid for `service`, per-unit of the system base, as the writer builds its offers.
 function _scaled_pu(device, service::BidType, start, horizon::Integer; decremental::Bool = false, resolution = Minute(5))
+    AEM = AustralianElectricityMarkets
     window = _fcas_writer_window(device, start, horizon; resolution)
-    return AustralianElectricityMarkets._fcas_scaled_trapeziums(window, device, service, decremental)
+    market = AEM._fcas_market(window, device, service, fcas_bid_direction(device, service); offer_curves = false)
+    side = decremental ? market.load : market.gen
+    return [AEM._fcas_scaled_trapezium(market, side, t) for t in 1:horizon]
 end
 
 # The same trapeziums in MW (the slope coefficients are dimensionless and stay as they are).
@@ -30,8 +33,8 @@ function _raw_trapeziums(device, service::BidType, start, horizon::Integer; decr
     AEM = AustralianElectricityMarkets
     bid = AEM._fcas_side_bid(device, service, AEM.offer_side(decremental))
     stamps = [start + (i - 1) * Minute(5) for i in 1:horizon]
-    points = AEM._fcas_bid_window(device, bid.trapezium, :trapezium, stamps)
-    max_avail = AEM._fcas_bid_window(device, bid.max_avail, :max_avail, stamps)
+    points = AEM._values_on_grid(device, bid.trapezium, stamps; field = :trapezium)
+    max_avail = AEM._values_on_grid(device, bid.max_avail, stamps; field = :max_avail)
     return [
         AEM.FCASTrapezium(;
             enablement_min = Float64(p[1]), low_breakpoint = Float64(p[2]), high_breakpoint = Float64(p[3]),
@@ -63,7 +66,7 @@ end
 
 @testset "FCAS scaling inputs of the effective-offer writer" begin
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
-    sys_base, _ = nem_network(db)
+    sys_base, _ = nem_network(db; date_range = MOCK_DATE_RANGE)
     resolution = Minute(5)
     start_date = DateTime(2025, 1, 1, 0, 0)
     date_range = start_date:resolution:(start_date + Hour(2))
@@ -157,11 +160,10 @@ end
                     ]
                     window = _fcas_writer_window(device, start_date, horizon; resolution)
                     # The AGC and UIGF inputs of the writer, read from the same telemetry.
-                    enablement = is_regulation ? AEM._fcas_pair_window(
-                            device,
-                            service == BidType.RAISEREG ? telemetry.raise_reg_enablement : telemetry.lower_reg_enablement,
-                            window.stamps, window.base,
-                        ) : (nothing, nothing)
+                    pairs = AEM._values_on_grid(
+                        device, service == BidType.RAISEREG ? telemetry.raise_reg_enablement : telemetry.lower_reg_enablement, window.stamps,
+                    )
+                    enablement = is_regulation ? ([p[1] / window.base for p in pairs], [p[2] / window.base for p in pairs]) : (nothing, nothing)
                     agc_max = is_regulation ? AEM._fcas_agc_capability(window, device, AEM._fcas_ramp_rate_service(device, service)) : nothing
                     input_at(series, i) = (isnothing(series) || isnan(series[i])) ? nothing : series[i]
                     expected = [
@@ -207,14 +209,14 @@ end
     sys = deepcopy(_FW_SYS)
     battery = first(filter(AEM.has_nem_unit_data, collect(get_components(EnergyReservoirStorage, sys))))
     start = DateTime(2025, 1, 1, 0, 5)
-    window = _fcas_writer_window(battery, start, 2)
     # With both energy bids the limits are the bids' MAXAVAIL series, MW per interval.
-    bid_limits = AEM._fcas_energy_limits(window, battery)
-    @test length(bid_limits.gen) == 2 && length(bid_limits.load) == 2
+    bid_limits = _fcas_writer_window(battery, start, 2)
+    @test length(bid_limits.energy_gen) == 2 && length(bid_limits.energy_load) == 2
     # Dropping the load-side energy bid leaves a side with no MAXAVAIL: both sides read the static ratings, per-unit of the system base.
     cost = AEM._nem_offer_cost(battery)
     filter!(b -> AEM._energy_offer_side(b.direction) != OfferSide.LOAD, cost.energy)
-    limits = AEM._fcas_energy_limits(window, battery)
+    window = _fcas_writer_window(battery, start, 2)
+    limits = (; gen = window.energy_gen, load = window.energy_load)
     rating = with_units_base(sys, "NATURAL_UNITS") do
         (get_output_active_power_limits(battery).max, get_input_active_power_limits(battery).max)
     end
@@ -223,15 +225,14 @@ end
 end
 
 @testset "a NaN energy availability is carried to the FCAS kernels" begin
-    avail = AustralianElectricityMarkets.effective_energy_availability([NaN, 5.0], nothing, [60.0, 60.0], false)
+    avail = AustralianElectricityMarkets.effective_energy_availability.([NaN, 5.0], nothing, [60.0, 60.0], false)
     @test isnan(avail[1]) && avail[2] == 5.0
 end
 
 # The energy limits the FCAS writer reads for `device` over `horizon` intervals from `start`, in MW.
 function _energy_limits_mw(device, start, horizon::Integer)
     window = _fcas_writer_window(device, start, horizon)
-    limits = AustralianElectricityMarkets._fcas_energy_limits(window, device)
-    return (; gen = limits.gen .* window.base, load = limits.load .* window.base)
+    return (; gen = window.energy_gen .* window.base, load = window.energy_load .* window.base)
 end
 
 @testset "the energy limits of the FCAS writer" begin
@@ -245,7 +246,7 @@ end
         SingleTimeSeries, device, AEM.bid_series_name(BidType.ENERGY, :max_avail, direction);
         start_time = start_date, len = horizon, ignore_scaling_factors = true,
     )
-    sys = first(nem_network(db))
+    sys = first(nem_network(db; date_range = MOCK_DATE_RANGE))
     set_market_bids!(sys, db, date_range; resolution = Minute(5))
     set_available!(get_component(ThermalStandard, sys, "ER02"), false)
     set_available!(get_component(HydroDispatch, sys, "BW02"), false)

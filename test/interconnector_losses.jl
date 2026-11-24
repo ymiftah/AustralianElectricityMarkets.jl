@@ -124,16 +124,35 @@ let
         @test Set(keys(ic1.demand_coefficients)) == Set(["VIC1", "SNOWY1"])
     end
 
-    @testset "demand coefficient patch" begin
-        patch = AustralianElectricityMarkets._apply_demand_coefficient_patches!
-        fresh() = Dict("V-SA" => Dict("VIC1" => -1.0e-5, "SA1" => 5.0e-5))
-        @test patch(fresh(), Date(2025, 7, 1))["V-SA"]["NSW1"] == 1.6981e-6
-        @test patch(fresh(), DateTime(2026, 6, 30, 23, 55))["V-SA"]["NSW1"] == 1.6981e-6
-        @test !haskey(patch(fresh(), Date(2025, 6, 30))["V-SA"], "NSW1")
-        @test !haskey(patch(fresh(), Date(2026, 7, 1))["V-SA"], "NSW1")
-        explicit = Dict("V-SA" => Dict("NSW1" => 0.0))
-        @test patch(explicit, Date(2025, 8, 1))["V-SA"]["NSW1"] == 0.0
-        @test isempty(patch(Dict{String, Dict{String, Float64}}(), Date(2025, 8, 1)))
+    @testset "demand coefficient patches" begin
+        patches = AustralianElectricityMarkets._DEMAND_COEFFICIENT_PATCHES
+        added = [
+            (
+                INTERCONNECTORID = "IC1", REGIONID = "NSW1", DEMANDCOEFFICIENT = 1.6981e-6,
+                valid_from = Date(2025, 1, 1), valid_until = Date(2025, 2, 1),
+            ),
+            (
+                INTERCONNECTORID = "IC1", REGIONID = "VIC1", DEMANDCOEFFICIENT = 0.0,
+                valid_from = Date(2025, 1, 1), valid_until = Date(2025, 2, 1),
+            ),
+            (
+                INTERCONNECTORID = "IC_ABSENT", REGIONID = "NSW1", DEMANDCOEFFICIENT = 1.0,
+                valid_from = Date(2025, 1, 1), valid_until = Date(2025, 2, 1),
+            ),
+        ]
+        append!(patches, added)
+        try
+            coefficients(d) = interconnector_loss_models(db, d)["IC1"].demand_coefficients
+            inside = coefficients(as_of)
+            # Fills a region the table omits, never overrides a cached one.
+            @test inside["NSW1"] == 1.6981e-6
+            @test inside["VIC1"] != 0.0
+            @test !haskey(coefficients(Date(2025, 2, 1)), "NSW1")
+            # A patch for an interconnector with no cached coefficients adds no model.
+            @test !haskey(interconnector_loss_models(db, as_of), "IC_ABSENT")
+        finally
+            resize!(patches, length(patches) - length(added))
+        end
     end
 
     @testset "uncached tables throw, never return empty" begin
@@ -152,7 +171,7 @@ let
     end
 
     @testset "attach_interconnector_losses!" begin
-        sys = nem_system(db, RegionalNetworkConfiguration())
+        sys = nem_system(db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
         base_power = get_base_power(sys)
         added, skipped = @test_logs (:warn, r"no resolvable loss model") match_mode = :any begin
             attach_interconnector_losses!(sys, db, as_of)

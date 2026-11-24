@@ -9,7 +9,7 @@
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
 
     # Base system for testing
-    sys_base, _ = nem_network(db)
+    sys_base, _ = nem_network(db; date_range = MOCK_DATE_RANGE)
 
     @testset "demand build rejects incomplete regional demand" begin
         # The mock hive holds demand to 04:00; a window running to 06:00 has no rows for the last two hours.
@@ -113,7 +113,7 @@
             @test occursin("DISPATCHLOAD", err.msg)
         end
 
-        @testset "read_uigf throws when cached DISPATCHLOAD predates the UIGF column" begin
+        @testset "read_uigf fails when cached DISPATCHLOAD has no UIGF column" begin
             no_uigf_hive = mktempdir()
             ddb = DuckDB.DB()
             conn = DuckDB.connect(ddb)
@@ -127,13 +127,14 @@
             mkpath(table_dir)
             DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
             DuckDB.unregister_table(conn, "tmp_table")
+            cp(joinpath(AEM_TEST_HIVE_DIR, "DUDETAILSUMMARY"), joinpath(no_uigf_hive, "DUDETAILSUMMARY"))
 
             no_uigf_db = aem_connect(HiveConfiguration(hive_location = no_uigf_hive, filesystem = "file"))
-            err = (@test_throws ArgumentError read_uigf(no_uigf_db, date_range; resolution)).value
-            @test occursin("no UIGF column", err.msg) && occursin("force_new = true", err.msg)
+            err = (@test_throws DuckDB.QueryException read_uigf(no_uigf_db, date_range; resolution)).value
+            @test occursin("UIGF", string(err.var))
         end
 
-        @testset "read_uigf throws without DUDETAILSUMMARY's SCHEDULE_TYPE" begin
+        @testset "read_uigf fails without DUDETAILSUMMARY's SCHEDULE_TYPE" begin
             function save_table(hive, df, table)
                 conn = DuckDB.connect(DuckDB.DB())
                 DuckDB.execute(conn, "SET preserve_identifier_case=true")
@@ -159,8 +160,8 @@
                     DUID = ["BW03"], START_DATE = [DateTime(2020, 1, 1)], archive_month = ["2025-01"],
                 ), "DUDETAILSUMMARY",
             )
-            err = (@test_throws ArgumentError read_uigf(hive_db, date_range; resolution)).value
-            @test occursin("SCHEDULE_TYPE", err.msg)
+            err = (@test_throws DuckDB.QueryException read_uigf(hive_db, date_range; resolution)).value
+            @test occursin("SCHEDULE_TYPE", string(err.var))
         end
     end
 
@@ -173,7 +174,7 @@
 
         @test all(
             c in names(offers) for c in [
-                    "PRICEBANDARRAY", "BANDAVAILARRAY", "MAXAVAIL", "MINIMUMLOAD", "DAILYENERGYCONSTRAINT",
+                    "PRICEBAND1", "PRICEBAND10", "BANDAVAIL1", "BANDAVAIL10", "MAXAVAIL", "MINIMUMLOAD", "DAILYENERGYCONSTRAINT",
                     "FIXEDLOAD", "ROCUP", "ROCDOWN", "ENABLEMENTMIN", "LOWBREAKPOINT", "HIGHBREAKPOINT", "ENABLEMENTMAX",
                 ]
         )
@@ -220,17 +221,35 @@
             @test bw04.T1 == [10.0, 12.0, 12.0, 12.0, 0.0, 0.0]
             @test bw04.MINIMUMLOAD == [0.0, 5.0, 5.0, 5.0, 0.0, 0.0]
             # Price bands and the other units stay on BIDDAYOFFER_D.
-            @test all(==(collect(51.0:60.0)), bw04.PRICEBANDARRAY)
+            @test all(r -> band_vectors(r).prices == collect(51.0:60.0), eachrow(bw04))
             @test all(iszero, unit(read_offers(db, late), "BW02", "GEN").T1)
             @test all(iszero, unit(read_offers(db, late), "PUMP1", "LOAD").T1)
+        end
 
-            # Without BIDDAYOFFER cached, every row keeps the BIDDAYOFFER_D values.
-            hive = mktempdir()
-            cp(AEM_TEST_HIVE_DIR, hive; force = true)
+        @testset "a NULL field of the version in force is kept, not filled from BIDDAYOFFER_D" begin
+            late = DateTime(2025, 1, 1, 3, 0):Minute(5):DateTime(2025, 1, 1, 3, 30)
+            # The 03:17 rebid, in force from 03:20, leaves T1 empty; BIDDAYOFFER_D's T1 is 10.
+            null_db = damaged_cache(AEM_TEST_HIVE_DIR, :BIDDAYOFFER, "UPDATE input SET T1 = NULL WHERE DUID = 'BW04' AND VERSIONNO = 3")
+            offers = read_offers(null_db, late; markets = (AustralianElectricityMarkets.BidType.ENERGY,))
+            bw04 = sort(subset(offers, :DUID => ByRow(==("BW04")), :DIRECTION => ByRow(==("GEN"))), :INTERVAL_DATETIME)
+            @test isequal(bw04.T1, [10.0, 12.0, 12.0, 12.0, missing, missing])
+        end
+
+        @testset "FCAS offers read without BIDDAYOFFER" begin
+            hive = joinpath(mktempdir(), "hive")
+            cp(AEM_TEST_HIVE_DIR, hive)
             rm(joinpath(hive, "BIDDAYOFFER"); recursive = true)
-            fallback = unit(read_offers(aem_connect(HiveConfiguration(hive_location = hive)), late), "BW04", "GEN")
-            @test all(==(10.0), fallback.T1)
-            @test all(iszero, fallback.MINIMUMLOAD)
+            fcas_db = aem_connect(HiveConfiguration(hive_location = hive, filesystem = "file"))
+            raise6 = read_fcas_bids(fcas_db, date_range, AustralianElectricityMarkets.BidType.RAISE6SEC)
+            @test nrow(raise6) > 0
+            @test_throws ArgumentError read_offers(fcas_db, date_range; markets = (AustralianElectricityMarkets.BidType.ENERGY,))
+        end
+
+        @testset "bids read over a Date range" begin
+            days = Date(2025, 1, 1):Day(1):Date(2025, 1, 2)
+            @test nrow(read_bids(db, days)) > 0
+            @test nrow(read_bids(db, days; resolution = Minute(30))) > 0
+            @test nrow(read_fcas_bids(db, days, AustralianElectricityMarkets.BidType.RAISE6SEC)) > 0
         end
     end
 
@@ -257,7 +276,7 @@
                 # singleton i=0. The ten 10 MW bands sum to 100 MW in every bucket.
                 rows = [only(subset(gen_bids, :INTERVAL_DATETIME => ByRow(==(start_date + Minute(5 * last(is)))))) for is in buckets]
                 @test [r.MAXAVAIL for r in rows] ≈ [mean(100.0 .+ is) for is in buckets] atol = 1.0e-8
-                @test [sum(r.BANDAVAILARRAY) for r in rows] ≈ fill(100.0, length(buckets)) atol = 1.0e-8
+                @test [sum(band_vectors(r).widths) for r in rows] ≈ fill(100.0, length(buckets)) atol = 1.0e-8
             end
         end
     end
@@ -268,7 +287,7 @@
         start_date = DateTime(2025, 1, 1, 0, 0)
         date_range = start_date:resolution:(start_date + Hour(2))
 
-        demand_df = read_demand(db; resolution = resolution)
+        demand_df = read_demand(db, MOCK_DATE_RANGE; resolution = resolution)
         subset!(demand_df, :SETTLEMENTDATE => ByRow(x -> first(date_range) <= x < last(date_range)))
 
         function seed(write_mode)
@@ -412,7 +431,7 @@
 
         @testset "a semi-scheduled unit gets its UIGF, a scheduled unit none" begin
             semi_range = DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 1, 0, 10)
-            sys = first(nem_network(db))
+            sys = first(nem_network(db; date_range = MOCK_DATE_RANGE))
             set_market_bids!(sys, db, semi_range)
             set_unit_conditions!(sys, db, semi_range)
             for (duid, forecast) in [("BW03", [40.0, 41.0]), ("BW04", [70.0, 69.0])]
@@ -466,11 +485,16 @@
                 set_at(:AVAILABILITY, "ER01", -1.0) => "ER01: negative AVAILABILITY",
                 (frame -> filter!(r -> r.DUID != "ER01", frame)) => "ER01: no DISPATCHLOAD rows",
                 set_at(:UIGF, "BW03", -1.0) => "BW03 at $(at(5)): missing or invalid UIGF",
-                (frame -> select!(frame, Not(:UIGF))) => "",
             )
             sys = deepcopy(sys_base)
             @test_throws ArgumentError corrupt_and_build(:DISPATCHLOAD, transform!; sys)
             @test occursin(message, last_error[].msg)
+            @test untouched(sys)
+        end
+
+        @testset "a DISPATCHLOAD without a UIGF column fails the query and leaves sys untouched" begin
+            sys = deepcopy(sys_base)
+            @test_throws DuckDB.QueryException corrupt_and_build(:DISPATCHLOAD, frame -> select!(frame, Not(:UIGF)); sys)
             @test untouched(sys)
         end
 
@@ -511,7 +535,15 @@
                     append!(frame, extra)
                 end
             )
-            @test_throws r"ER01 change REGIONID/DISPATCHTYPE/SCHEDULE_TYPE" nem_network(bad; as_of = at(0), through = at(10) - Minute(5))
+            @test_throws r"ER01 change REGIONID/DISPATCHTYPE/SCHEDULE_TYPE" nem_network(bad; date_range = at(0):Minute(5):at(10))
+
+            # The regional build keeps the earliest registration row and warns.
+            range = at(0):Minute(5):at(10)
+            units = @test_logs (:warn, r"1 unit\(s\) change") match_mode = :any read_units(bad, range)
+            @test only(subset(units, :CHANGES_IN_RANGE).DUID) == "ER01"
+            @test only(subset(units, :DUID => ByRow(==("ER01")))).SCHEDULE_TYPE != "SEMI-SCHEDULED"
+            regional = first(AustralianElectricityMarkets.RegionModel._nem_network(bad; date_range = range))
+            @test !isnothing(get_component(ThermalStandard, regional, "ER01"))
         end
 
         @testset "a zero static max_active_power throws, naming the DUID" begin
@@ -580,29 +612,27 @@
         factor(df, d, col) = only(df[df.DUID .== d, col])
 
         @testset "read_loss_factors" begin
-            old = read_loss_factors(ldb; as_of = start_date)
+            old = read_loss_factors(ldb, mock_range_at(start_date))
             @test factor(old, "ER01", :LOAD_LOSS_FACTOR) ≈ 0.9 * 0.97   # DLF is applied
             @test factor(old, "ER01", :GEN_LOSS_FACTOR) ≈ 0.9 * 0.97
             @test factor(old, "BW01", :GEN_LOSS_FACTOR) == 0.5            # BIDIRECTIONAL: secondary on GEN
             @test factor(old, "BW01", :LOAD_LOSS_FACTOR) == 0.8
             @test factor(old, "BW02", :GEN_LOSS_FACTOR) == 1.0            # SECONDARY_TLF ignored off a BDU
-            new = read_loss_factors(ldb; as_of = DateTime(2025, 7, 2))
+            new = read_loss_factors(ldb, mock_range_at(DateTime(2025, 7, 2)))
             @test factor(new, "ER01", :LOAD_LOSS_FACTOR) == 0.8
             @test factor(new, "BW01", :GEN_LOSS_FACTOR) == 1.0
-            # The new row starts at the boundary; a Date before it resolves the old one.
-            @test factor(read_loss_factors(ldb; as_of = fy_change - Minute(5)), "ER01", :LOAD_LOSS_FACTOR) ≈ 0.9 * 0.97
-            @test factor(read_loss_factors(ldb; as_of = fy_change), "ER01", :LOAD_LOSS_FACTOR) == 0.8
-            # No as_of keeps the open row.
-            @test factor(read_loss_factors(ldb), "ER01", :LOAD_LOSS_FACTOR) == 0.8
-            @test_logs (:warn, r"change within the date range") match_mode = :any read_loss_factors(ldb; as_of = start_date, through = DateTime(2025, 7, 1, 1))
+            # The new row starts at the boundary, so the interval ending at it still takes the old row.
+            @test factor(read_loss_factors(ldb, mock_range_at(fy_change)), "ER01", :LOAD_LOSS_FACTOR) ≈ 0.9 * 0.97
+            @test factor(read_loss_factors(ldb, mock_range_at(fy_change + Minute(5))), "ER01", :LOAD_LOSS_FACTOR) == 0.8
+            @test_logs (:warn, r"change within the date range") match_mode = :any read_loss_factors(ldb, start_date:Minute(5):(DateTime(2025, 7, 1, 1) + Minute(5)))
         end
 
-        sys_lf, _ = nem_network(ldb; as_of = start_date, through = last(date_range) - Minute(5))
+        sys_lf, _ = nem_network(ldb; date_range)
         set_market_bids!(sys_lf, ldb, date_range; resolution = Minute(5))
 
         # Read raw bids (unscaled by loss factors) to compare
         raw_bids = read_bids(ldb, date_range; resolution = Minute(5))
-        raw_curve(duid, direction) = AustralianElectricityMarkets._extract_power_bids(first(eachrow(raw_bids[(raw_bids.DUID .== duid) .& (raw_bids.DIRECTION .== direction), :])))
+        raw_curve(duid, direction) = offer_curve(band_vectors(first(eachrow(raw_bids[(raw_bids.DUID .== duid) .& (raw_bids.DIRECTION .== direction), :])))..., direction)
         raw_price(duid, direction) = get_y_coords(raw_curve(duid, direction))
         raw_mw(duid, direction) = get_x_coords(raw_curve(duid, direction))
 
@@ -643,7 +673,7 @@
                     df
                 end
             )
-            @test_throws r"No DUDETAILSUMMARY loss factor for BW02" nem_network(unfactored; as_of = start_date, through = last(date_range) - Minute(5))
+            @test_throws r"No DUDETAILSUMMARY loss factor for BW02" nem_network(unfactored; date_range)
         end
     end
 end
@@ -652,7 +682,7 @@ end
     using DataFrames, Statistics
     import TimeSeries
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
-    sys_base = nem_system(db, RegionalNetworkConfiguration())
+    sys_base = nem_system(db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
     resolution = Minute(30)
     start_date = DateTime(2025, 1, 1, 0, 0)
     date_range = start_date:Minute(5):(start_date + Hour(2))

@@ -26,6 +26,8 @@ struct _FastStartRows{T}
     devices::Vector{T}
     ramp_up::Matrix{Float64}
     ramp_down::Matrix{Float64}
+    # Whole-series reads of the units' fast-start inputs, kept across the steps of the build (see `_cached_window`).
+    cache::Dict{Any, Any}
 end
 
 function _fast_start_rows(container::PSI.OptimizationContainer, ::Type{T}) where {T}
@@ -65,7 +67,9 @@ function _add_fast_start_rows!(container::PSI.OptimizationContainer, devices, mo
         return Float64[JuMP.normalized_rhs(rows[name, t]) for name in names, t in time_steps]
     end
     run == "dispatch" && _add_fast_start_profile_rows!(container, T, names, time_steps)
-    _build_scratch(container)[(_FastStartRows, T)] = _FastStartRows{T}(run, fast, standard("up"), standard("dn"))
+    _build_scratch(container)[(_FastStartRows, T)] = _FastStartRows{T}(
+        run, fast, standard("up"), standard("dn"), Dict{Any, Any}(),
+    )
     _set_fast_start_rows!(container, T, PSI.get_initial_time(container))
     return
 end
@@ -141,7 +145,7 @@ function _set_fast_start_rows!(container::PSI.OptimizationContainer, ::Type{T}, 
     end
     for (i, device) in enumerate(rows.devices)
         name = PSY.get_name(device)
-        inputs = fast_start_unit_inputs(device, start_time, length(time_steps))
+        inputs = fast_start_unit_inputs(device, start_time, length(time_steps); cache = rows.cache)
         for t in time_steps
             unit = inputs[t]
             ramp = if !dispatch
@@ -160,7 +164,7 @@ function _set_fast_start_rows!(container::PSI.OptimizationContainer, ::Type{T}, 
                 JuMP.set_normalized_rhs(lower[name, t], _rhs(envelope.lower / base, base))
                 JuMP.set_normalized_rhs(upper[name, t], _rhs(envelope.upper / base, base))
                 limit = envelope.ramp == :from_minimum_load ?
-                    fast_start_ramp_up_limit(envelope, NaN, _ramp_up_rate(device, start_time, t) * base; interval_minutes = minutes) :
+                    fast_start_ramp_up_limit(envelope, NaN, _ramp_up_rate(device, start_time, t, rows.cache) * base; interval_minutes = minutes) :
                     Inf
                 JuMP.set_normalized_rhs(ramp_up[name, t], _rhs(limit / base, base))
                 envelope.ramp
@@ -173,9 +177,17 @@ function _set_fast_start_rows!(container::PSI.OptimizationContainer, ::Type{T}, 
 end
 
 # The effective ramp-up rate of `device` at step `t` of the window from `start_time`, system-base per-unit per minute.
-function _ramp_up_rate(device, start_time::DateTime, t::Integer)
-    values = PSY.get_time_series_values(
-        PSY.SingleTimeSeries, device, NEM_SERIES.ramp_up_rate; start_time, len = t, ignore_scaling_factors = true,
+function _ramp_up_rate(device, start_time::DateTime, t::Integer, cache)
+    series = NEM_SERIES.ramp_up_rate
+    values = AustralianElectricityMarkets._cached_window(
+        () -> (
+            PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, series),
+            PSY.get_time_series_values(PSY.SingleTimeSeries, device, series; ignore_scaling_factors = true),
+        ),
+        cache, (PSY.get_name(device), series), start_time, t,
+        () -> PSY.get_time_series_values(
+            PSY.SingleTimeSeries, device, series; start_time, len = t, ignore_scaling_factors = true,
+        ),
     )
     return Float64(values[t])
 end

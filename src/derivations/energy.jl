@@ -19,25 +19,28 @@ end
 
 
 """
-    effective_energy_availability(max_avail, uigf, ramp_up_raw, pinned::Bool) -> Vector{Float64}
+    effective_energy_availability(max_avail, uigf, ramp_up_raw, pinned::Bool) -> Float64
 
-The energy availability of a unit per interval, in the unit of `max_avail`: its energy `MAXAVAIL`,
-limited by `uigf` where one is published, and zero for a non-scheduled load or an interval with no
-`DISPATCHLOAD` row (a `NaN` ramp limit).
+The energy availability of a unit in one interval, in the unit of `max_avail`: its energy `MAXAVAIL`,
+limited by `uigf` for a semi-scheduled unit, and zero for a non-scheduled load or an interval with no
+`DISPATCHLOAD` row (a `NaN` ramp limit). Broadcast it over the intervals of a series.
 
 # Arguments
-- `max_avail`: the energy bid `MAXAVAIL` per interval.
-- `uigf`: the unconstrained intermittent generation forecast per interval, or `nothing` when the unit is not
-  semi-scheduled.
-- `ramp_up_raw`: the telemetered ramp-up limit per interval, `NaN` at an interval with no row.
+- `max_avail`: the energy bid `MAXAVAIL`.
+- `uigf`: the unconstrained intermittent generation forecast, or `nothing` when the unit is not
+  semi-scheduled; a `NaN` forecast gives a `NaN` availability.
+- `ramp_up_raw`: the telemetered ramp-up limit, `NaN` at an interval with no row.
 - `pinned`: whether the unit is a non-scheduled load, dispatched by constraint rather than by offer.
 
 # Returns
-A `Vector{Float64}`.
+A `Float64`.
+
+# Example
+```julia
+effective_energy_availability.([10.0, 10.0], [8.0, 12.0], [60.0, 60.0], false)  # [8.0, 10.0]
+```
 """
-function effective_energy_availability(max_avail::AbstractVector, uigf, ramp_up_raw::AbstractVector, pinned::Bool)
-    return [
-        (pinned || isnan(ramp_up_raw[i])) ? 0.0 : (isnothing(uigf) ? max_avail[i] : min(max_avail[i], uigf[i]))
-            for i in eachindex(max_avail)
-    ]
+function effective_energy_availability(max_avail::Real, uigf::Union{Nothing, Real}, ramp_up_raw::Real, pinned::Bool)::Float64
+    (pinned || isnan(ramp_up_raw)) && return 0.0
+    return isnothing(uigf) ? Float64(max_avail) : Float64(min(max_avail, uigf))
 end

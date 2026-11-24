@@ -1,16 +1,14 @@
-# TODO This should live in `@network_configurations`
-
-
 """
-    _base_system(db; as_of = nothing)
+    nem_system(db, ::RegionalNetworkConfiguration; date_range, kwargs...)
 
-Assembles the energy-only regional `PowerSystems.System` built from the database, as
-[`RegionalNetworkConfiguration`](@ref) returns it.
+Assembles the energy-only regional `PowerSystems.System` built from the database: the NEM network
+(see [`nem_network`](@ref)) with the ISP operating cost of every generator.
 
 # Arguments
 - `db`: The database connection.
-- `as_of`: a `Date` or `DateTime` to resolve the unit and interconnector tables as of (see
-  [`read_units`](@ref)); `nothing` (the default) uses the latest cached version.
+- `date_range`: the half-open range of interval-ending stamps the units and interconnectors are
+  resolved over (see [`read_units`](@ref)).
+- `kwargs...`: Passed to the `PowerSystems.System` constructor.
 
 # Returns
 A `PowerSystems.System` object.
@@ -18,20 +16,13 @@ A `PowerSystems.System` object.
 # Example
 ```julia
 db = aem_connect()
-sys = nem_system(db, RegionalNetworkConfiguration())
+sys = nem_system(db, RegionalNetworkConfiguration(); date_range = DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 2))
 println(sys)
 ```
 """
-function _base_system(db; kwargs...)
-    sys, _ = _regional_system(db; kwargs...)
-    return sys
-end
-
-
-function _regional_system(db; kwargs...)
-    sys, units, gen_df = _nem_network(db; kwargs...)
-    _set_isp_generation_costs!(sys, gen_df)
-    return sys, units
+function AustralianElectricityMarkets.nem_system(db, ::RegionalNetworkConfiguration; date_range, kwargs...)
+    sys, _, gen_df = _nem_network(db; date_range, kwargs...)
+    return _set_isp_generation_costs!(sys, gen_df)
 end
 
 
@@ -48,6 +39,7 @@ end
     :STATIONOPERATINGSTATUS,
     :GENUNITS,
     :DUALLOC,
+    :BIDDAYOFFER,
     :BIDDAYOFFER_D,
     :BIDPEROFFER_D,
 """
@@ -61,10 +53,8 @@ AustralianElectricityMarkets.table_requirements(::RegionalNetworkConfiguration) 
     :STATIONOPERATINGSTATUS,
     :GENUNITS,
     :DUALLOC,
+    :BIDDAYOFFER,
     :BIDDAYOFFER_D,
     :BIDPEROFFER_D,
     :DISPATCHLOAD,
 ]
-
-
-AustralianElectricityMarkets.nem_system(db, ::RegionalNetworkConfiguration; kwargs...) = _base_system(db; kwargs...)

@@ -43,7 +43,8 @@ populate(
     tables = table_requirements(RegionalNetworkConfiguration()),
 )
 
-demand_df = read_demand(db)
+date_range = DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 2)
+demand_df = read_demand(db, date_range)
 println(demand_df)
 ```
 
@@ -51,7 +52,7 @@ And parsing the data into `PowerSystems.jl`
 
 ```julia
 # Instantiate a System
-sys = nem_system(db, RegionalNetworkConfiguration())
+sys = nem_system(db, RegionalNetworkConfiguration(); date_range)
 
 println(sys)
 ```

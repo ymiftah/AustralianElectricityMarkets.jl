@@ -332,6 +332,7 @@ function create_pscb_nemweb_data(hive_root::String)
                     SETTLEMENTDATE = fill(test_date, nd),
                     BIDTYPE = fill(bt, nd),
                     INTERVAL_DATETIME = fill(t, nd),
+                    LASTCHANGED = fill(base_datetime, nd),
                     VERSIONNO = fill(1, nd),
                     DUID = duids,
                     DIRECTION = fill(direction, nd),
@@ -355,7 +356,7 @@ function create_pscb_nemweb_data(hive_root::String)
     end
     save_hive(df_per_offer, :BIDPEROFFER_D)
 
-    # `_massage_bids` inner-joins price bands on (SETTLEMENTDATE, DUID, DIRECTION), so every
+    # `read_offers` requires price bands on (SETTLEMENTDATE, DUID, DIRECTION), so every
     # (DUID, DIRECTION, BIDTYPE) above needs a matching daily row.
     df_day_offer = DataFrame()
     for bt in bid_types
@@ -384,6 +385,14 @@ function create_pscb_nemweb_data(hive_root::String)
         df_day_offer[!, "PRICEBAND$b"] = fill(50.0 + b, nrow(df_day_offer))
     end
     save_hive(df_day_offer, :BIDDAYOFFER_D)
+
+    # BIDDAYOFFER: the energy offer versions, identical to BIDDAYOFFER_D and in force from before the run.
+    df_versions = select(
+        subset(df_day_offer, :BIDTYPE => ByRow(==("ENERGY"))),
+        :DUID, :SETTLEMENTDATE, :BIDTYPE, :DIRECTION, :VERSIONNO, :MINIMUMLOAD, :T1, :T2, :T3, :T4, :archive_month,
+    )
+    df_versions.OFFERDATE = fill(base_datetime - Hour(1), nrow(df_versions))
+    save_hive(df_versions, :BIDDAYOFFER)
 
     # DISPATCHLOAD - per-interval unit dispatch outcomes. SOLAR1 (the fixture's only
     # semi-scheduled unit) gets a real UIGF; every other DUID gets `0.0`, matching what

@@ -48,8 +48,7 @@
 
     @testset "_fcas_trapezium_points accepts well-formed trapeziums and names the unit of a bad one" begin
         base_row = (
-            DIRECTION = "GEN", PRICEBANDARRAY = [10.0, 20.0], BANDAVAILARRAY = [5.0, 5.0],
-            DUID = "BW01", ENABLEMENTMIN = 10.0, LOWBREAKPOINT = 30.0, HIGHBREAKPOINT = 90.0,
+            DIRECTION = "GEN", DUID = "BW01", ENABLEMENTMIN = 10.0, LOWBREAKPOINT = 30.0, HIGHBREAKPOINT = 90.0,
             ENABLEMENTMAX = 100.0, MAXAVAIL = 10.0, ROCUP = missing, ROCDOWN = missing,
         )
         # Well-formed, including the degenerate vertical and triangular shapes.
@@ -72,7 +71,7 @@
     end
 
     @testset "fcas_service throws when a device has two services of one market" begin
-        sys = first(nem_network(db))
+        sys = first(nem_network(db; date_range = MOCK_DATE_RANGE))
         set_market_bids!(sys, db, date_range)
         asload1 = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
         @test fcas_service(asload1, BidType.RAISE6SEC) === get_component(FCASService, sys, "NSW1_RAISE6SEC")
@@ -89,7 +88,7 @@
         @test all(==(20.0), bids.ENABLEMENTMIN[.!asload])
         @test all(==(100.0), bids.ENABLEMENTMAX[.!asload])
         @test all(==(0.0), bids.ENABLEMENTMAX[asload])
-        @test "PRICEBANDARRAY" in names(bids) && "BANDAVAILARRAY" in names(bids)
+        @test all(in(names(bids)), string.([AustralianElectricityMarkets.PRICE_BAND_COLUMNS; AustralianElectricityMarkets.BAND_AVAIL_COLUMNS]))
 
         reg_bids = read_fcas_bids(db, date_range, BidType.RAISEREG)
         @test !isempty(reg_bids)
@@ -100,33 +99,28 @@
         @test isequal(select(subset(both, :BIDTYPE => ByRow(==(BidType.RAISEREG))), Not(:BIDTYPE)), reg_bids)
     end
 
-    @testset "FCAS period fields share the price and quantity rows" begin
-        R = AustralianElectricityMarkets.Readers
+    @testset "FCAS bids at a coarse resolution carry the trapezium of the last interval" begin
         markets = [BidType.RAISE6SEC, BidType.RAISEREG]
-        projected = R._massage_bids(
-            db, first(date_range), last(date_range); bid_types = markets,
-            keep_bid_type = true, period_columns = R._FCAS_TRAPEZIUM_COLUMNS,
-        )
-        expected = read_fcas_bids(db, date_range, markets)
-        transform!(projected, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
         keys = [:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION, :BIDTYPE]
-        @test isequal(sort(projected, keys), sort(expected, keys))
-        @test_throws ArgumentError R._massage_bids(
-            db, first(date_range), last(date_range); resolution = Minute(15),
-            period_columns = R._FCAS_TRAPEZIUM_COLUMNS,
-        )
-        for resolution in (nothing, Minute(5), Minute(15))
-            bands = R._massage_bids(db, first(date_range), last(date_range); bid_types = markets, keep_bid_type = true, resolution)
-            trapezium = R._read_period_offers(db, markets, first(date_range), last(date_range), nothing; columns = R._FCAS_TRAPEZIUM_COLUMNS)
-            legacy = innerjoin(bands, trapezium; on = keys)
-            transform!(legacy, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
+        native = read_fcas_bids(db, date_range, markets)
+        offers = read_offers(db, date_range; markets)
+        @test isequal(sort(select(native, keys, :MAXAVAIL, :ENABLEMENTMIN), keys), sort(select(offers, keys, :MAXAVAIL, :ENABLEMENTMIN), keys))
+        trapezium = [:ENABLEMENTMIN, :LOWBREAKPOINT, :HIGHBREAKPOINT, :ENABLEMENTMAX]
+        for resolution in (Minute(5), Minute(15))
             actual = read_fcas_bids(db, date_range, markets; resolution)
-            @test isequal(sort(actual, keys), sort(legacy, keys))
+            @test all(first(date_range) .<= actual.INTERVAL_DATETIME .< last(date_range))
+            bucketed = transform(native, :INTERVAL_DATETIME => ByRow(t -> ceil(t, resolution)) => :INTERVAL_DATETIME)
+            last_native = @chain bucketed begin
+                groupby(keys)
+                combine(trapezium .=> last .=> trapezium)
+                subset(:INTERVAL_DATETIME => ByRow(t -> first(date_range) <= t < last(date_range)))
+            end
+            @test isequal(sort(select(actual, keys, trapezium), keys), sort(last_native, keys))
         end
     end
 
     @testset "a non-scheduled load offering FCAS joins its region's services" begin
-        sys = first(nem_network(db))
+        sys = first(nem_network(db; date_range = MOCK_DATE_RANGE))
         (; added, excluded) = set_market_bids!(sys, db, date_range)
         asload1 = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
         @test "NSW1_RAISE6SEC" in added
@@ -165,7 +159,7 @@
         raise1sec = subset(dispatch, :BIDTYPE => ByRow(==(BidType.RAISE1SEC)))
         @test !isempty(raise1sec)
         @test all(==(5.0), raise1sec.ACTUALAVAILABILITY)
-        sys = first(nem_network(db))
+        sys = first(nem_network(db; date_range = MOCK_DATE_RANGE))
         set_market_bids!(sys, db, date_range)
         @test any(
             g -> has_time_series(g, SingleTimeSeries, AustralianElectricityMarkets.bid_series_name(BidType.RAISE1SEC, :trapezium, AustralianElectricityMarkets.BidDirection.GEN)),

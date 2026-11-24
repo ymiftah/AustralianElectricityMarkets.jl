@@ -231,7 +231,7 @@ often enough, to remunerate capacity that runs for a handful of hours a year.
 Each NEM region becomes an `Area` component when building a system:
 
 ````julia
-sys = nem_system(db, RegionalNetworkConfiguration())
+sys = nem_system(db, RegionalNetworkConfiguration(); date_range)
 get_component(Area, sys, "TAS1")
 ````
 

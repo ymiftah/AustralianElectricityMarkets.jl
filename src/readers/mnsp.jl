@@ -21,11 +21,9 @@ offers = read_mnsp_offers(db, DateTime(2026, 6, 15, 12):Minute(5):DateTime(2026,
 ```
 """
 function read_mnsp_offers(db, date_range)
-    band_cols = join(("o.PRICEBAND$i" for i in 1:10), ", ") * ", " *
-        join(("p.BANDAVAIL$i" for i in 1:10), ", ")
     # Interval t ending at `t` belongs to the trading day starting 04:00 of CAST(t - 5 min - 4 h); its
     # period is the number of five-minute steps since that 04:00.
-    df = _query(
+    return _query(
         db,
         """
         WITH trk AS (
@@ -36,7 +34,10 @@ function read_mnsp_offers(db, date_range)
             WHERE RUNNO = 1 AND SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ?
         )
         SELECT trk.INTERVAL_DATETIME, trk.LINKID, trk.PARTICIPANTID, p.MAXAVAIL, p.FIXEDLOAD, p.RAMPUPRATE,
-               $band_cols
+               o.PRICEBAND1, o.PRICEBAND2, o.PRICEBAND3, o.PRICEBAND4, o.PRICEBAND5,
+               o.PRICEBAND6, o.PRICEBAND7, o.PRICEBAND8, o.PRICEBAND9, o.PRICEBAND10,
+               p.BANDAVAIL1, p.BANDAVAIL2, p.BANDAVAIL3, p.BANDAVAIL4, p.BANDAVAIL5,
+               p.BANDAVAIL6, p.BANDAVAIL7, p.BANDAVAIL8, p.BANDAVAIL9, p.BANDAVAIL10
         FROM trk
         INNER JOIN $(read_hive(db, :MNSP_DAYOFFER)) AS o
             ON o.SETTLEMENTDATE = trk.OFFERSETTLEMENTDATE AND o.LINKID = trk.LINKID
@@ -50,7 +51,6 @@ function read_mnsp_offers(db, date_range)
         """,
         [first(date_range), last(date_range)],
     )
-    return df
 end
 
 

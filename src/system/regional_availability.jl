@@ -1,7 +1,3 @@
-# TODO again here, some operations would be better read as DataFrames.jl operations, with final conversion to
-# our types and insertion to sys
-
-
 """
     set_regional_availability!(sys, db, date_range; resolution::Dates.Period = Minute(30), intervention::Integer = 0)
 
@@ -36,7 +32,7 @@ series is per-unit of each device's own `max_active_power`. A repeat call replac
 # Example
 ```julia
 db = aem_connect()
-sys = nem_system(db, RegionalNetworkConfiguration())
+sys = nem_system(db, RegionalNetworkConfiguration(); date_range = DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 2))
 set_regional_availability!(sys, db, Date(2025, 1, 2):Date(2025, 1, 3))
 ```
 """
@@ -52,93 +48,68 @@ function set_regional_availability!(
     bounds = (start, DateTime(last(date_range)))
     uigf = read_uigf(db, bounds; resolution, intervention)
     limits = read_dispatch_limits(db, bounds; intervention, resolution)
-    regional = Readers._read_regional_renewable_uigf(db, bounds; resolution, intervention)
-    # TODO those are just group bys
-    uigf_at = Dict((r.DUID, r.SETTLEMENTDATE) => r.UIGF for r in eachrow(uigf))
-    avail_at = Dict(
-        (r.DUID, r.SETTLEMENTDATE) => r.AVAILABILITY for r in eachrow(limits) if !ismissing(r.AVAILABILITY)
+    regional = select(
+        read_demand(db, bounds; resolution, intervention),
+        :SETTLEMENTDATE, :REGIONID => :region, :SS_SOLAR_UIGF => :solar, :SS_WIND_UIGF => :wind,
     )
-    regional_at = Dict((r.REGIONID, r.SETTLEMENTDATE) => r for r in eachrow(regional))
 
-    renewables = collect(get_available_components(RenewableGen, sys))
-    hydros = collect(get_available_components(HydroGen, sys))
-    uigf_duids = Set(uigf.DUID)
+    fuels = Dict(PrimeMovers.PVe => "solar", PrimeMovers.WT => "wind", PrimeMovers.WS => "wind")
+    devices = DataFrame(
+        [
+            (;
+                device,
+                name = get_name(device),
+                available = get_available(device),
+                renewable = device isa RenewableGen,
+                fuel = device isa RenewableGen ? get(fuels, get_prime_mover_type(device), missing) : missing,
+                region = device isa RenewableGen ? get_name(get_area(get_bus(device))) : missing,
+                capacity = with_units_base(() -> get_max_active_power(device), sys, "NATURAL_UNITS"),
+            ) for device in Iterators.flatten((get_components(RenewableGen, sys), get_components(HydroGen, sys)))
+        ]
+    )
     # Summed NATURAL capacity of the semi-scheduled units per region and fuel, over all units in sys.
-    denominators = Dict{Tuple{String, Symbol}, Float64}()
-    for device in get_components(RenewableGen, sys)
-        get_name(device) in uigf_duids || continue
-        fuel = _renewable_fuel(device)
-        isnothing(fuel) && continue
-        key = (get_name(get_area(get_bus(device))), fuel)
-        capacity = with_units_base(() -> get_max_active_power(device), sys, "NATURAL_UNITS")
-        denominators[key] = get(denominators, key, 0.0) + capacity
+    denominators = @chain devices begin
+        subset(:name => ByRow(in(Set(uigf.DUID))), :fuel => ByRow(!ismissing))
+        groupby([:region, :fuel])
+        combine(:capacity => sum => :denominator)
     end
+    regional_uigf = stack(regional, [:solar, :wind]; variable_name = :fuel, value_name = :regional_uigf)
 
-    for device in vcat(renewables, hydros)
-        capacity = with_units_base(() -> get_max_active_power(device), sys, "NATURAL_UNITS")
-        values = if capacity > 0
-            [
-                _availability_at(device, t, capacity, uigf_at, avail_at, regional_at, denominators)
-                    for t in stamps
-            ]
-        else
-            zeros(length(stamps))
-        end
+    series = @chain devices begin
+        subset(:available)
+        crossjoin(DataFrame(SETTLEMENTDATE = stamps))
+        leftjoin(select(uigf, :DUID => :name, :SETTLEMENTDATE, :UIGF), on = [:name, :SETTLEMENTDATE])
+        leftjoin(select(limits, :DUID => :name, :SETTLEMENTDATE, :AVAILABILITY), on = [:name, :SETTLEMENTDATE])
+        leftjoin(regional_uigf, on = [:region, :fuel, :SETTLEMENTDATE], matchmissing = :notequal)
+        leftjoin(denominators, on = [:region, :fuel], matchmissing = :notequal)
+        sort([:name, :SETTLEMENTDATE])
+        transform(
+            [:renewable, :capacity, :UIGF, :AVAILABILITY, :regional_uigf, :denominator] => ByRow(
+                (renewable, capacity, uigf, availability, regional, denominator) -> begin
+                    capacity > 0 || return 0.0
+                    # A region without a positive denominator has no capacity to scale by: full availability.
+                    regional_factor = ismissing(regional) ? missing :
+                        coalesce(denominator, 0.0) > 0 ? regional / denominator : 1.0
+                    per_unit = coalesce(
+                        renewable ? uigf / capacity : missing,
+                        availability / capacity,
+                        renewable ? regional_factor : missing,
+                        1.0,
+                    )
+                    return clamp(per_unit, 0.0, 1.0)
+                end
+            ) => :per_unit,
+        )
+    end
+    for group in groupby(series, :name)
+        device = first(group.device)
         replace_single_series!(
             sys, device,
-            single_series(NEM_SERIES.max_active_power, stamps, values; scaling_factor_multiplier = get_max_active_power),
+            single_series(
+                NEM_SERIES.max_active_power, group.SETTLEMENTDATE, group.per_unit;
+                scaling_factor_multiplier = get_max_active_power,
+            ),
         )
     end
     return
-end
-
-
-"""
-    _renewable_fuel(device) -> Union{Symbol, Nothing}
-
-The regional fuel group of a `RenewableGen`: `:solar` for `PVe`, `:wind` for `WT` and `WS`, and
-`nothing` for any other prime mover.
-"""
-function _renewable_fuel(device)
-    pm = get_prime_mover_type(device)
-    pm == PrimeMovers.PVe && return :solar
-    pm in (PrimeMovers.WT, PrimeMovers.WS) && return :wind
-    return nothing
-end
-
-
-"""
-    _availability_at(device, t, capacity, uigf_at, avail_at, regional_at, denominators) -> Float64
-
-The per-unit availability of `device` at stamp `t`, clamped to [0, 1], by the priority of
-[`set_regional_availability!`](@ref), where `capacity` is the device's `max_active_power` in MW.
-"""
-function _availability_at(device, t, capacity, uigf_at, avail_at, regional_at, denominators)
-    duid = get_name(device)
-    if device isa RenewableGen && haskey(uigf_at, (duid, t))
-        return clamp(uigf_at[(duid, t)] / capacity, 0.0, 1.0)
-    elseif haskey(avail_at, (duid, t))
-        return clamp(avail_at[(duid, t)] / capacity, 0.0, 1.0)
-    end
-    factor = device isa RenewableGen ? _regional_capacity_factor(device, t, regional_at, denominators) : nothing
-    return something(factor, 1.0)
-end
-
-
-"""
-    _regional_capacity_factor(device, t, regional_at, denominators) -> Union{Float64, Nothing}
-
-The regional capacity factor of a solar or wind `device` at stamp `t`, clamped to [0, 1], or `nothing`
-when the device is neither, or its region has no regional UIGF at `t`.
-"""
-function _regional_capacity_factor(device, t, regional_at, denominators)
-    fuel = _renewable_fuel(device)
-    isnothing(fuel) && return nothing
-    column = fuel == :solar ? :SS_SOLAR_UIGF : :SS_WIND_UIGF
-    region = get_name(get_area(get_bus(device)))
-    row = get(regional_at, (region, t), nothing)
-    (isnothing(row) || ismissing(row[column])) && return nothing
-    denominator = get(denominators, (region, fuel), 0.0)
-    denominator > 0 || return 1.0
-    return clamp(row[column] / denominator, 0.0, 1.0)
 end

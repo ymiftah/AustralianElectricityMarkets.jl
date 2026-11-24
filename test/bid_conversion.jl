@@ -5,32 +5,30 @@
     using Dates
 
     AEM = AustralianElectricityMarkets
-    function original_curve(row; keep_empty_bands)
-        prices, widths = copy(row.PRICEBANDARRAY), copy(row.BANDAVAILARRAY)
+    function original_curve(row)
+        prices, widths = copy(row.prices), copy(row.widths)
         if row.DIRECTION == "LOAD"
             reverse!(prices)
             reverse!(widths)
         end
-        kept = keep_empty_bands ? trues(length(widths)) : widths .> 0
-        return PiecewiseStepData([zero(eltype(prices)); cumsum(widths[kept])], prices[kept])
+        return PiecewiseStepData([zero(eltype(prices)); cumsum(widths)], prices)
     end
 
-    for direction in ("GEN", "LOAD", "BIDIRECTIONAL"), keep in (false, true)
-        row = (DIRECTION = direction, PRICEBANDARRAY = [-1000.0, 10.005, 20.015, 20300.0], BANDAVAILARRAY = [0.0, 1.25, 0.0, 8.75])
+    for direction in ("GEN", "LOAD", "BIDIRECTIONAL")
+        row = (DIRECTION = direction, prices = [-1000.0, 10.005, 20.015, 20300.0], widths = [0.0, 1.25, 0.0, 8.75])
         before = deepcopy(row)
-        expected = original_curve(row; keep_empty_bands = keep)
-        actual = AEM._extract_power_bids(row; keep_empty_bands = keep)
+        expected = original_curve(row)
+        actual = offer_curve(row.prices, row.widths, direction)
         @test isequal(get_x_coords(actual), get_x_coords(expected))
         @test isequal(get_y_coords(actual), get_y_coords(expected))
         @test isequal(row, before)
         get_y_coords(actual)[1] = 999.0
-        @test row.PRICEBANDARRAY == before.PRICEBANDARRAY
+        @test row.prices == before.prices
     end
 
     for direction in ("GEN", "LOAD", "BIDIRECTIONAL")
         row = (
             DUID = "EXAMPLE", DIRECTION = direction, INTERVAL_DATETIME = DateTime(2026, 1, 22, 4, 5),
-            PRICEBANDARRAY = [-10.0, 20.0], BANDAVAILARRAY = [0.0, 5.0],
             ENABLEMENTMIN = 0.0, LOWBREAKPOINT = 10.0, HIGHBREAKPOINT = 20.0,
             ENABLEMENTMAX = 30.0, MAXAVAIL = 5.0, ROCUP = missing, ROCDOWN = 2.0,
         )
@@ -41,15 +39,12 @@
         @test occursin("EXAMPLE ($direction) at 2026-01-22T04:05:00", error.msg) && occursin("LowBreakpoint = 40.0", error.msg)
     end
     for direction in ("GEN", "LOAD")
-        row = (DIRECTION = direction, PRICEBANDARRAY = zeros(2), BANDAVAILARRAY = [0.0, 0.0])
-        expected = original_curve(row; keep_empty_bands = true)
-        actual = AEM._extract_power_bids(row; keep_empty_bands = true)
+        row = (DIRECTION = direction, prices = zeros(2), widths = [0.0, 0.0])
+        expected = original_curve(row)
+        actual = offer_curve(row.prices, row.widths, direction)
         @test get_x_coords(actual) == get_x_coords(expected)
         @test get_y_coords(actual) == get_y_coords(expected)
-        mismatched = (DIRECTION = direction, PRICEBANDARRAY = [10.0], BANDAVAILARRAY = [0.0, 5.0])
-        for keep in (false, true)
-            @test_throws BoundsError AEM._extract_power_bids(mismatched; keep_empty_bands = keep)
-        end
+        @test_throws BoundsError offer_curve([10.0], [0.0, 5.0], direction)
     end
 end
 

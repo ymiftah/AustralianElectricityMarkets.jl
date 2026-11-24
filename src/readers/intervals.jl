@@ -30,17 +30,44 @@ function read_published_interval(db, settlement_date::DateTime; intervention::In
 end
 
 function read_published_interval(db, steps::StepRange{DateTime}; intervention::Integer = 0)
-    interval = first(steps):Minute(5):(last(steps) + Minute(5))
-    published(table, key, columns) = _read_dispatch_table(
-        [_cast_double(c) for c in columns], db, table, key, interval; intervention,
+    _check_intervention(intervention)
+    interval = (first(steps), last(steps) + Minute(5))
+    dispatch = _query(
+        db,
+        """
+        WITH run AS (
+            SELECT * FROM $(read_hive(db, :DISPATCHLOAD, interval))
+            WHERE SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ?
+            QUALIFY COALESCE(INTERVENTION, 0) = CASE WHEN ? = 0 THEN 0
+                ELSE max(COALESCE(INTERVENTION, 0)) OVER (PARTITION BY SETTLEMENTDATE) END
+        )
+        SELECT SETTLEMENTDATE, DUID, TRY_CAST(TOTALCLEARED AS DOUBLE) AS TOTALCLEARED
+        FROM run
+        QUALIFY row_number() OVER (PARTITION BY SETTLEMENTDATE, DUID ORDER BY archive_month DESC) = 1
+        ORDER BY SETTLEMENTDATE, DUID
+        """,
+        [interval..., intervention],
     )
-    return (;
-        dispatch = published(:DISPATCHLOAD, "DUID", ("TOTALCLEARED",)),
-        interconnectors = published(:DISPATCHINTERCONNECTORRES, "INTERCONNECTORID", ("MWFLOW", "MWLOSSES")),
-        # Prices stay on the pricing run (run 0) whatever the intervention run.
-        prices = select(read_prices(db, interval), :SETTLEMENTDATE, :REGIONID, :RRP, :ROP),
-        fcas_prices = select(
-            read_fcas_prices(db, interval), :SETTLEMENTDATE, :REGIONID, :BIDTYPE, :RRP, :ROP,
-        ),
+    interconnectors = _query(
+        db,
+        """
+        WITH run AS (
+            SELECT * FROM $(read_hive(db, :DISPATCHINTERCONNECTORRES, interval))
+            WHERE SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ?
+            QUALIFY COALESCE(INTERVENTION, 0) = CASE WHEN ? = 0 THEN 0
+                ELSE max(COALESCE(INTERVENTION, 0)) OVER (PARTITION BY SETTLEMENTDATE) END
+        )
+        SELECT SETTLEMENTDATE, INTERCONNECTORID,
+               TRY_CAST(MWFLOW AS DOUBLE) AS MWFLOW,
+               TRY_CAST(MWLOSSES AS DOUBLE) AS MWLOSSES
+        FROM run
+        QUALIFY row_number() OVER (PARTITION BY SETTLEMENTDATE, INTERCONNECTORID ORDER BY archive_month DESC) = 1
+        ORDER BY SETTLEMENTDATE, INTERCONNECTORID
+        """,
+        [interval..., intervention],
     )
+    # Prices stay on the pricing run (run 0) whatever the intervention run.
+    prices = select(read_prices(db, interval), :SETTLEMENTDATE, :REGIONID, :RRP, :ROP)
+    fcas_prices = select(read_fcas_prices(db, interval), :SETTLEMENTDATE, :REGIONID, :BIDTYPE, :RRP, :ROP)
+    return (; dispatch, interconnectors, prices, fcas_prices)
 end

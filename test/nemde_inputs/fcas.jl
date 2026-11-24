@@ -12,6 +12,21 @@ end
 
 _fw_written(device, name::String) = get_time_series_values(SingleTimeSeries, device, name; ignore_scaling_factors = true)
 
+# The observed state of `device` at each of `stamps`, its starting output per-unit of `base`, as the writer reads it.
+function _fw_states(device, stamps, base)
+    AEM = AustralianElectricityMarkets
+    return [AEM.NEMUnitState(s.initial_mw / base, s.dispatch_mode, s.time_in_mode) for s in AEM.observed_unit_states(device, stamps)]
+end
+
+# The scaled trapeziums and total band widths of `device`'s offer for `service` on the side of `decremental` over `window`.
+function _fw_side(window, device, service::BidType, decremental::Bool)
+    AEM = AustralianElectricityMarkets
+    market = AEM._fcas_market(window, device, service, fcas_bid_direction(device, service))
+    side = decremental ? market.load : market.gen
+    traps = [AEM._fcas_scaled_trapezium(market, side, t) for t in eachindex(window.stamps)]
+    return (; trapeziums = traps, total_width = [sum(AEM._fcas_band_widths(c, window.base)) for c in side.curves])
+end
+
 # The UIGF of `device` over `stamps` in MW, or `nothing` for a unit without one.
 function _fw_uigf(device, stamps)
     uigf = get_telemetry(device).uigf
@@ -80,18 +95,16 @@ end
         has_time_series(device, SingleTimeSeries, name) || continue
         stamps = get_time_series_timestamps(SingleTimeSeries, device, name)
         window = AEM._fcas_window(device, stamps, Minute(5), AEM._fcas_system_base(device))
-        caps = AEM._fcas_capability_values(
-            AEM._fcas_agc_capability(window, device, AEM._fcas_ramp_rate_service(device, service)), length(stamps),
-        )
-        direction = fcas_bid_direction(device, service)
-        prep = AEM._fcas_prepare(window, device, service, direction, inactive, AEM._fcas_energy_limits(window, device))
+        market = AEM._fcas_market(window, device, service, fcas_bid_direction(device, service))
+        caps = replace(market.capability, NaN => 0.0)
+        states = _fw_states(device, stamps, window.base)
         upper = service == fcas_upper_regulation_service(device)
         sentinel = upper ? inactive : -inactive
         written = [entry[1] for entry in _fw_written(device, name)]
         for i in eachindex(stamps)
-            state = window.states[i]
+            state = states[i]
             # The evaluator's own enablement is the non-state half of the ramping rule.
-            isapprox(last(AEM._fcas_values_at(prep, device, service, i))[1], written[i]; rtol = 1.0e-12) ||
+            isapprox(last(AEM._fcas_values_at(market, i, state))[1], written[i]; rtol = 1.0e-12) ||
                 push!(bad, (get_name(device), name, i, :evaluator))
             if AEM.fcas_ramping_active(caps[i], state) && !AEM.fast_start_ramp_exempt(state, window.fast_start[i]) && !(written[i] ≈ sentinel)
                 isapprox(AEM.fcas_ramping_limit(caps[i], upper, state), written[i]; rtol = 1.0e-12) ||
@@ -113,12 +126,11 @@ end
     sys = _FW_SYS
     # The §5 pre-conditions of one side other than the stranded one, per interval of `window`.
     function preconditions(window, device, service, decremental)
-        side = AEM._fcas_side(window, device, service, decremental)
-        energy = AEM._fcas_energy_limits(window, device)
+        side = _fw_side(window, device, service, decremental)
         regulation = service in FCAS_REGULATION_MARKETS
         return map(eachindex(side.trapeziums)) do t
             AEM.fcas_preconditions_ok(
-                side.trapeziums[t], side.total_width[t], energy.gen[t], energy.load[t], window.agc_status[t],
+                side.trapeziums[t], side.total_width[t], window.energy_gen[t], window.energy_load[t], window.agc_status[t],
                 regulation, decremental, device isa PowerSystems.Storage,
             )
         end
@@ -136,24 +148,25 @@ end
             stamps = get_time_series_timestamps(SingleTimeSeries, device, PowerSystems.IS.get_name(bid.trapezium))
             has_time_series(device, SingleTimeSeries, fcas_effective_series_name(service, decremental)) || continue
             window = AEM._fcas_window(device, stamps, Minute(5), AEM._fcas_system_base(device))
+            states = _fw_states(device, stamps, window.base)
             active(dec) = Bool[entry[1] > 0.0 for entry in _fw_written(device, fcas_effective_series_name(service, dec))]
             if direction == FCASBidDirection.BOTH
-                gen_traps = AEM._fcas_side(window, device, service, false).trapeziums
-                load_traps = AEM._fcas_side(window, device, service, true).trapeziums
+                gen_traps = _fw_side(window, device, service, false).trapeziums
+                load_traps = _fw_side(window, device, service, true).trapeziums
                 gen_ok = preconditions(window, device, service, false)
                 load_ok = preconditions(window, device, service, true)
                 derived = [
-                    AEM.fcas_both_sides_stranded_ok(gen_traps[i], load_traps[i], gen_ok[i], load_ok[i], window.states[i])
+                    AEM.fcas_both_sides_stranded_ok(gen_traps[i], load_traps[i], gen_ok[i], load_ok[i], states[i])
                         for i in eachindex(stamps)
                 ]
                 [flag[1] for flag in derived] == active(false) && [flag[2] for flag in derived] == active(true) ||
                     push!(mismatched, "$(get_name(device)) $service")
                 both_sides += 1
             else
-                traps = AEM._fcas_side(window, device, service, decremental).trapeziums
+                traps = _fw_side(window, device, service, decremental).trapeziums
                 ok = preconditions(window, device, service, decremental)
                 derived = [
-                    ok[i] && AEM.fcas_state_stranded_ok(traps[i], window.states[i], device isa PowerSystems.Storage)
+                    ok[i] && AEM.fcas_state_stranded_ok(traps[i], states[i], device isa PowerSystems.Storage)
                         for i in eachindex(stamps)
                 ]
                 derived == active(decremental) || push!(mismatched, "$(get_name(device)) $service")
@@ -174,12 +187,12 @@ end
             if d isa PowerSystems.ThermalStandard && fcas_bid_direction(d, BidType.RAISE6SEC) == FCASBidDirection.INCREMENTAL
     )
     window = AEM._fcas_window(generator, [DateTime(2025, 1, 1, 0, 5)], Minute(5), get_base_power(sys))
-    err = (@test_throws ArgumentError AEM._fcas_scaled_trapeziums(window, generator, BidType.RAISE6SEC, true)).value
+    err = (@test_throws ArgumentError AEM._fcas_bid_series(window, generator, BidType.RAISE6SEC, true)).value
     @test occursin("has no FCAS bid for RAISE6SEC on LOAD", err.msg)
     @test occursin(get_name(generator), err.msg)
-    @test_throws ArgumentError AEM._fcas_series_key(generator, 5.0, :trapezium)
+    @test_throws ArgumentError AEM._values_on_grid(generator, 5.0, [DateTime(2025, 1, 1, 0, 5)]; field = :trapezium)
     # A device with NEM unit data but no telemetry cannot supply its window inputs.
-    bare = first(get_components(PowerSystems.ThermalStandard, first(nem_network(aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))))))
+    bare = first(get_components(PowerSystems.ThermalStandard, first(nem_network(aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file")); date_range = MOCK_DATE_RANGE))))
     @test_throws ArgumentError AEM._fcas_window(bare, [DateTime(2025, 1, 1, 0, 5)], Minute(5), 100.0)
 end
 

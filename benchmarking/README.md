@@ -10,6 +10,18 @@ allows a like-for-like comparison of the energy price error against NEMDE.
 The timestamps are interval-ending `SETTLEMENTDATE` values in AEST (UTC+10), sorted, with the
 header `interval`. An interval ending 00:05 through 04:00 belongs to the previous trading day.
 
+## One-command run
+
+`scripts/nempy_benchmark.jl` does everything below (optional cache population, the 1000 independent solves, the
+statistics report) and writes analysis-ready files to `<output>/analysis/`: `price_errors.csv`,
+`interval_runtimes.csv`, `fcas_errors.csv`, `dispatch_errors.csv`, `interconnector_errors.csv`,
+`nempy_comparison.md` and `manifest.toml`. The per-day folders keep all raw files.
+
+```sh
+julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/nempy_benchmark.jl \
+    --populate true --hours 24 --output "$HOME/aem_validation/nempy-2024h2"
+```
+
 ## Populate the cache
 
 The run reads the local cache and downloads nothing, so populate July to December 2024 first.

@@ -28,7 +28,7 @@ _key_values(ic, key; start = DateTime(2025, 1, 1, 11, 55), n = 2) = PowerSystems
     using Dates
 
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_MNSP_HIVE_DIR, filesystem = "file"))
-    sys = nem_system(db, RegionalNetworkConfiguration())
+    sys = nem_system(db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
     range = DateTime(2025, 1, 1, 11, 55):Minute(5):DateTime(2025, 1, 1, 12, 5)
 
     @testset "offers attach to the link's interconnector with direction and TLFs" begin
@@ -58,7 +58,7 @@ _key_values(ic, key; start = DateTime(2025, 1, 1, 11, 55), n = 2) = PowerSystems
     end
 
     @testset "an MNSP over an uncached range fails instead of changing its formulation" begin
-        sys2 = nem_system(db, RegionalNetworkConfiguration())
+        sys2 = nem_system(db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
         later = DateTime(2030, 1, 1):Minute(5):DateTime(2030, 1, 1, 0, 10)
         @test_throws r"DISPATCH_MNSPBIDTRK has no cached partition" set_mnsp_offers!(sys2, db, later)
         @test !has_time_series(get_component(AreaInterchange, sys2, "IC2"))
@@ -77,7 +77,7 @@ end
             cp(AEM_TEST_MNSP_HIVE_DIR, hive)
             rm(joinpath(hive, string(table)); recursive = true)
             db = aem_connect(HiveConfiguration(hive_location = hive, filesystem = "file"))
-            sys = nem_system(good_db, RegionalNetworkConfiguration())
+            sys = nem_system(good_db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
             @test_throws r"not cached" set_mnsp_offers!(sys, db, range)
             @test !has_time_series(get_component(AreaInterchange, sys, "IC2"))
         end
@@ -109,14 +109,14 @@ end
     for (table, query, message) in cases
         @testset "$query" begin
             db = damaged_cache(AEM_TEST_MNSP_HIVE_DIR, table, query)
-            sys = nem_system(good_db, RegionalNetworkConfiguration())
+            sys = nem_system(good_db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
             @test_throws message set_mnsp_offers!(sys, db, range)
             @test !has_time_series(get_component(AreaInterchange, sys, "IC2"))
         end
     end
 
     @testset "a failed refresh preserves existing offers" begin
-        sys = nem_system(good_db, RegionalNetworkConfiguration())
+        sys = nem_system(good_db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
         set_mnsp_offers!(sys, good_db, range)
         db = damaged_cache(AEM_TEST_MNSP_HIVE_DIR, :DISPATCH_MNSPBIDTRK, "DELETE FROM input WHERE LINKID = 'BLNKVIC'")
         @test_throws r"requires exactly one offer for every interval" set_mnsp_offers!(sys, db, range)
@@ -126,18 +126,18 @@ end
 
     @testset "regulated standing data needs no MNSP bids or tables" begin
         db = damaged_cache(AEM_TEST_MNSP_HIVE_DIR, :INTERCONNECTORCONSTRAINT, "UPDATE input SET ICTYPE = 'REGULATED'")
-        sys = nem_system(db, RegionalNetworkConfiguration())
+        sys = nem_system(db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
         @test isempty(set_mnsp_offers!(sys, db, range))
         @test !has_time_series(get_component(AreaInterchange, sys, "IC2"))
         rm(joinpath(db.config.hive_location, "MNSP_DAYOFFER"); recursive = true)
-        @test isempty(set_mnsp_offers!(nem_system(good_db, RegionalNetworkConfiguration()), db, range))
+        @test isempty(set_mnsp_offers!(nem_system(good_db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE), db, range))
     end
 
 end
 
 @testset "MNSP fixed load zero is an active instruction" begin
     db = damaged_cache(AEM_TEST_MNSP_HIVE_DIR, :MNSP_BIDOFFERPERIOD, "UPDATE input SET FIXEDLOAD = 0")
-    sys = nem_system(db, RegionalNetworkConfiguration())
+    sys = nem_system(db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
     window = DateTime(2025, 1, 1, 11, 55):Minute(5):DateTime(2025, 1, 1, 12, 5)
     set_mnsp_offers!(sys, db, window)
     ic = get_component(AreaInterchange, sys, "IC2")
@@ -146,7 +146,7 @@ end
 
 @testset "MNSP starting flow follows the selected dispatch run" begin
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_MNSP_HIVE_DIR, filesystem = "file"))
-    sys = nem_system(db, RegionalNetworkConfiguration())
+    sys = nem_system(db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
     window = DateTime(2025, 1, 1, 11, 55):Minute(5):DateTime(2025, 1, 1, 12, 5)
     set_mnsp_offers!(sys, db, window; intervention = 1)
     ic = get_component(AreaInterchange, sys, "IC2")
@@ -156,7 +156,7 @@ end
 
 @testset "MNSP fixed loading is NaN at NULL intervals" begin
     db = damaged_cache(AEM_TEST_MNSP_HIVE_DIR, :MNSP_BIDOFFERPERIOD, "UPDATE input SET FIXEDLOAD = 4 WHERE PERIODID = 95")
-    sys = nem_system(db, RegionalNetworkConfiguration())
+    sys = nem_system(db, RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE)
     window = DateTime(2025, 1, 1, 11, 55):Minute(5):DateTime(2025, 1, 1, 12, 5)
     set_mnsp_offers!(sys, db, window)
     forward = _mnsp_bid(get_component(AreaInterchange, sys, "IC2"), "forward")

@@ -542,7 +542,7 @@ function _attach_mnsp_offers!(
             AustralianElectricityMarkets.NEMMNSPBid(;
                 direction,
                 offer_curves = _add_key!(sys, ic, grid, getproperty(names, Symbol(dir, "_offer")), offers),
-                band_prices = AustralianElectricityMarkets._day_band_prices(offers, fill(true, length(offers)), "IC1 $dir"),
+                band_prices = AustralianElectricityMarkets._day_band_prices(offers, "IC1 $dir"),
                 max_avail = _add_key!(sys, ic, grid, getproperty(names, Symbol(dir, "_max_avail")), fill(Float64(max_avail), length(grid))),
                 ramp_up = _add_key!(sys, ic, grid, getproperty(names, Symbol(dir, "_ramp_rate")), fill(1000.0, length(grid))),
                 fixed_load = _add_key!(sys, ic, grid, getproperty(names, Symbol(dir, "_fixed_load")), fill(NaN, length(grid))),

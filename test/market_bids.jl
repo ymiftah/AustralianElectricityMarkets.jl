@@ -25,7 +25,7 @@
     _matches(a, b) = length(a) == length(b) && all(isapprox.(a, b))
     # The offer curve of a row, with the bands of a LOAD row in reverse order (as AEMO lists them).
     function row_curve(row, direction::AEM.BidDirection)
-        prices, widths = Float64.(row.PRICEBANDARRAY), Float64.(row.BANDAVAILARRAY)
+        prices, widths = Float64.(band_vectors(row).prices), Float64.(band_vectors(row).widths)
         if direction == AEM.BidDirection.LOAD
             prices, widths = reverse(prices), reverse(widths)
         end
@@ -39,7 +39,7 @@
     end
 
     # One bid system shared by the read-only testsets; ASLOAD1 starts unavailable before the bids.
-    bid_sys, _ = nem_network(db; as_of = first(interval), through = last(interval) - Minute(5))
+    bid_sys, _ = nem_network(db; date_range = interval)
     @test !get_available(get_component(InterruptiblePowerLoad, bid_sys, "ASLOAD1"))
     set_market_bids!(bid_sys, db, interval)
 
@@ -124,7 +124,7 @@
             AEM_TEST_HIVE_DIR, :BIDPEROFFER_D,
             "DELETE FROM input WHERE DUID = 'BW02' AND DIRECTION = 'GEN' AND BIDTYPE IN ('ENERGY', 'RAISE6SEC') AND INTERVAL_DATETIME = TIMESTAMP '2025-01-01 00:10:00'",
         )
-        sys, _ = nem_network(gap_db; as_of = first(interval), through = last(interval) - Minute(5))
+        sys, _ = nem_network(gap_db; date_range = interval)
         @test_throws r"BW02 GEN has no energy offer at 2025-01-01T00:10" set_market_bids!(sys, gap_db, interval)
     end
 
@@ -142,7 +142,7 @@
             AEM_TEST_HIVE_DIR, :BIDPEROFFER_D,
             "UPDATE input SET FIXEDLOAD = NULL WHERE DUID = 'BW02' AND DIRECTION = 'GEN' AND BIDTYPE = 'ENERGY' AND INTERVAL_DATETIME = TIMESTAMP '2025-01-01 00:10:00'",
         )
-        sys, _ = nem_network(null_db; as_of = first(interval), through = last(interval) - Minute(5))
+        sys, _ = nem_network(null_db; date_range = interval)
         set_market_bids!(sys, null_db, interval)
         bw02 = get_component(Device, sys, "BW02")
         name = AEM.bid_series_name(BidType.ENERGY, :fixed_load, AEM.BidDirection.GEN)
@@ -150,7 +150,7 @@
     end
 
     @testset "fast-start profile is stored as a NTuple and read back as a FastStartProfile" begin
-        sys, _ = nem_network(db; as_of = first(interval), through = last(interval) - Minute(5), time_series_in_memory = false)
+        sys, _ = nem_network(db; date_range = interval, time_series_in_memory = false)
         set_market_bids!(sys, db, interval)
         bw04 = get_component(Device, sys, "BW04")
         bid = energy_bid(bw04, AEM.BidDirection.GEN)
@@ -160,7 +160,7 @@
     end
 
     @testset "markets restrict the bids, series and services read" begin
-        sys, _ = nem_network(db; as_of = first(interval), through = last(interval) - Minute(5))
+        sys, _ = nem_network(db; date_range = interval)
         res = set_market_bids!(sys, db, interval; markets = (BidType.ENERGY, BidType.RAISE6SEC))
         lower = AEM.bid_series_name(BidType.LOWER6SEC, :offer_curves, AEM.BidDirection.GEN)
         @test !any(d -> has_time_series(d, SingleTimeSeries, lower), get_components(Device, sys))
@@ -179,13 +179,13 @@
     end
 
     @testset "a regional system gets MarketBidCost curves referred by the loss factor and capped at MAXAVAIL" begin
-        sys = nem_system(db, RegionalNetworkConfiguration(); as_of = first(interval))
+        sys = nem_system(db, RegionalNetworkConfiguration(); date_range = mock_range_at(first(interval)))
         @test !AEM._is_nemde_system(sys)
         res = set_market_bids!(sys, db, interval)
         @test isempty(res.added) && isempty(res.excluded)
         @test isempty(get_components(FCASService, sys))
         offers = read_offers(db, interval)
-        factors = Dict(r.DUID => r for r in eachrow(read_loss_factors(db; as_of = first(interval), through = last(interval) - Minute(5))))
+        factors = Dict(r.DUID => r for r in eachrow(read_loss_factors(db, interval)))
         checked = 0
         mismatches = String[]
         for device in (d for T in (Generator, ControllableLoad, Storage) for d in get_components(T, sys))

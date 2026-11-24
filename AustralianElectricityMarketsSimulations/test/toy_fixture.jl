@@ -376,7 +376,7 @@ function add_toy_interchange!(sys, stamps, ic)
             scaling_factor_multiplier = PSY.get_max_active_power,
         ),
     )
-    # Each area's loss demand is its load, as `_set_demand!` attaches it.
+    # Each area's loss demand is its load, as `set_demand!` attaches it.
     for name in ("bus3", "bus4")
         demand = PSY.get_time_series(PSY.SingleTimeSeries, PSY.get_component(PSY.PowerLoad, sys, name), "max_active_power")
         PSY.add_time_series!(
@@ -418,7 +418,7 @@ function add_toy_interchange!(sys, stamps, ic)
             AustralianElectricityMarkets.NEMMNSPBid(;
                 direction,
                 offer_curves = _toy_series_key(sys, interchange, getproperty(AustralianElectricityMarkets.NEM_MNSP_SERIES, Symbol(dir, "_offer")), curves),
-                band_prices = AustralianElectricityMarkets._day_band_prices(curves, fill(true, length(curves)), "TOY $dir"),
+                band_prices = AustralianElectricityMarkets._day_band_prices(curves, "TOY $dir"),
                 max_avail = _toy_series_key(sys, interchange, getproperty(AustralianElectricityMarkets.NEM_MNSP_SERIES, Symbol(dir, "_max_avail")), avail),
                 ramp_up = _toy_series_key(sys, interchange, getproperty(AustralianElectricityMarkets.NEM_MNSP_SERIES, Symbol(dir, "_ramp_rate")), fill(1000.0, length(stamps))),
                 fixed_load = _toy_series_key(sys, interchange, getproperty(AustralianElectricityMarkets.NEM_MNSP_SERIES, Symbol(dir, "_fixed_load")), fill(NaN, length(stamps))),
@@ -582,7 +582,7 @@ function add_toy_fcas_offer!(
         service = bid_type, direction, offer_curves = AEM._series_key(device, field(:offer_curves)),
         max_avail = AEM._series_key(device, field(:max_avail)), trapezium = AEM._series_key(device, field(:trapezium)),
     )
-    prices = AEM._day_band_prices(curves, fill(true, length(curves)), PSY.get_name(device))
+    prices = AEM._day_band_prices(curves, PSY.get_name(device))
     AEM._set_fcas_bid!(AEM._nem_offer_cost(device), AEM._with_band_prices(bid, prices))
     return
 end
@@ -630,7 +630,7 @@ function _toy_set_band_prices!(device)
     for bid in copy(AEM.get_energy_bids(cost))
         view = AEM._energy_offer_view(device, AEM._energy_offer_side(bid.direction))
         isnothing(view) && continue
-        prices = AEM._day_band_prices(view.curves, fill(true, length(view.curves)), PSY.get_name(device))
+        prices = AEM._day_band_prices(view.curves, PSY.get_name(device))
         AEM._set_energy_bid!(cost, AEM._with_band_prices(bid, prices))
     end
     return

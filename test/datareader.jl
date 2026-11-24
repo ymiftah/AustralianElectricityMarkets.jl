@@ -10,7 +10,7 @@ let
 
     @testset "read_units" begin
         # Verify technology mapping from mock data "Battery Storage" (BW01)
-        mapped = AustralianElectricityMarkets.RegionModel._map_unit_technology(read_units(db))
+        mapped = AustralianElectricityMarkets.RegionModel._map_unit_technology(read_units(db, MOCK_DATE_RANGE))
         @test only(mapped.TECHNOLOGY[mapped.DUID .== "BW01"]) == PrimeMovers.BA
         @test only(mapped.FUELTYPE[mapped.DUID .== "BW01"]) == ThermalFuels.OTHER
     end
@@ -18,7 +18,7 @@ let
     @testset "Bounded demand preserves complete aggregation bins" begin
         start = DateTime(2025, 1, 1)
         for resolution in (Minute(15), Hour(1))
-            full = read_demand(db; resolution = resolution)
+            full = read_demand(db, MOCK_DATE_RANGE; resolution = resolution)
             for (from, to) in (
                     (start, start + Hour(2)),
                     (start + Minute(7), start + Minute(77)),
@@ -45,7 +45,7 @@ let
 
         daily_range = Date(2025, 1, 1):Day(1):Date(2025, 1, 2)
         bounded = read_demand(db, daily_range)
-        full = read_demand(db)
+        full = read_demand(db, MOCK_DATE_RANGE)
         @test isequal(sort(bounded, [:SETTLEMENTDATE, :REGIONID]), sort(full, [:SETTLEMENTDATE, :REGIONID]))
     end
 end

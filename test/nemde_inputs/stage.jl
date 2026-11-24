@@ -44,7 +44,7 @@ end
     PowerSystems.set_available!(device, true)
     @test isnothing(AustralianElectricityMarkets._check_nemde_availability(sys))
     # A system without NEMDE inputs carries no recorded availability.
-    @test_throws ArgumentError AustralianElectricityMarkets._check_nemde_availability(nem_system(nemde_test_db(), RegionalNetworkConfiguration()))
+    @test_throws ArgumentError AustralianElectricityMarkets._check_nemde_availability(nem_system(nemde_test_db(), RegionalNetworkConfiguration(); date_range = MOCK_DATE_RANGE))
     # A build report written before unavailable_constraints throws instead of a KeyError.
     delete!(PowerSystems.get_ext(sys)["build_report"], "unavailable_constraints")
     @test_throws ArgumentError get_build_report(sys)

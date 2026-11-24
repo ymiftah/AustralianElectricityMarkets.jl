@@ -36,38 +36,39 @@ _bidding_devices(sys::PSY.System) = Iterators.flatten(
     (PSY.get_components(T, sys) for T in (PSY.Generator, PSY.ControllableLoad, PSY.Storage)),
 )
 
-# The timestamps, resolution and values of a bid field's time series on `device`.
-function _bid_series(device, key::IS.TimeSeriesKey, ::Symbol)
-    ts::PSY.SingleTimeSeries = IS.get_time_series(device, key)
-    array = PSY.get_time_series_array(device, ts)
-    return (;
-        timestamps = PSY.TimeSeries.timestamp(array), resolution = IS.get_resolution(ts),
-        values = collect(values(array)),
-    )
+# The grid every single time series of `sys` sits on: their shared first timestamp, length and resolution.
+function _nemde_grid(sys::PSY.System)
+    initial, n = PSY.check_time_series_consistency(sys, PSY.SingleTimeSeries)
+    resolutions = PSY.get_time_series_resolutions(sys; time_series_type = PSY.SingleTimeSeries)
+    # A system without single time series has an empty grid.
+    resolution = isempty(resolutions) ? DISPATCH_INTERVAL : only(resolutions)
+    return initial:resolution:(initial + (n - 1) * resolution)
 end
 
-# A static bid field has no series to derive the offers from.
-function _bid_series(device, value, field::Symbol)
-    throw(
-        ArgumentError(
-            "\"$(PSY.get_name(device))\" has a static `$(field)` field; the NEMDE inputs need series-backed " *
-                "bid inputs, as set_market_bids! writes them.",
-        ),
-    )
-end
-
-# The values of `key` on the timestamps of `like`: a static value is repeated, and a stamp the
-# series does not cover is `NaN`, so a bid on another window limits nothing.
-function _aligned_values(device, key, like)
-    key isa IS.StaticTimeSeriesKey || return fill(Float64(key), length(like.values))
-    series = _bid_series(device, key, :availability)
-    values = fill(NaN, length(like.values))
-    index = Dict(t => i for (i, t) in enumerate(like.timestamps))
-    for (i, t) in enumerate(series.timestamps)
-        j = get(index, t, nothing)
-        isnothing(j) || (values[j] = series.values[i])
+# The values of a bid or telemetry field of `device` on `grid`: `absent` repeated for a `nothing` field, a static
+# value repeated, and a series key read from storage. With `field` given, the value must be a series key and a
+# static one throws, naming `field`.
+function _values_on_grid(device, value, grid; absent = NaN, field::Union{Nothing, Symbol} = nothing)
+    n = length(grid)
+    if !isnothing(field) && !(value isa IS.StaticTimeSeriesKey)
+        throw(
+            ArgumentError(
+                "\"$(PSY.get_name(device))\" has a static `$(field)` field; the NEMDE inputs need series-backed " *
+                    "bid inputs (offer curves included), as set_market_bids! writes them.",
+            ),
+        )
     end
-    return values
+    isnothing(value) && return fill(absent, n)
+    value isa IS.StaticTimeSeriesKey || return fill(value isa Real ? Float64(value) : value, n)
+    series = IS.get_time_series_values(device, value; start_time = first(grid), len = n)
+    return eltype(series) <: Real ? Float64.(series) : series
+end
+
+# `field` of `device`'s energy bid on `side` on `grid`; `NaN` where the device has no bid on that side or the bid has no field.
+function _energy_bid_values(device, side::OfferSide, field::Symbol, grid)
+    cost = _nem_offer_cost(device)
+    bid = isnothing(cost) ? nothing : _energy_bid(cost, side)
+    return _values_on_grid(device, isnothing(bid) ? nothing : getproperty(bid, field), grid)
 end
 
 # The energy bid of `cost` on `side`, or `nothing`.

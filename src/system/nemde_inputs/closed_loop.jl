@@ -89,7 +89,7 @@ mutable struct ClosedLoopInputs
     ramp::Union{Nothing, _ClosedLoopRamp}
     fixed_load::Union{Nothing, _ClosedLoopFixedLoad}
     fcas_window::Union{Nothing, _FCASWindow}
-    fcas::Dict{BidType, Union{Nothing, _FCASPrepared}}
+    fcas::Dict{BidType, Union{Nothing, _FCASMarket}}
 end
 
 
@@ -115,7 +115,7 @@ function closed_loop_inputs(device, base::Real)
     index = Dict(t => i for (i, t) in enumerate(stamps))
     return ClosedLoopInputs(
         device, Float64(base), stamps, IS.get_resolution(ts), index, nothing, nothing, nothing, nothing,
-        Dict{BidType, Union{Nothing, _FCASPrepared}}(),
+        Dict{BidType, Union{Nothing, _FCASMarket}}(),
     )
 end
 
@@ -135,10 +135,8 @@ end
 
 function _ramp_inputs!(inputs::ClosedLoopInputs)
     if isnothing(inputs.ramp)
-        telemetry = _nem_unit_data(inputs.device).telemetry
-        up = _bid_series(inputs.device, telemetry.ramp_up_limit, :ramp_up_limit)
-        hours = Dates.value(Millisecond(up.resolution)) / 3_600_000
-        inputs.ramp = _ClosedLoopRamp(_storage_ramp_inputs(inputs.device, up, hours))
+        hours = Dates.value(Millisecond(inputs.resolution)) / 3_600_000
+        inputs.ramp = _ClosedLoopRamp(_storage_ramp_inputs(inputs.device, inputs.stamps, hours))
     end
     return inputs.ramp
 end
@@ -147,24 +145,23 @@ end
 function _fixed_load_inputs!(inputs::ClosedLoopInputs)
     if isnothing(inputs.fixed_load)
         inputs.fixed_load = _ClosedLoopFixedLoad(
-            _fixed_load_mw_series(inputs.device, OfferSide.GEN, inputs.stamps),
-            _fixed_load_mw_series(inputs.device, OfferSide.LOAD, inputs.stamps),
+            _energy_bid_values(inputs.device, OfferSide.GEN, :fixed_load, inputs.stamps),
+            _energy_bid_values(inputs.device, OfferSide.LOAD, :fixed_load, inputs.stamps),
         )
     end
     return inputs.fixed_load
 end
 
 
-# The prepared offer of the device in `bid_type`, `nothing` when it does not offer the market.
+# The market inputs of the device in `bid_type`, `nothing` when it does not offer the market.
 function _fcas_inputs!(inputs::ClosedLoopInputs, bid_type::BidType)
     return get!(inputs.fcas, bid_type) do
         direction = fcas_bid_direction(inputs.device, bid_type)
         direction == FCASBidDirection.NONE && return nothing
         if isnothing(inputs.fcas_window)
-            inputs.fcas_window = _fcas_window(inputs.device, inputs.stamps, inputs.resolution, inputs.base; states = _observed_states!(inputs))
+            inputs.fcas_window = _fcas_window(inputs.device, inputs.stamps, inputs.resolution, inputs.base)
         end
-        window = inputs.fcas_window
-        return _fcas_prepare(window, inputs.device, bid_type, direction, FCAS_INACTIVE_LIMIT_MW / inputs.base, _fcas_energy_limits(window, inputs.device))
+        return _fcas_market(inputs.fcas_window, inputs.device, bid_type, direction)
     end
 end
 
@@ -174,11 +171,11 @@ end
 # serves both offer sides and the ramping limits of the market.
 function _closed_loop_fcas_values(inputs::ClosedLoopInputs, bid_type::BidType, t::DateTime, initial_mw::Real)
     i = inputs.index[t]
-    prep = _fcas_inputs!(inputs, bid_type)
-    isnothing(prep) && return nothing
+    market = _fcas_inputs!(inputs, bid_type)
+    isnothing(market) && return nothing
     state = _closed_loop_state(inputs, i, initial_mw)
-    prep.window.states[i] = NEMUnitState(state.initial_mw / inputs.base, state.dispatch_mode, state.time_in_mode)
-    return _fcas_values_at(prep, inputs.device, bid_type, i)
+    gen, load, ramping = _fcas_values_at(market, i, NEMUnitState(state.initial_mw / inputs.base, state.dispatch_mode, state.time_in_mode))
+    return (gen, load), ramping
 end
 
 

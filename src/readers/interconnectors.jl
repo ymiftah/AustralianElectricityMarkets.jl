@@ -1,60 +1,71 @@
 """
-    read_interconnectors(db; as_of = nothing)
+    read_interconnectors(db, date_range)
 
-Reads and processes interconnector data from the database.
+Reads each interconnector's `INTERCONNECTORCONSTRAINT` version in force at `first(date_range)`
+(latest `EFFECTIVEDATE`, then highest `VERSIONNO`), joined to its `INTERCONNECTOR` region pair.
+Interconnectors with an endpoint region absent from the latest `DISPATCHREGIONSUM` snapshot at or
+before `first(date_range)` are dropped with a warning.
 
 # Arguments
-- `db`: The database connection.
-- `as_of`: when a `Date` or `DateTime`, resolves each `INTERCONNECTORCONSTRAINT` row as of that
-  instant (latest `EFFECTIVEDATE <= as_of`, then highest `VERSIONNO`). `nothing` keeps the latest
-  version in the cache.
+- `db`: the database connection.
+- `date_range`: the half-open range of interval-ending stamps.
 
 # Returns
-A `DataFrame` containing the interconnector constraint data, latest or as of `as_of`. Interconnectors with an
-endpoint region absent from the latest cached `DISPATCHREGIONSUM` snapshot at or before `as_of`
-are dropped with a warning. With `as_of = nothing`, uses the latest cached snapshot. Throws an
-`ArgumentError` when no eligible demand snapshot is cached.
+A `DataFrame` with the `INTERCONNECTORCONSTRAINT` columns, `REGIONFROM` and `REGIONTO`. Throws an
+`ArgumentError` when no `DISPATCHREGIONSUM` snapshot is cached at or before `first(date_range)`.
 
 # Example
 ```julia
 db = aem_connect()
-interconnectors_df = read_interconnectors(db)
-println(interconnectors_df)
+interconnectors = read_interconnectors(db, DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 2))
 ```
 """
-function read_interconnectors(db; as_of::Union{Nothing, Date, DateTime} = nothing)
-    t_interconnector = read_hive(db, :INTERCONNECTOR)
-    t_interconnector_constraint = read_hive(db, :INTERCONNECTORCONSTRAINT)
-
+function read_interconnectors(db, date_range)
+    as_of = first(date_range)
+    _require_cached(db, :DISPATCHREGIONSUM; context = "read_interconnectors needs it to identify the active regions.")
+    demand = read_hive(db, :DISPATCHREGIONSUM)
+    regions = _query(
+        db,
+        """
+        SELECT DISTINCT REGIONID FROM $demand
+        WHERE REGIONID IS NOT NULL AND SETTLEMENTDATE = (
+            SELECT max(SETTLEMENTDATE) FROM $demand WHERE REGIONID IS NOT NULL AND SETTLEMENTDATE <= ?
+        )
+        """,
+        [as_of],
+    ).REGIONID
+    isempty(regions) && throw(
+        ArgumentError(
+            "read_interconnectors found no DISPATCHREGIONSUM snapshot at or before $as_of; " *
+                "populate it with `populate(db, :DISPATCHREGIONSUM, start_date, end_date)`",
+        ),
+    )
+    interconnector = read_hive(db, :INTERCONNECTOR)
     # Each monthly archive holds the full history, so only the latest archive is read.
-    as_of_filter = isnothing(as_of) ? "" : "WHERE c.EFFECTIVEDATE <= ?"
-    sql = """
-        WITH ic AS (SELECT * FROM $t_interconnector),
-             latest_ic AS (
-                 SELECT INTERCONNECTORID, REGIONFROM, REGIONTO, archive_month
-                 FROM ic
-                 WHERE archive_month = (SELECT max(archive_month) FROM ic)
-             ),
-             icc AS (SELECT * FROM $t_interconnector_constraint)
+    interconnectors = _query(
+        db,
+        """
+        WITH latest_ic AS (
+            SELECT INTERCONNECTORID, REGIONFROM, REGIONTO, archive_month
+            FROM $interconnector
+            WHERE archive_month = (SELECT max(archive_month) FROM $interconnector)
+        )
         SELECT c.* EXCLUDE (archive_month), l.REGIONFROM, l.REGIONTO
-        FROM icc c
+        FROM $(read_hive(db, :INTERCONNECTORCONSTRAINT)) c
         INNER JOIN latest_ic l
           ON c.INTERCONNECTORID = l.INTERCONNECTORID AND c.archive_month = l.archive_month
-        $as_of_filter
+        WHERE c.EFFECTIVEDATE <= ?
         QUALIFY row_number() OVER (
             PARTITION BY c.INTERCONNECTORID ORDER BY c.EFFECTIVEDATE DESC, c.VERSIONNO DESC
         ) = 1
-    """
-    df = isnothing(as_of) ? _query(db, sql) : _query(db, sql, [as_of])
-    current_regions = _current_regions(db; as_of)
-    retired = filter(
-        row -> !(row.REGIONFROM in current_regions) || !(row.REGIONTO in current_regions), df,
+        """,
+        [as_of],
     )
+    current = subset(interconnectors, [:REGIONFROM, :REGIONTO] => ByRow((from, to) -> from in regions && to in regions))
+    retired = setdiff(interconnectors.INTERCONNECTORID, current.INTERCONNECTORID)
     isempty(retired) ||
-        @warn "read_interconnectors: dropping $(nrow(retired)) interconnector(s) with a retired endpoint region not present in DISPATCHREGIONSUM" interconnectors = retired.INTERCONNECTORID
-    return filter(
-        row -> row.REGIONFROM in current_regions && row.REGIONTO in current_regions, df,
-    )
+        @warn "read_interconnectors: dropping $(length(retired)) interconnector(s) with a retired endpoint region not present in DISPATCHREGIONSUM" interconnectors = retired
+    return current
 end
 
 """
@@ -72,8 +83,36 @@ A `DataFrame` with `INTERCONNECTORID`, `LOSSSEGMENT` and `MWBREAKPOINT`, sorted 
 within an interconnector. Throws an `ArgumentError` when `LOSSMODEL` is not cached.
 """
 function read_interconnector_loss_breakpoints(db; as_of::Union{Date, DateTime})
-    return _read_loss_model_table(db, :LOSSMODEL, "LOSSSEGMENT", "MWBREAKPOINT", "MWBREAKPOINT", as_of)
+    _require_cached(db, :LOSSMODEL)
+    table = read_hive(db, :LOSSMODEL)
+    return _query(
+        db,
+        """
+        WITH raw AS (
+            SELECT * FROM $table
+            WHERE EFFECTIVEDATE <= ?
+            QUALIFY row_number() OVER (
+                PARTITION BY INTERCONNECTORID, EFFECTIVEDATE, VERSIONNO, LOSSSEGMENT
+                ORDER BY archive_month DESC
+            ) = 1
+        ),
+        latest AS (
+            SELECT INTERCONNECTORID, max_by(EFFECTIVEDATE, (EFFECTIVEDATE, VERSIONNO)) AS EFFECTIVEDATE,
+                   max_by(VERSIONNO, (EFFECTIVEDATE, VERSIONNO)) AS VERSIONNO
+            FROM raw GROUP BY INTERCONNECTORID
+        )
+        SELECT r.INTERCONNECTORID, r.LOSSSEGMENT, TRY_CAST(r.MWBREAKPOINT AS DOUBLE) AS MWBREAKPOINT
+        FROM raw r
+        INNER JOIN latest l
+          ON r.INTERCONNECTORID = l.INTERCONNECTORID
+             AND r.EFFECTIVEDATE = l.EFFECTIVEDATE AND r.VERSIONNO = l.VERSIONNO
+        WHERE r.MWBREAKPOINT IS NOT NULL
+        ORDER BY r.INTERCONNECTORID, MWBREAKPOINT
+        """,
+        [as_of],
+    )
 end
+
 
 """
     read_interconnector_demand_coefficients(db; as_of) -> DataFrame
@@ -90,14 +129,8 @@ A `DataFrame` with `INTERCONNECTORID`, `REGIONID` and `DEMANDCOEFFICIENT`. Throw
 `ArgumentError` when `LOSSFACTORMODEL` is not cached.
 """
 function read_interconnector_demand_coefficients(db; as_of::Union{Date, DateTime})
-    return _read_loss_model_table(db, :LOSSFACTORMODEL, "REGIONID", "DEMANDCOEFFICIENT", "r.REGIONID", as_of)
-end
-
-# `INTERCONNECTORID`, `key` and non-null `value` of each interconnector's latest `table_name` version
-# effective on or before `as_of`, sorted by interconnector then `order_by`.
-function _read_loss_model_table(db, table_name::Symbol, key::String, value::String, order_by::String, as_of)
-    _require_cached(db, table_name)
-    table = read_hive(db, table_name)
+    _require_cached(db, :LOSSFACTORMODEL)
+    table = read_hive(db, :LOSSFACTORMODEL)
     return _query(
         db,
         """
@@ -105,7 +138,7 @@ function _read_loss_model_table(db, table_name::Symbol, key::String, value::Stri
             SELECT * FROM $table
             WHERE EFFECTIVEDATE <= ?
             QUALIFY row_number() OVER (
-                PARTITION BY INTERCONNECTORID, EFFECTIVEDATE, VERSIONNO, $key
+                PARTITION BY INTERCONNECTORID, EFFECTIVEDATE, VERSIONNO, REGIONID
                 ORDER BY archive_month DESC
             ) = 1
         ),
@@ -114,13 +147,13 @@ function _read_loss_model_table(db, table_name::Symbol, key::String, value::Stri
                    max_by(VERSIONNO, (EFFECTIVEDATE, VERSIONNO)) AS VERSIONNO
             FROM raw GROUP BY INTERCONNECTORID
         )
-        SELECT r.INTERCONNECTORID, r.$key, TRY_CAST(r.$value AS DOUBLE) AS $value
+        SELECT r.INTERCONNECTORID, r.REGIONID, TRY_CAST(r.DEMANDCOEFFICIENT AS DOUBLE) AS DEMANDCOEFFICIENT
         FROM raw r
         INNER JOIN latest l
           ON r.INTERCONNECTORID = l.INTERCONNECTORID
              AND r.EFFECTIVEDATE = l.EFFECTIVEDATE AND r.VERSIONNO = l.VERSIONNO
-        WHERE r.$value IS NOT NULL
-        ORDER BY r.INTERCONNECTORID, $order_by
+        WHERE r.DEMANDCOEFFICIENT IS NOT NULL
+        ORDER BY r.INTERCONNECTORID, r.REGIONID
         """,
         [as_of],
     )
@@ -196,24 +229,25 @@ A `DataFrame` with `SETTLEMENTDATE`, `INTERCONNECTORID`, `METEREDMWFLOW`, `EXPOR
 `IMPORTLIMIT`.
 """
 function read_interconnector_limits(db, date_range; intervention::Integer = 0)
-    columns = [_cast_double(c) for c in ("METEREDMWFLOW", "EXPORTLIMIT", "IMPORTLIMIT")]
-    return _read_dispatch_table(columns, db, :DISPATCHINTERCONNECTORRES, "INTERCONNECTORID", date_range; intervention)
-end
-
-
-function read_interconnector_loss_breakpoints(db, as_of::Union{Date, DateTime})
-    Base.depwarn("Use read_interconnector_loss_breakpoints(db; as_of) instead of a positional as_of.", :read_interconnector_loss_breakpoints)
-    return read_interconnector_loss_breakpoints(db; as_of)
-end
-
-
-function read_interconnector_demand_coefficients(db, as_of::Union{Date, DateTime})
-    Base.depwarn("Use read_interconnector_demand_coefficients(db; as_of) instead of a positional as_of.", :read_interconnector_demand_coefficients)
-    return read_interconnector_demand_coefficients(db; as_of)
-end
-
-
-function read_interconnector_loss_parameters(db, as_of::Union{Date, DateTime})
-    Base.depwarn("Use read_interconnector_loss_parameters(db; as_of) instead of a positional as_of.", :read_interconnector_loss_parameters)
-    return read_interconnector_loss_parameters(db; as_of)
+    _check_intervention(intervention)
+    source = read_hive(db, :DISPATCHINTERCONNECTORRES, date_range)
+    return _query(
+        db,
+        """
+        WITH run AS (
+            SELECT * FROM $source
+            WHERE SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ?
+            QUALIFY COALESCE(INTERVENTION, 0) = CASE WHEN ? = 0 THEN 0
+                ELSE max(COALESCE(INTERVENTION, 0)) OVER (PARTITION BY SETTLEMENTDATE) END
+        )
+        SELECT SETTLEMENTDATE, INTERCONNECTORID,
+               TRY_CAST(METEREDMWFLOW AS DOUBLE) AS METEREDMWFLOW,
+               TRY_CAST(EXPORTLIMIT AS DOUBLE) AS EXPORTLIMIT,
+               TRY_CAST(IMPORTLIMIT AS DOUBLE) AS IMPORTLIMIT
+        FROM run
+        QUALIFY row_number() OVER (PARTITION BY SETTLEMENTDATE, INTERCONNECTORID ORDER BY archive_month DESC) = 1
+        ORDER BY SETTLEMENTDATE, INTERCONNECTORID
+        """,
+        [first(date_range), last(date_range), intervention],
+    )
 end

@@ -69,7 +69,7 @@ function AustralianElectricityMarkets.nem_system(
 
     # 3. Base network: every unit registered during the range
     storage = isnothing(time_series_directory) ? (;) : (; time_series_directory)
-    sys, units = nem_network(db; as_of = first(date_range), through = last(date_range) - resolution, time_series_in_memory, storage...)
+    sys, units = nem_network(db; date_range, time_series_in_memory, storage...)
 
     # 4. Units, bids and services
     offers = read_offers(db, date_range)

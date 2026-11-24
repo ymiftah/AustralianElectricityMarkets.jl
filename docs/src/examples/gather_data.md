@@ -81,7 +81,7 @@ db = aem_connect()
 source = read_hive(db, :DISPATCHLOAD)
 df_raw = DataFrame(DuckDB.execute(db.db, "SELECT * FROM $source LIMIT 10"))
 
-# Load unit information from the cached data
-units = read_units(db)
+# Load the units registered over a date range from the cached data
+units = read_units(db, DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 2))
 
 ```

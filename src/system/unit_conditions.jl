@@ -41,24 +41,116 @@ function set_unit_conditions!(sys, db, date_range; intervention::Integer = 0)
     grid = collect(date_range)[1:(end - 1)]
     isempty(grid) && throw(ArgumentError("unit conditions require at least one interval"))
     # One interval before the grid, for the dispatch mode at the first stamp.
-    rows = read_unit_conditions(db, (first(date_range) - Minute(5)):Minute(5):last(date_range); intervention)
-    by_duid = Dict(String(key.DUID) => group for (key, group) in pairs(groupby(rows, :DUID)))
-    problems = String[]
-    staged = NamedTuple[]
-    no_rows = view(rows, 1:0, :)
+    conditions = read_unit_conditions(db, (first(date_range) - Minute(5)):Minute(5):last(date_range); intervention)
+    devices = DataFrame(
+        order = Int[], device = Any[], DUID = String[], pinned = Bool[], storage = Bool[], semi = Bool[],
+        registration = NEMRegistration[], smap = Float64[],
+    )
     _foreach_nem_dispatch_device(sys) do device
-        device_rows = get(by_duid, get_name(device), no_rows)
-        data = _stage_unit_conditions!(problems, sys, device, _unit_condition_columns(device_rows), grid)
-        isnothing(data) || push!(staged, data)
+        registration = get_registration(device)
+        storage = device isa PSY.Storage
+        pinned = is_non_scheduled_load(device)
+        semi = !pinned && !storage && registration.schedule_type == ScheduleType.SEMI_SCHEDULED
+        smap = storage ? NaN : with_units_base(() -> get_max_active_power(device), sys, "NATURAL_UNITS")
+        push!(devices, (; order = nrow(devices) + 1, device, DUID = get_name(device), pinned, storage, semi, registration, smap))
         return
     end
-    isempty(problems) || throw(ArgumentError("set_unit_conditions!: " * join(problems, "; ") * "."))
-    for data in staged
+
+    # One row per device and interval: the metered conditions, and the previous interval's dispatch mode.
+    metered = transform!(conditions, :DUID => ByRow(String) => :DUID, :DUID => ByRow(_ -> true) => :HAS_ROW)
+    previous = select(
+        metered, :DUID, :SETTLEMENTDATE => ByRow(t -> t + Minute(5)) => :SETTLEMENTDATE,
+        :DISPATCHMODE => :PREV_MODE, :DISPATCHMODETIME => :PREV_MODE_TIME,
+    )
+    # `crossjoin` lists each device's stamps in grid order, and `leftjoin!` keeps that order.
+    rows = @chain crossjoin(devices, DataFrame(SETTLEMENTDATE = grid)) begin
+        leftjoin!(metered; on = [:DUID, :SETTLEMENTDATE])
+        leftjoin!(previous; on = [:DUID, :SETTLEMENTDATE])
+        transform!(:HAS_ROW => ByRow(!ismissing) => :HAS_ROW)
+        transform!([:registration, :SETTLEMENTDATE] => ByRow(_is_registered) => :registered)
+    end
+
+    # Each problem kind is one subset. A device reports its first: device-wide problems, then the earliest
+    # interval, then the kind in the order below.
+    report(frame, stage, kind, message) = DataFrame(
+        order = frame.order, DUID = frame.DUID, message = map(message, eachrow(frame)),
+        priority = [(stage, r.SETTLEMENTDATE, kind) for r in eachrow(frame)],
+    )
+    present = Set(conditions.DUID)
+    live = subset(rows, :pinned => ByRow(!), :HAS_ROW)
+    no_rows = @chain devices begin
+        subset(:pinned => ByRow(!), :DUID => ByRow(!in(present)))
+        insertcols(:SETTLEMENTDATE => first(grid))
+    end
+    unexplained = @chain rows begin
+        subset(:pinned => ByRow(!), :HAS_ROW => ByRow(!), :registered)
+        transform(groupby(_, :DUID), nrow => :n)
+    end
+    bad_smap = @chain devices begin
+        subset(:storage => ByRow(!), :smap => ByRow(<=(0)))
+        insertcols(:SETTLEMENTDATE => first(grid))
+    end
+    missing_value = subset(
+        live, [:INITIALMW, :RAMPUPRATE, :RAMPDOWNRATE, :AVAILABILITY, :storage] =>
+            ByRow((mw, up, down, avail, storage) -> any(ismissing, (mw, up, down)) || (!storage && ismissing(avail))),
+    )
+    negative_ramp = subset(
+        live, [:RAMPUPRATE, :RAMPDOWNRATE] => ByRow((up, down) -> coalesce((up < 0) | (down < 0), false)),
+    )
+    negative_availability = subset(
+        live, [:AVAILABILITY, :storage] => ByRow((avail, storage) -> !storage && coalesce(avail < 0, false)),
+    )
+    bad_uigf = subset(live, [:UIGF, :semi] => ByRow((uigf, semi) -> semi && (ismissing(uigf) || !isfinite(uigf) || uigf < 0)))
+    problems = @chain vcat(
+        report(no_rows, 1, 0, r -> "$(r.DUID): no DISPATCHLOAD rows in $(first(grid)) to $(last(grid))"),
+        report(
+            unexplained, 2, 0,
+            r -> "$(r.DUID): missing DISPATCHLOAD row(s) for $(r.n) of $(length(grid)) interval(s) (e.g. $(r.SETTLEMENTDATE))",
+        ),
+        report(
+            bad_smap, 3, 0,
+            r -> "$(r.DUID): static max_active_power is $(r.smap) (cannot normalise AVAILABILITY without dividing by zero)",
+        ),
+        report(
+            missing_value, 4, 1,
+            r -> "$(r.DUID): missing INITIALMW/RAMPUPRATE/RAMPDOWNRATE" * (r.storage ? "" : "/AVAILABILITY") * " at $(r.SETTLEMENTDATE)",
+        ),
+        report(
+            negative_ramp, 4, 2,
+            r -> "$(r.DUID): negative RAMPUPRATE/RAMPDOWNRATE ($(r.RAMPUPRATE)/$(r.RAMPDOWNRATE)) at $(r.SETTLEMENTDATE)",
+        ),
+        report(negative_availability, 4, 3, r -> "$(r.DUID): negative AVAILABILITY ($(r.AVAILABILITY)) at $(r.SETTLEMENTDATE)"),
+        report(bad_uigf, 4, 4, r -> "$(r.DUID) at $(r.SETTLEMENTDATE): missing or invalid UIGF");
+        cols = :union,
+    ) begin
+        sort([:order, :priority])
+        unique(:DUID)
+    end
+    isempty(problems) || throw(ArgumentError("set_unit_conditions!: " * join(problems.message, "; ") * "."))
+
+    # Missing values are NaN, except that a unit with no row has zero initial output and UIGF.
+    nan(column) = Float64.(coalesce.(column, NaN))
+    enablement(lo, hi) = ismissing(lo) || ismissing(hi) ? (NaN, NaN) : (Float64(lo), Float64(hi))
+    for unit in groupby(rows, :DUID)
+        (; device, pinned, semi) = first(unit)
+        series = Pair{String, Vector}[
+            NEM_OBSERVED_SERIES.initial_mw => pinned ? zeros(nrow(unit)) : Float64.(coalesce.(unit.INITIALMW, 0.0)),
+            NEM_OBSERVED_SERIES.dispatch_mode => nan(unit.PREV_MODE),
+            NEM_OBSERVED_SERIES.dispatch_mode_time => nan(unit.PREV_MODE_TIME),
+            NEM_TELEMETRY_SERIES.agc_status => nan(unit.AGCSTATUS),
+            NEM_TELEMETRY_SERIES.ramp_up_limit => nan(unit.RAMPUPRATE),
+            NEM_TELEMETRY_SERIES.ramp_down_limit => nan(unit.RAMPDOWNRATE),
+            NEM_TELEMETRY_SERIES.raise_reg_enablement => enablement.(unit.RAISEREGENABLEMENTMIN, unit.RAISEREGENABLEMENTMAX),
+            NEM_TELEMETRY_SERIES.lower_reg_enablement => enablement.(unit.LOWERREGENABLEMENTMIN, unit.LOWERREGENABLEMENTMAX),
+            NEM_TELEMETRY_SERIES.raise_reg_max_avail => nan(unit.RAISEREGAVAILABILITY),
+            NEM_TELEMETRY_SERIES.lower_reg_max_avail => nan(unit.LOWERREGAVAILABILITY),
+        ]
+        semi && push!(series, NEM_TELEMETRY_SERIES.uigf => Float64.(coalesce.(unit.UIGF, 0.0)))
         series_keys = Dict{String, IS.StaticTimeSeriesKey}()
-        for (name, values) in data.series
-            series_keys[name] = replace_single_series!(sys, data.device, single_series(name, first(grid), values, Minute(5)))
+        for (name, values) in series
+            series_keys[name] = replace_single_series!(sys, device, single_series(name, first(grid), values, Minute(5)))
         end
-        _set_unit_data!(sys, data.device, data.semi, series_keys)
+        _set_unit_data!(sys, device, semi, series_keys)
     end
     return
 end
@@ -95,116 +187,3 @@ function _set_unit_data!(sys, device, semi::Bool, series_keys::AbstractDict{Stri
     )
     return
 end
-
-
-const _UNIT_CONDITION_COLUMNS = (
-    :SETTLEMENTDATE, :INITIALMW, :AVAILABILITY, :UIGF, :RAMPUPRATE, :RAMPDOWNRATE, :AGCSTATUS, :DISPATCHMODE,
-    :DISPATCHMODETIME,
-    :RAISEREGENABLEMENTMIN, :RAISEREGENABLEMENTMAX, :LOWERREGENABLEMENTMIN, :LOWERREGENABLEMENTMAX,
-    :RAISEREGAVAILABILITY, :LOWERREGAVAILABILITY,
-)
-
-# The columns of one device's `DISPATCHLOAD` rows that the series are built from, with the row of each stamp.
-function _unit_condition_columns(device_rows)
-    columns = NamedTuple{_UNIT_CONDITION_COLUMNS}(map(n -> device_rows[!, n], _UNIT_CONDITION_COLUMNS))
-    return (; columns..., index = Dict{DateTime, Int}(t => i for (i, t) in enumerate(columns.SETTLEMENTDATE)))
-end
-
-
-# `column` at the row of stamp `t` as a `Float64`, or `NaN` without a row or with a `missing` value.
-function _raw_value(index::Dict{DateTime, Int}, column::AbstractVector, t::DateTime)
-    i = get(index, t, 0)
-    (i == 0 || ismissing(column[i])) && return NaN
-    return Float64(column[i])
-end
-
-
-# The `(min, max)` pair at the row of stamp `t`, or `(NaN, NaN)` without a row or with a `missing` value.
-function _raw_pair(index::Dict{DateTime, Int}, min_column::AbstractVector, max_column::AbstractVector, t::DateTime)
-    i = get(index, t, 0)
-    (i == 0 || ismissing(min_column[i]) || ismissing(max_column[i])) && return (NaN, NaN)
-    return (Float64(min_column[i]), Float64(max_column[i]))
-end
-
-
-# Stages the series of one dispatch device from its `DISPATCHLOAD` columns (see `_unit_condition_columns`) and
-# records its problems. Returns `nothing` after a problem.
-function _stage_unit_conditions!(problems, sys, device, c, grid)
-    name = get_name(device)
-    registration = get_registration(device)
-    is_storage = device isa PSY.Storage
-    pinned = is_non_scheduled_load(device)
-    index = c.index
-    if !pinned && isempty(index)
-        push!(problems, "$name: no DISPATCHLOAD rows in $(first(grid)) to $(last(grid))")
-        return nothing
-    end
-    unexplained = [t for t in grid if !pinned && !haskey(index, t) && _is_registered(registration, t)]
-    if !isempty(unexplained)
-        push!(
-            problems,
-            "$name: missing DISPATCHLOAD row(s) for $(length(unexplained)) of $(length(grid)) interval(s) (e.g. $(minimum(unexplained)))",
-        )
-        return nothing
-    end
-    if !is_storage
-        smap = with_units_base(() -> get_max_active_power(device), sys, "NATURAL_UNITS")
-        if smap <= 0
-            push!(problems, "$name: static max_active_power is $smap (cannot normalise AVAILABILITY without dividing by zero)")
-            return nothing
-        end
-    end
-    n = length(grid)
-    initial_mw, ramp_up, ramp_down = zeros(n), fill(NaN, n), fill(NaN, n)
-    uigf = zeros(n)
-    semi_scheduled = !pinned && !is_storage && registration.schedule_type == ScheduleType.SEMI_SCHEDULED
-    for (k, t) in enumerate(grid)
-        i = get(index, t, 0)
-        if pinned
-            i == 0 || (ramp_up[k] = _nan_if_missing(c.RAMPUPRATE[i]); ramp_down[k] = _nan_if_missing(c.RAMPDOWNRATE[i]))
-            continue
-        end
-        i == 0 && continue
-        if ismissing(c.INITIALMW[i]) || ismissing(c.RAMPUPRATE[i]) || ismissing(c.RAMPDOWNRATE[i]) ||
-                (!is_storage && ismissing(c.AVAILABILITY[i]))
-            push!(problems, "$name: missing INITIALMW/RAMPUPRATE/RAMPDOWNRATE" * (is_storage ? "" : "/AVAILABILITY") * " at $t")
-            return nothing
-        elseif c.RAMPUPRATE[i] < 0 || c.RAMPDOWNRATE[i] < 0
-            push!(problems, "$name: negative RAMPUPRATE/RAMPDOWNRATE ($(c.RAMPUPRATE[i])/$(c.RAMPDOWNRATE[i])) at $t")
-            return nothing
-        elseif !is_storage && c.AVAILABILITY[i] < 0
-            push!(problems, "$name: negative AVAILABILITY ($(c.AVAILABILITY[i])) at $t")
-            return nothing
-        end
-        initial_mw[k] = c.INITIALMW[i]
-        ramp_up[k] = c.RAMPUPRATE[i]
-        ramp_down[k] = c.RAMPDOWNRATE[i]
-        if semi_scheduled
-            u = c.UIGF[i]
-            if ismissing(u) || !isfinite(u) || u < 0
-                push!(problems, "$name at $t: missing or invalid UIGF")
-                return nothing
-            end
-            uigf[k] = u
-        end
-    end
-    previous = [t - Minute(5) for t in grid]
-    series = Pair{String, Vector}[
-        NEM_OBSERVED_SERIES.initial_mw => initial_mw,
-        NEM_OBSERVED_SERIES.dispatch_mode => [_raw_value(index, c.DISPATCHMODE, t) for t in previous],
-        NEM_OBSERVED_SERIES.dispatch_mode_time => [_raw_value(index, c.DISPATCHMODETIME, t) for t in previous],
-        NEM_TELEMETRY_SERIES.agc_status => [_raw_value(index, c.AGCSTATUS, t) for t in grid],
-        NEM_TELEMETRY_SERIES.ramp_up_limit => ramp_up,
-        NEM_TELEMETRY_SERIES.ramp_down_limit => ramp_down,
-        NEM_TELEMETRY_SERIES.raise_reg_enablement => [_raw_pair(index, c.RAISEREGENABLEMENTMIN, c.RAISEREGENABLEMENTMAX, t) for t in grid],
-        NEM_TELEMETRY_SERIES.lower_reg_enablement => [_raw_pair(index, c.LOWERREGENABLEMENTMIN, c.LOWERREGENABLEMENTMAX, t) for t in grid],
-        NEM_TELEMETRY_SERIES.raise_reg_max_avail => [_raw_value(index, c.RAISEREGAVAILABILITY, t) for t in grid],
-        NEM_TELEMETRY_SERIES.lower_reg_max_avail => [_raw_value(index, c.LOWERREGAVAILABILITY, t) for t in grid],
-    ]
-    semi_scheduled && push!(series, NEM_TELEMETRY_SERIES.uigf => uigf)
-    return (; device, series, semi = semi_scheduled)
-end
-
-
-# `x` as a `Float64`, or `NaN` when it is `missing`.
-_nan_if_missing(x) = ismissing(x) ? NaN : Float64(x)

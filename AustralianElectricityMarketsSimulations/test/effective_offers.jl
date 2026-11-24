@@ -44,7 +44,7 @@ end
     AEM = AustralianElectricityMarkets
     AEMSim = AustralianElectricityMarketsSimulations
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
-    sys_base, _ = nem_network(db)
+    sys_base, _ = nem_network(db; date_range = MOCK_DATE_RANGE)
     resolution = Minute(5)
     start_date = DateTime(2025, 1, 1, 0, 0)
     date_range = start_date:resolution:(start_date + Hour(2))
@@ -100,10 +100,10 @@ end
     Δ = interval_hours(Minute(5))
 
     @testset "effective_energy_availability limits MAXAVAIL by UIGF and zeroes the excluded intervals" begin
-        @test AEM.effective_energy_availability([10.0, 10.0], [8.0, 12.0], [60.0, 60.0], false) == [8.0, 10.0]
-        @test AEM.effective_energy_availability([10.0, 10.0], nothing, [60.0, 60.0], false) == [10.0, 10.0]
-        @test AEM.effective_energy_availability([10.0, 10.0], nothing, [60.0, NaN], false) == [10.0, 0.0]
-        @test AEM.effective_energy_availability([10.0, 10.0], [8.0, 8.0], [60.0, 60.0], true) == [0.0, 0.0]
+        @test AEM.effective_energy_availability.([10.0, 10.0], [8.0, 12.0], [60.0, 60.0], false) == [8.0, 10.0]
+        @test AEM.effective_energy_availability.([10.0, 10.0], nothing, [60.0, 60.0], false) == [10.0, 10.0]
+        @test AEM.effective_energy_availability.([10.0, 10.0], nothing, [60.0, NaN], false) == [10.0, 0.0]
+        @test AEM.effective_energy_availability.([10.0, 10.0], [8.0, 8.0], [60.0, 60.0], true) == [0.0, 0.0]
     end
 
     @testset "a device with no FCAS bid gets no FCAS effective series" begin
