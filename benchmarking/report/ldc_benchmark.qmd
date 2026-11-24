@@ -605,6 +605,8 @@ The same interval shows the same pattern in a second market. TAS1 `RAISEREG` is 
 
 Two cautions apply. First, this is one interval: we have not yet shown that NEMDE resolves every band-edge tie to the lower band, and other intervals in this family have prices that are *lower* than published (for example 2025-06-16 SA1, 2025-07-26 TAS1, 2025-11-01 QLD1), so no single direction of bias explains them. Second, we do not know why NEMDE lands 0.00013 MW inside the band; it may be solver tolerance rather than a rule.
 
+The vertex chosen at such a point does not depend on the inputs alone. A refactor of system construction, checked outside this benchmark on ten sampled intervals, moved FCAS prices at two of them, and a later change moved them back. At both intervals the runs before and after the refactor have the same objective, the same dispatch for every unit, and the same interconnector flows and energy prices. At 2025-04-29 22:15, the system built before the refactor and the one built after the later change hold identical values in all 18,678 of their time series. Mainland `RAISEREG` at 2025-04-29 22:15 went from 18.65 to 17.53 \$/MW (published 17.53) and back to 18.65. TAS1 `LOWERREG` at 2025-03-11 16:00 went from 3.31 to 2.82 (published 2.49) and back to 3.31. With the solver and its options unchanged, the order in which the model is assembled is enough to change which optimal dual HiGHS returns. An FCAS price that moves closer to or further from NEMDE while the primal solution is unchanged therefore says nothing about model fidelity, and we compare code revisions on inputs, objective and dispatch first.
+
 ## Family 2: genuinely different dispatch
 
 `{julia} n_diffd` intervals have a dispatch difference above 0.5 MW in some unit or a flow difference above 0.5 MW. These include the largest price errors, and we have not diagnosed them to the same depth as the tie in family 1. The facts are:
@@ -625,10 +627,11 @@ AEMO's September 2025 `DISPATCHLOAD` and `DISPATCH_MNSPBIDTRK` archive files end
 
 ## Differences that are not model error
 
-Three methodological points affect any comparison of this kind.
+Four methodological points affect any comparison of this kind.
 
 - **Price definition.** We compare the solved price with the published ROP, the regional reference price before post-dispatch adjustment, as nempy does, and not the settled RRP, which includes scaling and capping.
 - **Tolerance.** The agreement threshold of 0.001 \$/MWh is far above solver precision. HiGHS is run at a relative MIP gap of $10^{-9}$; we do not know the tolerances NEMDE's solver uses. Differences of the order of $10^{-4}$ \$/MWh to $10^{-2}$ \$/MWh should not be read as model error.
+- **Dual-only differences.** Where the optimum is degenerate, the reported price is one of several valid duals, and which one is returned can change with solver options or with the order the model is built in (@sec-sources, family 1). FCAS prices are the most exposed, since AEMO specifies no tie-breaking rule for FCAS bands.
 - **Unmatched rows.** A small share of unit rows exist in only one side of the comparison (for example units without a published `TOTALCLEARED`); they are excluded and counted.
 
 ## Comparison with nempy's benchmark
