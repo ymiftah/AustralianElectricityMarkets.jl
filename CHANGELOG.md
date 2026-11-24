@@ -1120,6 +1120,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `AustralianElectricityMarketsSimulations` precompiles and builds dispatch models with OrderedCollections 2. The pinned PowerSimulations fork builds its system expressions as an `OrderedDict`, which OrderedCollections 2 no longer converts from a `Dict`.
 - A replay no longer goes silently wrong after a dual (price) LP fails to solve. The pinned PowerSimulations fork now solves the fixed-integer dual LP without the warm-start primal starts, which made HiGHS skip presolve and abort, and restores the integer variables on every exit; a dual LP that still fails makes the solve fail instead of leaving every later interval solved as an LP with frozen dispatch.
 
 - A closed-loop model rebuilt for a new `Simulation`, for example after a change to its template, starts its state-dependent values afresh: it no longer fails with a `KeyError` on a device the new build leaves out, writes into the previous build's parameter columns, or reuses the previous run's FCAS values at the same interval.
