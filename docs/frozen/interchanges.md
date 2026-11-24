@@ -1,4 +1,4 @@
-<!-- frozen source=1567f35539869846f9d816d5ce2df391f76173ea421da35766b96b5740567c46 -->
+<!-- frozen source=cf48e7ffb9e0eaf4309cb907ab311c0f70c864591965d0eea1feaaf85b3f77b0 -->
 ```@meta
 EditURL = "../../literate/howto/interchanges.jl"
 ```
@@ -729,10 +729,6 @@ end
       <td style = "text-align: left;">true</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">Slack cost</td>
-      <td style = "text-align: left;">1.0e6</td>
-    </tr>
-    <tr class = "dataRow">
       <td style = "text-align: left;">PTDF</td>
       <td style = "text-align: left;">false</td>
     </tr>
@@ -850,40 +846,40 @@ res = OptimizationProblemResults(problem)
   </thead>
   <tbody>
     <tr class = "dataRow">
-      <td style = "text-align: left;">VOMCostExpression__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">ProductionCostExpression__RenewableDispatch</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">VOMCostExpression__RenewableDispatch</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">StartUpCostExpression__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">FuelCostExpression__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">ProductionCostExpression__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerBalance__Area</td>
-    </tr>
-    <tr class = "dataRow">
       <td style = "text-align: left;">CurtailmentCostExpression__RenewableDispatch</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">FixedCostExpression__RenewableDispatch</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">ProductionCostExpression__HydroDispatch</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">ShutDownCostExpression__ThermalStandard</td>
+      <td style = "text-align: left;">ProductionCostExpression__RenewableDispatch</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">FixedCostExpression__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">FixedCostExpression__RenewableDispatch</td>
+      <td style = "text-align: left;">ActivePowerBalance__Area</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">ProductionCostExpression__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">FuelCostExpression__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">ShutDownCostExpression__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">StartUpCostExpression__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">VOMCostExpression__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">VOMCostExpression__RenewableDispatch</td>
     </tr>
   </tbody>
 </table>
@@ -896,13 +892,13 @@ res = OptimizationProblemResults(problem)
   </thead>
   <tbody>
     <tr class = "dataRow">
-      <td style = "text-align: left;">TimeDurationOn__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
       <td style = "text-align: left;">HydroEnergyOutput__HydroDispatch</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">TimeDurationOff__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">TimeDurationOn__ThermalStandard</td>
     </tr>
   </tbody>
 </table>
@@ -915,13 +911,16 @@ res = OptimizationProblemResults(problem)
   </thead>
   <tbody>
     <tr class = "dataRow">
-      <td style = "text-align: left;">IncrementalPiecewiseLinearBreakpointParameter__HydroDispatch</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">IncrementalPiecewiseLinearBreakpointParameter__RenewableDispatch</td>
-    </tr>
-    <tr class = "dataRow">
       <td style = "text-align: left;">ActivePowerTimeSeriesParameter__HydroDispatch</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">IncrementalCostAtMinParameter__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">IncrementalPiecewiseLinearSlopeParameter__RenewableDispatch</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">IncrementalPiecewiseLinearSlopeParameter__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">ActivePowerTimeSeriesParameter__RenewableDispatch</td>
@@ -930,19 +929,16 @@ res = OptimizationProblemResults(problem)
       <td style = "text-align: left;">IncrementalPiecewiseLinearBreakpointParameter__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">IncrementalPiecewiseLinearSlopeParameter__RenewableDispatch</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerTimeSeriesParameter__PowerLoad</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">IncrementalCostAtMinParameter__ThermalStandard</td>
+      <td style = "text-align: left;">IncrementalPiecewiseLinearBreakpointParameter__RenewableDispatch</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">IncrementalPiecewiseLinearSlopeParameter__HydroDispatch</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">IncrementalPiecewiseLinearSlopeParameter__ThermalStandard</td>
+      <td style = "text-align: left;">IncrementalPiecewiseLinearBreakpointParameter__HydroDispatch</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">ActivePowerTimeSeriesParameter__PowerLoad</td>
     </tr>
   </tbody>
 </table>
@@ -955,16 +951,19 @@ res = OptimizationProblemResults(problem)
   </thead>
   <tbody>
     <tr class = "dataRow">
-      <td style = "text-align: left;">OnVariable__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">StartVariable__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
       <td style = "text-align: left;">StopVariable__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
+      <td style = "text-align: left;">ActivePowerVariable__HydroDispatch</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">ActivePowerVariable__RenewableDispatch</td>
+    </tr>
+    <tr class = "dataRow">
       <td style = "text-align: left;">FlowActivePowerVariable__AreaInterchange</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">StartVariable__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">SystemBalanceSlackUp__Area</td>
@@ -976,10 +975,7 @@ res = OptimizationProblemResults(problem)
       <td style = "text-align: left;">ActivePowerVariable__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerVariable__HydroDispatch</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerVariable__RenewableDispatch</td>
+      <td style = "text-align: left;">OnVariable__ThermalStandard</td>
     </tr>
   </tbody>
 </table>
@@ -1090,3 +1086,4 @@ We see that a few lines are often saturated: V-S-MNSP1 connecting Victoria and S
 or T-V-MNSP1 connecting Victoria and Tasmania. The interfaces between New South Wales and Queensland,
 and New South Wales and Victoria are operated within their bounds and the power flows in both
 directions depending on the time of the day and resources available.
+

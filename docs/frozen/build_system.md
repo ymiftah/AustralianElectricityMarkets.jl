@@ -1,4 +1,4 @@
-<!-- frozen source=6869b6d3649094cdcce2b3e4ace93f23a114fa95e2a64c59dcf5b1f0c8484be9 -->
+<!-- frozen source=0f6f48f141476029e7a9506a26b18d437a4bc0f0880a682c8ff4167fa7b92bfd -->
 ```@meta
 EditURL = "../../literate/howto/build_system.jl"
 ```
@@ -172,7 +172,7 @@ sys = nem_system(db, RegionalNetworkConfiguration(); date_range)
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">Num Components</td>
-      <td style = "text-align: left;">759</td>
+      <td style = "text-align: left;">686</td>
     </tr>
   </tbody>
 </table>
@@ -206,15 +206,15 @@ sys = nem_system(db, RegionalNetworkConfiguration(); date_range)
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">EnergyReservoirStorage</td>
-      <td style = "text-align: left;">66</td>
+      <td style = "text-align: left;">31</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">HydroDispatch</td>
-      <td style = "text-align: left;">84</td>
+      <td style = "text-align: left;">82</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">InterruptiblePowerLoad</td>
-      <td style = "text-align: left;">123</td>
+      <td style = "text-align: left;">103</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">Line</td>
@@ -226,11 +226,11 @@ sys = nem_system(db, RegionalNetworkConfiguration(); date_range)
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">RenewableDispatch</td>
-      <td style = "text-align: left;">240</td>
+      <td style = "text-align: left;">222</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">ThermalStandard</td>
-      <td style = "text-align: left;">200</td>
+      <td style = "text-align: left;">202</td>
     </tr>
   </tbody>
 </table>
@@ -249,7 +249,7 @@ end
 ````
 
 ```@raw html
-<div><div style = "float: left;"><span>5×2 DataFrame</span></div><div style = "clear: both;"></div></div><div class = "data-frame" style = "overflow-x: scroll;"><table class = "data-frame" style = "margin-bottom: 6px;"><thead><tr class = "columnLabelRow"><th class = "stubheadLabel" style = "font-weight: bold; text-align: right;">Row</th><th style = "text-align: left;">fuel</th><th style = "text-align: left;">installed_capacity_mw</th></tr><tr class = "columnLabelRow"><th class = "stubheadLabel" style = "font-weight: bold; text-align: right;"></th><th title = "PowerSystems.ThermalFuelsModule.ThermalFuels" style = "text-align: left;">ThermalF…</th><th title = "Float64" style = "text-align: left;">Float64</th></tr></thead><tbody><tr class = "dataRow"><td class = "rowLabel" style = "font-weight: bold; text-align: right;">1</td><td style = "text-align: left;">PowerSystems.ThermalFuelsModule.ThermalFuels.AG_BYPRODUCT = 21</td><td style = "text-align: right;">473.0</td></tr><tr class = "dataRow"><td class = "rowLabel" style = "font-weight: bold; text-align: right;">2</td><td style = "text-align: left;">PowerSystems.ThermalFuelsModule.ThermalFuels.COAL = 1</td><td style = "text-align: right;">21371.0</td></tr><tr class = "dataRow"><td class = "rowLabel" style = "font-weight: bold; text-align: right;">3</td><td style = "text-align: left;">PowerSystems.ThermalFuelsModule.ThermalFuels.NATURAL_GAS = 18</td><td style = "text-align: right;">10615.0</td></tr><tr class = "dataRow"><td class = "rowLabel" style = "font-weight: bold; text-align: right;">4</td><td style = "text-align: left;">PowerSystems.ThermalFuelsModule.ThermalFuels.DISTILLATE_FUEL_OIL = 9</td><td style = "text-align: right;">898.0</td></tr><tr class = "dataRow"><td class = "rowLabel" style = "font-weight: bold; text-align: right;">5</td><td style = "text-align: left;">PowerSystems.ThermalFuelsModule.ThermalFuels.OTHER_GAS = 19</td><td style = "text-align: right;">1329.0</td></tr></tbody></table></div>
+<div><div style = "float: left;"><span>5×2 DataFrame</span></div><div style = "clear: both;"></div></div><div class = "data-frame" style = "overflow-x: scroll;"><table class = "data-frame" style = "margin-bottom: 6px;"><thead><tr class = "columnLabelRow"><th class = "stubheadLabel" style = "font-weight: bold; text-align: right;">Row</th><th style = "text-align: left;">fuel</th><th style = "text-align: left;">installed_capacity_mw</th></tr><tr class = "columnLabelRow"><th class = "stubheadLabel" style = "font-weight: bold; text-align: right;"></th><th title = "PowerSystems.ThermalFuelsModule.ThermalFuels" style = "text-align: left;">ThermalF…</th><th title = "Float64" style = "text-align: left;">Float64</th></tr></thead><tbody><tr class = "dataRow"><td class = "rowLabel" style = "font-weight: bold; text-align: right;">1</td><td style = "text-align: left;">PowerSystems.ThermalFuelsModule.ThermalFuels.AG_BYPRODUCT = 21</td><td style = "text-align: right;">484.0</td></tr><tr class = "dataRow"><td class = "rowLabel" style = "font-weight: bold; text-align: right;">2</td><td style = "text-align: left;">PowerSystems.ThermalFuelsModule.ThermalFuels.COAL = 1</td><td style = "text-align: right;">21371.0</td></tr><tr class = "dataRow"><td class = "rowLabel" style = "font-weight: bold; text-align: right;">3</td><td style = "text-align: left;">PowerSystems.ThermalFuelsModule.ThermalFuels.NATURAL_GAS = 18</td><td style = "text-align: right;">9952.0</td></tr><tr class = "dataRow"><td class = "rowLabel" style = "font-weight: bold; text-align: right;">4</td><td style = "text-align: left;">PowerSystems.ThermalFuelsModule.ThermalFuels.DISTILLATE_FUEL_OIL = 9</td><td style = "text-align: right;">899.0</td></tr><tr class = "dataRow"><td class = "rowLabel" style = "font-weight: bold; text-align: right;">5</td><td style = "text-align: left;">PowerSystems.ThermalFuelsModule.ThermalFuels.OTHER_GAS = 19</td><td style = "text-align: right;">1329.0</td></tr></tbody></table></div>
 ```
 
 Get information for a specific unit.
@@ -308,3 +308,4 @@ end
 ````
 51.0
 ````
+

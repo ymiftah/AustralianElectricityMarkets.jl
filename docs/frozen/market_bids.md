@@ -1,4 +1,4 @@
-<!-- frozen source=cea449243e73b3d31029732d3c42a6552f691553a44900c2f4627edcceef6f8b -->
+<!-- frozen source=d48770970de8fcca68f9a9d6fdaba4bd400e24f3291a3caf51906dbdc8710379 -->
 ```@meta
 EditURL = "../../literate/howto/market_bids.jl"
 ```
@@ -735,10 +735,6 @@ end
       <td style = "text-align: left;">false</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">Slack cost</td>
-      <td style = "text-align: left;">1.0e6</td>
-    </tr>
-    <tr class = "dataRow">
       <td style = "text-align: left;">PTDF</td>
       <td style = "text-align: left;">false</td>
     </tr>
@@ -851,40 +847,40 @@ res = OptimizationProblemResults(problem)
   </thead>
   <tbody>
     <tr class = "dataRow">
-      <td style = "text-align: left;">VOMCostExpression__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">ProductionCostExpression__RenewableDispatch</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">VOMCostExpression__RenewableDispatch</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">StartUpCostExpression__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">FuelCostExpression__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">ProductionCostExpression__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
       <td style = "text-align: left;">CurtailmentCostExpression__RenewableDispatch</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">FixedCostExpression__RenewableDispatch</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">ProductionCostExpression__HydroDispatch</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">ShutDownCostExpression__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerBalance__System</td>
+      <td style = "text-align: left;">ProductionCostExpression__RenewableDispatch</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">FixedCostExpression__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">FixedCostExpression__RenewableDispatch</td>
+      <td style = "text-align: left;">ProductionCostExpression__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">FuelCostExpression__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">ActivePowerBalance__System</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">ShutDownCostExpression__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">StartUpCostExpression__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">VOMCostExpression__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">VOMCostExpression__RenewableDispatch</td>
     </tr>
   </tbody>
 </table>
@@ -897,13 +893,13 @@ res = OptimizationProblemResults(problem)
   </thead>
   <tbody>
     <tr class = "dataRow">
-      <td style = "text-align: left;">TimeDurationOn__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
       <td style = "text-align: left;">HydroEnergyOutput__HydroDispatch</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">TimeDurationOff__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">TimeDurationOn__ThermalStandard</td>
     </tr>
   </tbody>
 </table>
@@ -916,13 +912,16 @@ res = OptimizationProblemResults(problem)
   </thead>
   <tbody>
     <tr class = "dataRow">
-      <td style = "text-align: left;">IncrementalPiecewiseLinearBreakpointParameter__HydroDispatch</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">IncrementalPiecewiseLinearBreakpointParameter__RenewableDispatch</td>
-    </tr>
-    <tr class = "dataRow">
       <td style = "text-align: left;">ActivePowerTimeSeriesParameter__HydroDispatch</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">IncrementalCostAtMinParameter__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">IncrementalPiecewiseLinearSlopeParameter__RenewableDispatch</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">IncrementalPiecewiseLinearSlopeParameter__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">ActivePowerTimeSeriesParameter__RenewableDispatch</td>
@@ -931,19 +930,16 @@ res = OptimizationProblemResults(problem)
       <td style = "text-align: left;">IncrementalPiecewiseLinearBreakpointParameter__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">IncrementalPiecewiseLinearSlopeParameter__RenewableDispatch</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerTimeSeriesParameter__PowerLoad</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">IncrementalCostAtMinParameter__ThermalStandard</td>
+      <td style = "text-align: left;">IncrementalPiecewiseLinearBreakpointParameter__RenewableDispatch</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">IncrementalPiecewiseLinearSlopeParameter__HydroDispatch</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">IncrementalPiecewiseLinearSlopeParameter__ThermalStandard</td>
+      <td style = "text-align: left;">IncrementalPiecewiseLinearBreakpointParameter__HydroDispatch</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">ActivePowerTimeSeriesParameter__PowerLoad</td>
     </tr>
   </tbody>
 </table>
@@ -956,22 +952,22 @@ res = OptimizationProblemResults(problem)
   </thead>
   <tbody>
     <tr class = "dataRow">
-      <td style = "text-align: left;">OnVariable__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">StartVariable__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
       <td style = "text-align: left;">StopVariable__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerVariable__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">ActivePowerVariable__HydroDispatch</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">ActivePowerVariable__RenewableDispatch</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">StartVariable__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">ActivePowerVariable__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">OnVariable__ThermalStandard</td>
     </tr>
   </tbody>
 </table>
@@ -1073,3 +1069,4 @@ This was not observed in the Economic dispatch example, and many factors can exp
   requiring them to generate regardless of the spot price.
 - **Strategic Behavior**: The 10-band bidding system allows for complex strategies that simple
   cost-minimization models do not capture.
+

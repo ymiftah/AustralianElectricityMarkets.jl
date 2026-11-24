@@ -1,4 +1,4 @@
-<!-- frozen source=764b691ceba2b0f0422eab642834f1259caea95d4199338512d81af625b4eb15 -->
+<!-- frozen source=58fa4688a7e2513f6e009d5076225ae599a357483062b747ad0b1530e75dfebd -->
 ```@meta
 EditURL = "../../literate/howto/economic_dispatch.jl"
 ```
@@ -459,10 +459,6 @@ end
       <td style = "text-align: left;">false</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">Slack cost</td>
-      <td style = "text-align: left;">1.0e6</td>
-    </tr>
-    <tr class = "dataRow">
       <td style = "text-align: left;">PTDF</td>
       <td style = "text-align: left;">false</td>
     </tr>
@@ -582,43 +578,43 @@ res = OptimizationProblemResults(problem)
   </thead>
   <tbody>
     <tr class = "dataRow">
-      <td style = "text-align: left;">VOMCostExpression__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">ProductionCostExpression__RenewableDispatch</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">VOMCostExpression__RenewableDispatch</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">StartUpCostExpression__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">FuelCostExpression__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">ProductionCostExpression__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">FuelConsumptionExpression__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
       <td style = "text-align: left;">CurtailmentCostExpression__RenewableDispatch</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">FixedCostExpression__RenewableDispatch</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">ProductionCostExpression__HydroDispatch</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">ShutDownCostExpression__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerBalance__System</td>
+      <td style = "text-align: left;">ProductionCostExpression__RenewableDispatch</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">FixedCostExpression__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">FixedCostExpression__RenewableDispatch</td>
+      <td style = "text-align: left;">ProductionCostExpression__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">FuelCostExpression__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">ActivePowerBalance__System</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">FuelConsumptionExpression__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">ShutDownCostExpression__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">StartUpCostExpression__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">VOMCostExpression__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">VOMCostExpression__RenewableDispatch</td>
     </tr>
   </tbody>
 </table>
@@ -663,13 +659,13 @@ res = OptimizationProblemResults(problem)
   </thead>
   <tbody>
     <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerVariable__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
       <td style = "text-align: left;">ActivePowerVariable__HydroDispatch</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">ActivePowerVariable__RenewableDispatch</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">ActivePowerVariable__ThermalStandard</td>
     </tr>
   </tbody>
 </table>
@@ -755,3 +751,4 @@ begin
 end
 ````
 ![](economic_dispatch-28.png)
+
