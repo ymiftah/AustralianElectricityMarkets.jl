@@ -1069,4 +1069,3 @@ This was not observed in the Economic dispatch example, and many factors can exp
   requiring them to generate regardless of the spot price.
 - **Strategic Behavior**: The 10-band bidding system allows for complex strategies that simple
   cost-minimization models do not capture.
-

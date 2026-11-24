@@ -287,4 +287,3 @@ the energy dispatch described here.
 8. ACER, [*Decision on the harmonised maximum and minimum clearing price for single
    day-ahead coupling*](https://www.acer.europa.eu/sites/default/files/documents/Individual%20Decisions/ACER-Decision-02-2026-harmonised-clearing-prices-day-ahead.pdf) -
    the European comparison figure in the same section.
-

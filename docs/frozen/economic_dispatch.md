@@ -751,4 +751,3 @@ begin
 end
 ````
 ![](economic_dispatch-28.png)
-

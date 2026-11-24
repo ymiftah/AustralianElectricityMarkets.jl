@@ -110,7 +110,7 @@ end
     _write_energy_bid!(sys, device, direction, on_grid, start_date, resolution) -> NEMEnergyBid
 
 Writes the energy bid of `device` in `direction` from `on_grid` (its [`read_offers`](@ref) rows of that
-direction on the dispatch grid, see [`_bid_on_grid`](@ref)) as one series per field, named by
+direction on the dispatch grid, see `_bid_on_grid`) as one series per field, named by
 [`bid_series_name`](@ref), and records it in the device's [`NEMOfferCost`](@ref). A NULL
 field over every row is `nothing`; otherwise NULL intervals and intervals without a row hold zero,
 except `fixed_load`, which holds `NaN` so that an unpublished loading is distinct from one of zero
@@ -210,7 +210,7 @@ end
     _write_fcas_bid!(sys, device, service, direction, on_grid, start_date, resolution) -> NEMFCASBid
 
 Writes the FCAS bid of `device` for `service` in `direction` from `on_grid` (its [`read_offers`](@ref)
-rows of that market and direction on the dispatch grid, see [`_bid_on_grid`](@ref)) as one series
+rows of that market and direction on the dispatch grid, see `_bid_on_grid`) as one series
 per field, named by [`bid_series_name`](@ref), and records it in the device's [`NEMOfferCost`](@ref). Intervals
 without a row hold a zero-width curve, a zero `MAXAVAIL` and a zero trapezium. Throws `ArgumentError`
 for a row whose trapezium is missing or out of order.

@@ -1140,4 +1140,3 @@ begin
 end
 ````
 ![](clearing-with-batteries-26.png)
-

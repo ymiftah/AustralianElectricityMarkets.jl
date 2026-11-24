@@ -1086,4 +1086,3 @@ We see that a few lines are often saturated: V-S-MNSP1 connecting Victoria and S
 or T-V-MNSP1 connecting Victoria and Tasmania. The interfaces between New South Wales and Queensland,
 and New South Wales and Victoria are operated within their bounds and the power flows in both
 directions depending on the time of the day and resources available.
-
