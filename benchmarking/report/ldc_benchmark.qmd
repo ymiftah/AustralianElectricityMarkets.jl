@@ -100,7 +100,7 @@ nint_diff = length(unique(prices.SETTLEMENTDATE[abs.(prices.error_rop) .> EXACT]
 
 # Abstract {.unnumbered}
 
-We benchmark the NEMDE replica in `AustralianElectricityMarketsSimulations` (a PowerSimulations.jl dispatch problem built from AEMO MMSDM data) against the dispatch outcomes AEMO published, following the interval-by-interval protocol of nempy [@gorman2022nempy]. Rather than a uniform random sample of intervals, we draw `{julia} fint(nrow(rt))` intervals of calendar year 2025, one at random from each of 1000 equal-count strata of the system-demand load duration curve, so that the sample represents the whole demand range, including the scarcity tail. Each interval is solved independently from AEMO's observed state, with NEMDE's two-run fast-start procedure where the interval contains a fast-start unit. Against the published regional reference price (ROP), `{julia} pct(exact_share)` of the `{julia} fint(n_prices)` regional prices agree to within 0.001 \$/MWh, the median error is exactly zero, and the mean signed error is `{julia} f3(mean(e))` \$/MWh (nempy: `{julia} NEMPY.mean`, on a different sample). Only `{julia} nint_large` of the `{julia} fint(n_int)` intervals have any price error above 1 \$/MWh. We trace the residual differences to three families: ties in the offer stack that leave the dual solution non-unique, genuine differences in the primal dispatch in a small set of intervals, and gaps in the source data. A full interval takes `{julia} f1(mean(rt.total_s))` s on average (median `{julia} f1(med_total)` s) with six solver processes sharing one machine; `{julia} pct(1 - mean(rt.execute_s) / mean(rt.total_s), d = 0)` of that is system and model construction rather than the solve, and `{julia} n_stall` intervals stall for more than five minutes (up to 35) in a single phase, which inflates the mean. We close by placing the work in the design of PowerSimulations.jl.
+We benchmark the NEMDE replica in `AustralianElectricityMarketsSimulations` (a PowerSimulations.jl dispatch problem built from AEMO MMSDM data) against the dispatch outcomes AEMO published, following the interval-by-interval protocol of nempy [@gorman2022nempy]. Rather than a uniform random sample of intervals, we draw `{julia} fint(nrow(rt))` intervals of calendar year 2025, one at random from each of 1000 equal-count strata of the system-demand load duration curve, so that the sample represents the whole demand range, including the scarcity tail. Each interval is solved independently from AEMO's observed state, with NEMDE's two-run fast-start procedure where the interval contains a fast-start unit. Against the published regional reference price (ROP), `{julia} pct(exact_share)` of the `{julia} fint(n_prices)` regional prices agree to within 0.001 \$/MWh, the median error is exactly zero, and the mean signed error is `{julia} f3(mean(e))` \$/MWh (nempy: `{julia} NEMPY.mean`, on a different sample). Only `{julia} nint_large` of the `{julia} fint(n_int)` intervals have any price error above 1 \$/MWh. We trace the residual differences to three families: ties in the offer stack that leave the dual solution non-unique, genuine differences in the primal dispatch in a small set of intervals, and gaps in the source data. A direct test of whether each published price is an optimal price of our model shows that about a quarter of the differing prices, including all the Tasmanian regulation ties, are degenerate and so cannot be reproduced by any formulation, while most of the rest, chiefly small mainland contingency FCAS differences, are not. A full interval takes `{julia} f1(mean(rt.total_s))` s on average (median `{julia} f1(med_total)` s) with six solver processes sharing one machine; `{julia} pct(1 - mean(rt.execute_s) / mean(rt.total_s), d = 0)` of that is system and model construction rather than the solve, and `{julia} n_stall` intervals stall for more than five minutes (up to 35) in a single phase, which inflates the mean. We close by placing the work in the design of PowerSimulations.jl.
 
 # Introduction
 
@@ -603,7 +603,87 @@ The Basslink interconnector (`T-V-MNSP1`) is a price setter on the TAS1-side off
 
 The same interval shows the same pattern in a second market. TAS1 `RAISEREG` is 7.24 \$/MW in AEMSim against 6.24 \$/MW published. NEMDE's price-setter file names `TUNGATIN` at band 3 (6.24), and that unit clears 22 MW against a 22 MW band: again exactly the band edge, and again NEMDE reports the lower band. AEMO's constraint FAQ specifies pro-rata tie-breaking for price-tied *energy* bands and states that it does not apply to FCAS [@aemo_constraint_faq], so the FCAS case at least has no specified rule.
 
-Two cautions apply. First, this is one interval: we have not yet shown that NEMDE resolves every band-edge tie to the lower band, and other intervals in this family have prices that are *lower* than published (for example 2025-06-16 SA1, 2025-07-26 TAS1, 2025-11-01 QLD1), so no single direction of bias explains them. Second, we do not know why NEMDE lands 0.00013 MW inside the band; it may be solver tolerance rather than a rule.
+Two cautions apply. First, this is one interval, and other intervals with differing prices have solved prices *lower* than published (for example 2025-06-16 SA1, 2025-07-26 TAS1, 2025-11-01 QLD1), so no single direction of bias explains them. Second, we do not know why NEMDE lands 0.00013 MW inside the band; it may be solver tolerance rather than a rule. @sec-dualrange tests the degeneracy explanation on every differing price.
+
+## Testing the degeneracy explanation {#sec-dualrange}
+
+AEMO states that the outcome of FCAS ties is left to the solver: "FCAS price-tied offers will be dispatched randomly over dispatch intervals based on how the LP optimization process in NEMDE approached that solution" [@aemo_cvp_schedule]. NEMDE's tie-break rows apply to energy offers only [@aemo_constraint_faq]. Where the dispatch problem has more than one optimal price, no formulation can be expected to reproduce NEMDE's choice, so such differences are not model error. The question is how many of the remaining differences are of this kind.
+
+A price difference is explained by degeneracy only if AEMO's published price is itself an optimal price of our model. This can be tested directly. For an LP with its binaries fixed, the optimal cost is a convex, piecewise-linear function of the right-hand side of any row, and the set of optimal duals of that row is the interval between its left and right slopes. We re-solved every interval with a differing energy or FCAS price, fixed the binaries at the optimum as the dual pass does, and moved the right-hand side of the rows behind each differing price by $\pm h$ MW: the regional energy balance for an energy price, or every FCAS requirement constraint of that region and service for an FCAS price, whose summed dual is the regional FCAS price as in `DISPATCH_FCAS_REQ`. The dual of each moved LP is the price on that side. If the published price lies between the two sides at $h = 0.001$ MW, it is an optimal price of our model at its operating point and the difference is pure degeneracy. If it is only reached at a larger $h$, our model would produce it with that much more or less demand or requirement, so the published price sits at a nearby breakpoint and the difference is not degeneracy. The probe is `scripts/dual_range_probe.jl`, and its output `dual_ranges.csv` is read here.
+
+```{julia}
+#| output: false
+const H_MW = ["0.001", "0.01", "0.1", "1.0", "10.0"]
+dr = rd("dual_ranges.csv")
+function dual_distance(r, col = :published)
+    p = r[col]
+    for h in H_MW
+        (r[Symbol("p_down_", h)] - EXACT <= p <= r[Symbol("p_up_", h)] + EXACT) && return h
+    end
+    return "none"
+end
+const DR_LABEL = Dict(
+    "0.001" => "degenerate (0.001 MW)", "0.01" => "within 0.01 MW", "0.1" => "within 0.1 MW",
+    "1.0" => "within 1 MW", "10.0" => "within 10 MW", "none" => "beyond 10 MW",
+)
+const DR_ORDER = ["degenerate (0.001 MW)", "within 0.01 MW", "within 0.1 MW", "within 1 MW", "within 10 MW", "beyond 10 MW"]
+dr.distance = [DR_LABEL[dual_distance(r)] for r in eachrow(dr)]
+dr.abs_error = abs.(dr.solved_benchmark .- dr.published)
+dr.kind = ifelse.(dr.market .== "ENERGY", "energy", "FCAS")
+n_probe = nrow(dr)
+n_probe_int = length(unique(dr.interval))
+n_degen = count(==(DR_ORDER[1]), dr.distance)
+n_near = count(==(DR_ORDER[2]), dr.distance)
+n_not = n_probe - n_degen - n_near
+bench_in_range = count(r -> dual_distance(r, :solved_benchmark) == "0.001", eachrow(dr))
+moved = filter(r -> abs(r.solved_rerun - r.solved_benchmark) >= EXACT, dr)
+moved_to_pub = count(r -> abs(r.solved_rerun - r.published) < EXACT, eachrow(moved))
+tasreg = filter(r -> r.region == "TAS1" && r.market in ("RAISEREG", "LOWERREG") && abs(r.abs_error - 1) < 0.02, dr)
+lswap = filter(r -> r.market in ("LOWER6SEC", "LOWER60SEC"), dr)
+mainland_raise = filter(r -> r.market in ("RAISE6SEC", "RAISE60SEC", "RAISE5MIN", "RAISE1SEC"), dr)
+iv_worst = combine(groupby(dr, :interval), :distance => (v -> DR_ORDER[maximum(indexin(v, DR_ORDER))]) => :worst)
+n_iv_degen = count(==(DR_ORDER[1]), iv_worst.worst)
+```
+
+`{julia} fint(n_probe)` regional prices differ from the published value by more than 0.001 \$/MWh in `{julia} fint(n_probe_int)` intervals. The probe classifies them in @tbl-dualrange.
+
+```{julia}
+#| label: tbl-dualrange
+#| tbl-cap: "Differing prices by the smallest right-hand-side move, in MW, at which the published price becomes an optimal price of the model. 'Degenerate' prices are optimal prices of the model as solved; the others need the demand or requirement to move by up to the stated amount. Absolute errors are solved minus published, in \\$/MWh."
+let
+    g = combine(groupby(dr, [:distance, :kind]), nrow => :n, :abs_error => median => :median_abs_error, :abs_error => maximum => :max_abs_error)
+    w = unstack(select(g, :distance, :kind, :n), :kind, :n; fill = 0)
+    m = combine(groupby(dr, :distance), nrow => :all, :abs_error => (v -> round(median(v); sigdigits = 3)) => :median_abs_error,
+        :abs_error => (v -> round(maximum(v); sigdigits = 3)) => :max_abs_error)
+    t = leftjoin(m, w; on = :distance)
+    t.order = indexin(t.distance, DR_ORDER)
+    sort!(t, :order)
+    mdtable(select(t, :distance, :energy, :FCAS, :all, :median_abs_error, :max_abs_error))
+end
+```
+
+```{julia}
+#| label: tbl-dualrange-market
+#| tbl-cap: "Differing prices by market and class."
+let
+    g = combine(groupby(dr, [:market, :distance]), nrow => :n)
+    w = unstack(g, :distance, :n; fill = 0)
+    cols = [c for c in DR_ORDER if c in names(w)]
+    mdtable(sort(select(w, :market, cols...), :market))
+end
+```
+
+The result does not support the hypothesis that all remaining differences are degeneracy. `{julia} fint(n_degen)` of the `{julia} fint(n_probe)` differing prices (`{julia} pct(n_degen / n_probe)`) are optimal prices of our model, and in `{julia} n_iv_degen` of the `{julia} n_probe_int` intervals every differing price is. These are the regulation and contingency patterns that look like ties:
+
+- **Tasmanian regulation.** All `{julia} nrow(tasreg)` TAS1 `RAISEREG` and `LOWERREG` prices that differ by about 1.00 \$/MW are degenerate. These are the band-edge ties of @tbl-pricesetter: the model admits every price between two adjacent FCAS bands, and NEMDE reported the other band.
+- **Lower contingency pairs.** `{julia} count(==(DR_ORDER[1]), lswap.distance)` of the `{julia} nrow(lswap)` `LOWER6SEC` and `LOWER60SEC` prices are degenerate. They come in pairs with equal and opposite errors: an offer that serves both services makes only the sum of the two prices unique.
+- **Re-solving the same interval moves the price.** `{julia} nrow(moved)` of the differing prices change when the interval is solved again, and `{julia} moved_to_pub` of them then match the published price exactly. Every benchmark price but `{julia} n_probe - bench_in_range` is an optimal price of the re-solved model, so the benchmark and the re-solve picked different optimal prices of the same problem.
+
+The other `{julia} fint(n_not)` prices (`{julia} pct(n_not / n_probe)`), and `{julia} n_near` that is only reached 0.01 MW away (the TAS1 energy price of 2025-07-07 12:15 above), are not degenerate: our model has one optimal price there, and it is not NEMDE's. Most are small. The median absolute error of the prices beyond 10 MW is `{julia} f2(median(dr.abs_error[dr.distance .== DR_ORDER[end]]))` \$/MW. They concentrate in the mainland raise contingency services, with `{julia} nrow(mainland_raise)` prices, `{julia} pct(count(!=(DR_ORDER[1]), mainland_raise.distance) / nrow(mainland_raise))` of them not degenerate. In the typical case our price does not move under a 10 MW change in the requirement (for example 0.23 against 0.10 \$/MW for `RAISE5MIN` on 2025-01-01 12:25), so NEMDE and the replica clear a different marginal FCAS band. That points to a difference in FCAS availability or requirement inputs, not to the choice of dual. The energy prices that are not degenerate mostly become NEMDE's price within 1 to 10 MW of demand, which is consistent with small differences in offered or available MW. We have not diagnosed these differences.
+
+Two limits apply to the test. It probes one price at a time, so a degenerate price is shown to be an optimal price on its own, not that NEMDE's whole price vector is optimal for our model; for the non-degenerate prices this does not matter, since failing on one price is enough. It also holds the binaries at the re-solved optimum. NEMDE may fix interconnector loss segments or MNSP directions differently at the same objective, which would give a different LP. The re-solved model does not admit the benchmark price for the two energy prices of 2025-09-20 13:35 and that of 2025-05-28 17:25, so there the two solves produced different fixed LPs, through different binaries or through code changes since the benchmark commit. Such a change of LP cannot account for the many differences that persist under a 10 MW move.
+
+Degenerate differences need no model change, because AEMO leaves the choice of FCAS tie to the solver. The non-degenerate ones need further investigation, and the per-price classification in `dual_ranges.csv` says which is which.
 
 The vertex chosen at such a point does not depend on the inputs alone. A refactor of system construction, checked outside this benchmark on ten sampled intervals, moved FCAS prices at two of them, and a later change moved them back. At both intervals the runs before and after the refactor have the same objective, the same dispatch for every unit, and the same interconnector flows and energy prices. At 2025-04-29 22:15, the system built before the refactor and the one built after the later change hold identical values in all 18,678 of their time series. Mainland `RAISEREG` at 2025-04-29 22:15 went from 18.65 to 17.53 \$/MW (published 17.53) and back to 18.65. TAS1 `LOWERREG` at 2025-03-11 16:00 went from 3.31 to 2.82 (published 2.49) and back to 3.31. With the solver and its options unchanged, the order in which the model is assembled is enough to change which optimal dual HiGHS returns. An FCAS price that moves closer to or further from NEMDE while the primal solution is unchanged therefore says nothing about model fidelity, and we compare code revisions on inputs, objective and dispatch first.
 
@@ -686,6 +766,10 @@ julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/nempy_b
 # failed intervals (source gaps) are redrawn and solved with:
 julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/nempy_benchmark.jl \
     --resample true --workers 6 --output "$HOME/aem_validation/ldc-2025"
+# optimal-price ranges of the differing prices (targets: interval,market,region,published,solved),
+# concatenated into analysis/dual_ranges.csv:
+julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/dual_range_probe.jl \
+    targets.csv dual_ranges.csv
 # this report:
 quarto render benchmarking/report/ldc_benchmark.qmd
 ```
