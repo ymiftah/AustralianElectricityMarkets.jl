@@ -562,6 +562,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The pinned PowerSimulations fork is the `aemsim/minimal` branch: upstream PowerSimulations `main` plus only the commits AEMSim needs (meta-keyed time-series parameters, infinite `Interval` row bounds, the dual LP fixes, the system-expression `OrderedDict`, the objective resync flag, and the time-series and cache speedups). The fork's constraint coefficient and bound parameters, `NetworkModel` `slack_cost` and time-series cost parameters are no longer included.
 - Every reader writes its query out in full instead of assembling it from SQL-building helpers, with run selection, version resolution and resolution buckets in the query itself. `read_fcas_prices` and `read_fcas_dispatch` unpivot in DuckDB, `read_fcas_bids` carries each coarse bucket's last-interval trapezium in the bid query, and `read_bids` / `read_offers` join price bands in one query. Outputs are unchanged on the real 2025-01-15 and 2026-03-10 caches; `read_offers` over six hours runs in 0.76 s instead of 0.96 s, and each row now owns its `PRICEBANDARRAY` vector.
 
 - The NEMDE HiGHS relative MIP gap is `1e-9` (was `1e-8`) in `NEMDE_HIGHS_OPTIONS`, the batch runner and the baseline comparison; the absolute gap stays `1e-10`. At `1e-8` some intervals stopped short of the optimum with an interconnector on a loss breakpoint, mispricing the region by up to 4 $/MWh.
