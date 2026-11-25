@@ -3,8 +3,8 @@
 # Each interval is re-solved as the batch runner solves it (two-run fast start, `nemde_optimizer`). The binaries of
 # the dispatch run are then fixed at their optimum, as in the dual pass, and the right-hand side of each target
 # price's rows is moved by +h and -h MW for each h in `H_MW`. The dual of each perturbed LP is the price there; the
-# value function is convex in the right-hand side, so the price is non-decreasing in the move, and at the smallest h
-# the closed range between the two sides is every price the fixed LP admits at its optimum.
+# value function is convex in the right-hand side, so the price is non-decreasing in the move. At each h, the closed
+# range between the two sides brackets the optimal prices within ±h MW of the operating point.
 #
 #     julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/dual_range_probe.jl \
 #         <targets.csv> <out.csv> [hive_location]
@@ -23,9 +23,21 @@ const JuMP = PSI.JuMP
 const MOI = JuMP.MOI
 const DECISION = "dispatch"
 # Right-hand-side moves, in MW, at which the one-sided price is read.
-const H_MW = (1.0e-3, 1.0e-2, 1.0e-1, 1.0, 10.0)
+const H_MW = (1.0e-4, 1.0e-3, 1.0e-2, 1.0e-1, 1.0, 10.0)
+# Tolerance, in the price's unit ($/MWh for energy, $/MW for FCAS), for matching a re-run price to a dual range.
+const MATCH_TOL = 1.0e-6
+# Commit of the checkout that ran the probe, recorded in every row.
+const GIT_COMMIT = readchomp(`git -C $(@__DIR__) rev-parse HEAD`)
+function price_columns()
+    return ["p_$(side)_$(h)" for h in H_MW for side in ("up", "down")]
+end
 
-price_columns() = ["p_$(side)_$(h)" for h in H_MW for side in ("up", "down")]
+# Column names of every row in the order written; an output file's header must equal this.
+const COLUMNS = [
+    "interval", "market", "region", "n_rows", "published", "solved_benchmark", "solved_rerun",
+    "fixed_lp_dual", "fixed_lp_matches", "git_commit",
+]
+const HEADER = join([COLUMNS; price_columns()], ',')
 
 function read_targets(path)
     lines = readlines(path)
@@ -45,6 +57,22 @@ function shift!(jm, c, delta)
         MOI.set(jm, MOI.ConstraintSet(), c, MOI.Interval(set.lower + delta, set.upper + delta))
     else
         JuMP.set_normalized_rhs(c, JuMP.normalized_rhs(c) + delta)
+    end
+    return
+end
+
+# Returns the set of row `c` if it is an interval, else its normalized right-hand side.
+function current_rhs(jm, c)
+    set = MOI.get(jm, MOI.ConstraintSet(), c)
+    return set isa MOI.Interval ? set : JuMP.normalized_rhs(c)
+end
+
+# Sets the right-hand side of row `c` back to a value returned by `current_rhs`.
+function restore_rhs!(jm, c, rhs)
+    if rhs isa MOI.Interval
+        MOI.set(jm, MOI.ConstraintSet(), c, rhs)
+    else
+        JuMP.set_normalized_rhs(c, rhs)
     end
     return
 end
@@ -110,17 +138,20 @@ function probe_interval(db, t, targets)
     z0 = solve_lp!(jm)
     base = PSY.get_base_power(sys)
     scale = base * interval_hours(DISPATCH_INTERVAL)
+    # Read before any perturbation, so every target sees the duals of the same fixed LP.
+    rows_of = [price_rows(container, sys, r.market, r.region) for r in eachrow(targets)]
+    fixed_duals = [isempty(rows) ? NaN : sum(JuMP.dual, rows) / scale for rows in rows_of]
 
     out = DataFrame()
-    for r in eachrow(targets)
-        rows = price_rows(container, sys, r.market, r.region)
+    for (i, r) in enumerate(eachrow(targets))
+        rows = rows_of[i]
         rerun = if r.market == "ENERGY"
             only(solved.prices.ROP[solved.prices.REGIONID .== r.region])
         else
             sel = (solved.fcas_prices.REGIONID .== r.region) .& (string.(solved.fcas_prices.BIDTYPE) .== r.market)
             any(sel) ? only(solved.fcas_prices.ROP[sel]) : NaN
         end
-        fixed_lp = isempty(rows) ? NaN : sum(JuMP.dual, rows) / scale
+        saved = [current_rhs(jm, c) for c in rows]
         prices = Dict{String, Float64}()
         for h in H_MW, (side, sgn) in (("up", 1), ("down", -1))
             key = "p_$(side)_$(h)"
@@ -129,15 +160,20 @@ function probe_interval(db, t, targets)
             foreach(c -> shift!(jm, c, d), rows)
             solve_lp!(jm)
             prices[key] = sum(JuMP.dual, rows) / scale
-            foreach(c -> shift!(jm, c, -d), rows)
+            foreach((c, rhs) -> restore_rhs!(jm, c, rhs), rows, saved)
         end
         # Re-solve the restored LP so that the next target reads the duals at the operating point.
         isempty(rows) || (z_back = solve_lp!(jm))
         isempty(rows) || isapprox(z_back, z0; rtol = 1.0e-9, atol = 1.0e-6) ||
             @warn "Restored LP objective $z_back differs from $z0"
+        lo, hi = prices["p_down_$(first(H_MW))"], prices["p_up_$(first(H_MW))"]
+        matches = all(isfinite, (lo, hi, rerun)) && lo - MATCH_TOL <= rerun <= hi + MATCH_TOL
+        isempty(rows) || matches ||
+            @warn "Re-run price $rerun of $(r.market) in $(r.region) at $t is outside the fixed LP's dual range [$lo, $hi]"
         row = (;
             interval = r.interval, market = r.market, region = r.region, n_rows = length(rows),
-            published = r.published, solved_benchmark = r.solved, solved_rerun = rerun, fixed_lp_dual = fixed_lp,
+            published = r.published, solved_benchmark = r.solved, solved_rerun = rerun, fixed_lp_dual = fixed_duals[i],
+            fixed_lp_matches = matches, git_commit = GIT_COMMIT,
         )
         push!(out, merge(row, NamedTuple(Symbol(k) => prices[k] for k in price_columns())))
     end
@@ -148,27 +184,35 @@ end
 function main(args = ARGS)
     targets = read_targets(args[1])
     out_path = args[2]
+    if isfile(out_path) && filesize(out_path) > 0
+        first_line = readline(out_path)
+        first_line == HEADER || error("$out_path has header `$first_line`, not `$HEADER`; start a fresh output file")
+    end
     hive = length(args) >= 3 ? args[3] : joinpath(homedir(), ".nemdb_cache")
     db = aem_connect(HiveConfiguration(hive_location = hive))
     for (i, g) in enumerate(groupby(targets, :interval; sort = true))
         t = first(g.interval)
-        done = isfile(out_path) && any(startswith(l, string(t)) for l in readlines(out_path))
+        # A failed probe writes `n_rows == -1` (the fourth column), which does not count as done.
+        done = isfile(out_path) && any(l -> startswith(l, string(t)) && split(l, ',')[4] != "-1", readlines(out_path))
         done && continue
         t0 = time()
         frame = try
             probe_interval(db, t, g)
         catch err
+            err isa InterruptException && rethrow()
             @error "Probe of $t failed" exception = (err, catch_backtrace())
             frame = DataFrame(;
                 interval = g.interval, market = g.market, region = g.region, n_rows = -1, published = g.published,
-                solved_benchmark = g.solved, solved_rerun = NaN, fixed_lp_dual = NaN,
+                solved_benchmark = g.solved, solved_rerun = NaN, fixed_lp_dual = NaN, fixed_lp_matches = false,
+                git_commit = GIT_COMMIT,
             )
             foreach(c -> frame[!, c] .= NaN, price_columns())
             frame
         end
-        new = !isfile(out_path)
+        join(names(frame), ',') == HEADER || error("Probe of $t produced columns other than the header")
+        new = !isfile(out_path) || filesize(out_path) == 0
         open(out_path, "a") do io
-            new && println(io, join(names(frame), ','))
+            new && println(io, HEADER)
             for r in eachrow(frame)
                 println(io, join((string(x) for x in r), ','))
             end
