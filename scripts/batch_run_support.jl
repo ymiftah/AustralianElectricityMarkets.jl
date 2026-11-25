@@ -206,7 +206,7 @@ function parse_options(args)
         "seed" => "20261026", "hive" => joinpath(homedir(), ".nemdb_cache"),
         "output" => "", "intervals-file" => "", "sample" => "",
         "solver-threads" => "1", "cache-size-mib" => "64",
-        "time-series-in-memory" => "false", "closed-loop" => "false", "fast-start" => "true", "start" => "", "intervals" => "",
+        "time-series-in-memory" => "true", "closed-loop" => "false", "fast-start" => "true", "start" => "", "intervals" => "",
     )
     iseven(length(args)) || throw(ArgumentError("options require --name value pairs; use --help"))
     for i in 1:2:length(args)
@@ -366,15 +366,24 @@ function supervise(options)
     script = joinpath(@__DIR__, "batch_run.jl")
     println("Run output: $folder\nDetailed log: $(joinpath(folder, "run.log"))")
     flush(stdout)
-    outcome = run_schedule(
-        folder, days, 3600 * parse(Float64, options["hours"]);
-        elapsed = () -> (time_ns() - started_ns) / 1.0e9
-    ) do day, day_folder
-        write_status(folder, "loading"; trading_day = string(day))
-        command = `$(Base.julia_cmd()) --project=$project $script --worker $folder $day`
-        run_worker(command, folder, started_ns)
-        totals = TOML.parsefile(joinpath(day_folder, "worker_outcome.toml"))
-        return (; (Symbol(k) => v for (k, v) in sort!(collect(totals); by = first))...)
+    command = `$(Base.julia_cmd()) --project=$project $script --worker-loop $folder`
+    worker = Ref{Union{Nothing, Base.Process}}(nothing)
+    outcome = open(joinpath(folder, "run.log"), "a") do log
+        returned = false
+        try
+            result = run_schedule(
+                folder, days, 3600 * parse(Float64, options["hours"]);
+                elapsed = () -> (time_ns() - started_ns) / 1.0e9
+            ) do day, day_folder
+                run_day!(worker, command, folder, day, day_folder, started_ns, log)
+                totals = TOML.parsefile(joinpath(day_folder, "worker_outcome.toml"))
+                return (; (Symbol(k) => v for (k, v) in sort!(collect(totals); by = first))...)
+            end
+            returned = true
+            result
+        finally
+            _stop_worker!(worker; graceful = returned)
+        end
     end
     open(joinpath(folder, "outcome.toml"), "w") do io
         TOML.print(
@@ -390,43 +399,87 @@ function supervise(options)
     return
 end
 
-# The supervisor owns this child and polls its status every `poll_seconds`, printing the phase when it
-# changes and at least once a minute. The admission deadline never interrupts an admitted child.
-function run_worker(command::Cmd, folder, started_ns; poll_seconds = 5.0, notice = true, on_poll = nothing)
-    return open(joinpath(folder, "run.log"), "a") do log
-        worker = run(pipeline(command; stdout = log, stderr = log); wait = false)
-        worker_pid = getpid(worker)
-        last_notice, last_phase = -Inf, ""
+# Prints the worker's phase when it changes and at least once a minute; returns the updated notice state.
+function _notify(folder, started_ns, worker, last; notice)
+    elapsed_s = (time_ns() - started_ns) / 1.0e9
+    status = read_status(folder)
+    phase = "$(status.trading_day) $(status.phase)"
+    (notice && (phase != last.phase || elapsed_s - last.at >= 60)) || return last
+    println("$(now(UTC)) elapsed=$(round(elapsed_s; digits = 1))s $phase pid=$(getpid(worker))")
+    flush(stdout)
+    return (; at = elapsed_s, phase)
+end
+
+# Stops a worker that is still running: SIGTERM, then SIGKILL if it ignores SIGTERM for 5 s.
+function _reap!(worker::Base.Process)
+    if process_running(worker)
+        kill(worker, Base.SIGTERM)
+        # Reap even children that ignore SIGTERM, without waiting indefinitely.
+        timedwait(() -> !process_running(worker), 5.0; pollint = 0.05) == :timed_out && kill(worker, Base.SIGKILL)
         try
-            while process_running(worker)
-                elapsed_s = (time_ns() - started_ns) / 1.0e9
-                isnothing(on_poll) || on_poll(worker_pid)
-                status = read_status(folder)
-                phase = "$(status.trading_day) $(status.phase)"
-                if notice && (phase != last_phase || elapsed_s - last_notice >= 60)
-                    println("$(now(UTC)) elapsed=$(round(elapsed_s; digits = 1))s $phase pid=$worker_pid")
-                    flush(stdout)
-                    last_notice, last_phase = elapsed_s, phase
-                end
-                # Wake as soon as the worker exits rather than at the next poll.
-                timedwait(() -> process_exited(worker), poll_seconds; pollint = 0.05)
-            end
             wait(worker)
-            success(worker) || throw(ProcessFailedException(worker))
-        finally
-            if process_running(worker)
-                kill(worker, Base.SIGTERM)
-                # Reap even children that ignore SIGTERM, without waiting indefinitely.
-                timedwait(() -> !process_running(worker), 5.0; pollint = 0.05) == :timed_out && kill(worker, Base.SIGKILL)
-                try
-                    wait(worker)
-                catch err
-                    err isa ProcessFailedException || rethrow()
-                end
-            end
+        catch err
+            err isa ProcessFailedException || rethrow()
         end
-        return worker_pid
     end
+    return
+end
+
+# Stops the worker in `worker_ref` and empties the reference. Graceful closes its stdin so its loop ends, and
+# waits up to 30 s for it to exit before `_reap!`; otherwise it is reaped at once.
+function _stop_worker!(worker_ref; graceful::Bool)
+    running = worker_ref[]
+    worker_ref[] = nothing
+    isnothing(running) && return
+    if graceful && process_running(running)
+        close(running.in)
+        timedwait(() -> !process_running(running), 30.0; pollint = 0.05)
+    end
+    _reap!(running)
+    return
+end
+
+# Starts the worker in `worker_ref` unless one is running there, and returns it.
+function _start_worker!(worker_ref, command::Cmd, folder, day::Date, log)
+    if isnothing(worker_ref[]) || !process_running(worker_ref[])
+        write_status(folder, "loading"; trading_day = string(day))
+        worker_ref[] = open(pipeline(command; stdout = log, stderr = log), "w")
+    end
+    return worker_ref[]
+end
+
+# Runs one day in the persistent worker in `worker_ref`, starting it when none is running, and waits until the
+# day's `worker_outcome.toml` or `worker_error.txt` appears. The supervisor polls the status every `poll_seconds`
+# and never interrupts an admitted day. Throws `ProcessFailedException` when the worker exits without either file.
+function run_day!(
+        worker_ref, command::Cmd, folder, day::Date, day_folder, started_ns, log;
+        poll_seconds = 5.0, notice = true, on_poll = nothing,
+    )
+    worker = _start_worker!(worker_ref, command, folder, day, log)
+    try
+        println(worker, day)
+        flush(worker)
+    catch err
+        err isa Union{Base.IOError, EOFError} || rethrow()
+        # The worker died before reading the day: restart it and send the day once more.
+        _stop_worker!(worker_ref; graceful = false)
+        worker = _start_worker!(worker_ref, command, folder, day, log)
+        println(worker, day)
+        flush(worker)
+    end
+    outcome_path = joinpath(day_folder, "worker_outcome.toml")
+    error_path = joinpath(day_folder, "worker_error.txt")
+    last = (; at = -Inf, phase = "")
+    while !isfile(outcome_path) && !isfile(error_path) && process_running(worker)
+        isnothing(on_poll) || on_poll(worker)
+        last = _notify(folder, started_ns, worker, last; notice)
+        # Wake as soon as the day's files appear or the worker exits rather than at the next poll.
+        timedwait(() -> isfile(outcome_path) || isfile(error_path) || !process_running(worker), poll_seconds; pollint = 0.05)
+    end
+    isfile(outcome_path) && return
+    isfile(error_path) && error(read(error_path, String))
+    _stop_worker!(worker_ref; graceful = false)
+    throw(ProcessFailedException(worker))
 end
 
 end

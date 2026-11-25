@@ -2,7 +2,12 @@ if !isdefined(@__MODULE__, :BatchRunWorker)
     include(joinpath(@__DIR__, "..", "..", "scripts", "batch_run.jl"))
     include(joinpath(@__DIR__, "..", "..", "scripts", "batch_run_worker.jl"))
 end
-using .BatchRunWorker: _problem_day, _round_utc_offset, _utc_offset
+using .BatchRunWorker: _problem_day, _round_utc_offset, _rss_mib, _utc_offset
+
+@testset "worker resident set size is read from ps" begin
+    rss = _rss_mib()
+    @test Sys.iswindows() ? isnan(rss) : 0 < rss < Sys.total_memory() / 2^20
+end
 
 @testset "interval timing UTC offset is rounded to quarter hours" begin
     @test _round_utc_offset(36_000_000 + 400_000) == Millisecond(36_000_000)

@@ -1,6 +1,6 @@
-# Worker of the overnight batch runner: runs one trading day in this process and writes its
-# outputs into the day folder. Included only by `batch_run.jl --worker`, so the supervisor
-# never loads the market packages.
+# Worker of the overnight batch runner: runs trading days in this process and writes their
+# outputs into the day folders. Included only by `batch_run.jl --worker-loop`, so the
+# supervisor never loads the market packages.
 
 module BatchRunWorker
 
@@ -433,11 +433,22 @@ function _write_interval_timings!(simulation, model, results)
     return path
 end
 
-function main(folder, day::Date)
-    config = TOML.parsefile(joinpath(folder, "run.toml"))
-    day_folder = joinpath(folder, string(day))
+# Writes `text` to `path` through a temporary file, so a polling supervisor never reads a partial file.
+function _publish(path, text)
+    open(path * ".tmp", "w") do io
+        write(io, text)
+    end
+    Base.Filesystem.rename(path * ".tmp", path)
+    return
+end
+
+# The provenance of this worker process, captured once at start: its revision, checkout state, and
+# snapshots of the package and runner sources it loaded, under `folder/worker_<pid>`.
+function _worker_provenance(folder)
+    pid = getpid()
+    worker_folder = joinpath(folder, "worker_$pid")
     package_root = dirname(dirname(pathof(AustralianElectricityMarkets)))
-    actual_revision = try
+    revision = try
         readchomp(`git -C $package_root rev-parse HEAD`)
     catch
         "unknown"
@@ -447,7 +458,25 @@ function main(folder, day::Date)
     catch
         "unknown"
     end
-    package_hashes = BatchRunSupport.snapshot_package_sources(package_root, joinpath(day_folder, "package_source"))
+    package_source = joinpath(worker_folder, "package_source")
+    package_hashes = BatchRunSupport.snapshot_package_sources(package_root, package_source)
+    runner_source = joinpath(worker_folder, "runner_source")
+    mkpath(runner_source)
+    for name in readdir(@__DIR__)
+        any(ext -> endswith(name, ext), (".jl", ".py", ".md")) && cp(joinpath(@__DIR__, name), joinpath(runner_source, name))
+    end
+    source_hashes = Dict(
+        name => bytes2hex(sha256(read(joinpath(runner_source, name)))) for name in readdir(runner_source) if endswith(name, ".jl")
+    )
+    return (;
+        pid, started_utc = string(now(UTC)), revision, checkout_status, package_source,
+        package_source_hashes = package_hashes, runner_source, source_hashes,
+    )
+end
+
+function main(folder, day::Date; worker = _worker_provenance(folder))
+    config = TOML.parsefile(joinpath(folder, "run.toml"))
+    day_folder = joinpath(folder, string(day))
     time_series_in_memory = parse(Bool, config["time-series-in-memory"])
     closed_loop = parse(Bool, get(config, "closed-loop", "false"))
     fast_start = parse(Bool, get(config, "fast-start", "true"))
@@ -464,9 +493,12 @@ function main(folder, day::Date)
             "seed" => config["seed"], "first" => config["first"], "last" => config["last"],
             "day_intervals" => length(day_intervals),
         ),
-        "revision" => actual_revision, "supervisor_revision" => config["git_revision"],
+        "revision" => worker.revision, "supervisor_revision" => config["git_revision"],
+        "worker_pid" => worker.pid, "worker_started_utc" => worker.started_utc,
+        "package_source" => worker.package_source, "runner_source" => worker.runner_source,
         "time_series_in_memory" => time_series_in_memory, "closed_loop" => closed_loop, "fast_start" => fast_start,
-        "checkout_status" => checkout_status, "package_source_hashes" => package_hashes, "optimization_level" => Int(Base.JLOptions().opt_level),
+        "checkout_status" => worker.checkout_status, "package_source_hashes" => worker.package_source_hashes,
+        "optimization_level" => Int(Base.JLOptions().opt_level),
         "julia" => string(VERSION), "psi" => string(Base.pkgversion(PSI)),
         "highs_package" => string(Base.pkgversion(HiGHS)),
         "hdf5" => string(Base.pkgversion(HDF5)),
@@ -476,13 +508,9 @@ function main(folder, day::Date)
         "mip_rel_gap" => Dict(NEMDE_HIGHS_OPTIONS)["mip_rel_gap"], "mip_abs_gap" => Dict(NEMDE_HIGHS_OPTIONS)["mip_abs_gap"],
         "highs_options" => Dict{String, Any}(name => value for (name, value) in NEMDE_HIGHS_OPTIONS),
         "instrumentation" => "interval_timings.csv is read from PSI recorder events and optimizer stats after execute!; TimerOutputs trees in timers_*.toml overlap",
-        "source_hashes" => Dict(name => bytes2hex(sha256(read(joinpath(@__DIR__, name)))) for name in readdir(@__DIR__) if endswith(name, ".jl")),
+        "source_hashes" => worker.source_hashes,
     )
-    source_folder = joinpath(day_folder, "runner_source")
-    mkpath(source_folder)
-    for name in readdir(@__DIR__)
-        any(ext -> endswith(name, ext), (".jl", ".py", ".md")) && cp(joinpath(@__DIR__, name), joinpath(source_folder, name))
-    end
+    mkpath(day_folder)
     open(joinpath(day_folder, "provenance.toml"), "w") do io
         TOML.print(io, provenance)
     end
@@ -522,17 +550,63 @@ function main(folder, day::Date)
             totals = save_day(day_folder, result)
             println("Completed $day: $totals")
             flush(stdout)
-            open(joinpath(day_folder, "worker_outcome.toml"), "w") do io
-                TOML.print(io, Dict(string(k) => v for (k, v) in pairs(totals)))
-            end
+            _publish(
+                joinpath(day_folder, "worker_outcome.toml"),
+                sprint(TOML.print, Dict(string(k) => v for (k, v) in pairs(totals))),
+            )
         finally
             DuckDB.close(db.db)
         end
     catch err
-        write(joinpath(day_folder, "worker_error.txt"), sprint(showerror, err, catch_backtrace()) * "\n")
+        _publish(joinpath(day_folder, "worker_error.txt"), sprint(showerror, err, catch_backtrace()) * "\n")
         rethrow()
     end
     return
+end
+
+# Runs each trading day named on stdin, one per line, in this process until stdin closes. A failed day
+# is recorded in its folder and the next day runs.
+function serve(folder)
+    worker = _worker_provenance(folder)
+    for line in eachline(stdin)
+        isempty(strip(line)) && continue
+        day = Date(strip(line))
+        try
+            main(folder, day; worker)
+        catch err
+            err isa InterruptException && rethrow()
+            error_path = joinpath(folder, string(day), "worker_error.txt")
+            isfile(error_path) || _publish(error_path, sprint(showerror, err, catch_backtrace()) * "\n")
+        end
+        # Timers are reset between days so a sampled day's first timer file does not hold the previous day's last build.
+        PSI.TimerOutputs.reset_timer!(PSI.BUILD_PROBLEMS_TIMER)
+        PSI.TimerOutputs.reset_timer!(PSI.RUN_SIMULATION_TIMER)
+        GC.gc()
+        # WeakKeyDict entries are purged only on access, so touching each drops the finished day's model and system.
+        for dict in (
+                AustralianElectricityMarketsSimulations._COEFFICIENT_TARGETS,
+                AustralianElectricityMarketsSimulations._BOUND_TARGETS,
+                AustralianElectricityMarketsSimulations._BUILD_SCRATCH,
+            )
+            length(dict)
+        end
+        GC.gc()
+        write_csv(
+            joinpath(folder, "worker_memory.csv"), ("trading_day", "pid", "gc_live_mib", "rss_mib"),
+            [(day, Libc.getpid(), Base.gc_live_bytes() / 2^20, _rss_mib())]; append = true,
+        )
+    end
+    return
+end
+
+# Resident set size of this process in MiB, read from `ps` (KiB on Linux and macOS), or `NaN` when `ps` fails.
+function _rss_mib()
+    kib = try
+        parse(Float64, strip(readchomp(`ps -o rss= -p $(getpid())`)))
+    catch
+        return NaN
+    end
+    return kib / 2^10
 end
 
 end
