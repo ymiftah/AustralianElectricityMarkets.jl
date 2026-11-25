@@ -564,6 +564,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The batch runner's `--time-series-in-memory` defaults to `true`. With file-backed series every series read reopens the HDF5 file, and a warm sampled interval took about 23 s instead of about 5 s.
 - The overnight batch runner keeps one persistent worker process per supervisor and runs its trading days in sequence, restarting the worker only if it dies, instead of starting a fresh Julia process per day.
 - The pinned PowerSimulations fork is the `aemsim/minimal` branch: upstream PowerSimulations `main` plus only the commits AEMSim needs (meta-keyed time-series parameters, infinite `Interval` row bounds, the dual LP fixes, the system-expression `OrderedDict`, the objective resync flag, and the time-series and cache speedups). The fork's constraint coefficient and bound parameters, `NetworkModel` `slack_cost` and time-series cost parameters are no longer included.
 - Every reader writes its query out in full instead of assembling it from SQL-building helpers, with run selection, version resolution and resolution buckets in the query itself. `read_fcas_prices` and `read_fcas_dispatch` unpivot in DuckDB, `read_fcas_bids` carries each coarse bucket's last-interval trapezium in the bid query, and `read_bids` / `read_offers` join price bands in one query. Outputs are unchanged on the real 2025-01-15 and 2026-03-10 caches; `read_offers` over six hours runs in 0.76 s instead of 0.96 s, and each row now owns its `PRICEBANDARRAY` vector.

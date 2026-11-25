@@ -17,10 +17,10 @@ using .BatchRunSupport
     @test_throws ArgumentError parse_options(String[])
     defaults = parse_options(["--output", "runs/x"])
     @test defaults["output"] == abspath("runs/x")
-    for flag in ("time-series-in-memory", "closed-loop")
-        @test defaults[flag] == "false"
-        @test parse_options(["--output", "x", "--$flag", "true"])[flag] == "true"
-    end
+    @test defaults["time-series-in-memory"] == "true"
+    @test parse_options(["--output", "x", "--time-series-in-memory", "false"])["time-series-in-memory"] == "false"
+    @test defaults["closed-loop"] == "false"
+    @test parse_options(["--output", "x", "--closed-loop", "true"])["closed-loop"] == "true"
     @test batch_steps(parse_options(["--output", "x", "--start", "2026-06-04T04:05:00", "--intervals", "10"]), Date(2026, 6, 4)) ==
         DateTime(2026, 6, 4, 4, 5):Minute(5):DateTime(2026, 6, 4, 4, 50)
     @test batch_steps(defaults, Date(2026, 6, 4)) == trading_steps(Date(2026, 6, 4))

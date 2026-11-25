@@ -136,8 +136,9 @@ julia -O1 --project=AustralianElectricityMarketsSimulations/test \
     --solver-threads 1 --cache-size-mib 64
 ```
 
-`--time-series-in-memory true` holds the time series in memory (default `false`, on disk), which cuts
-per-step parameter updates but raises peak memory.
+`--time-series-in-memory` holds the time series in memory (default `true`). `false` writes them to an
+HDF5 file in the day folder, which lowers peak memory but reopens the file on every series read and makes
+each interval's model build and parameter updates several times slower.
 
 Every mode builds its decision models with `nem_dispatch_sequence`. When the system has a unit whose energy
 offer carries a fast-start profile, each interval runs NEMDE's two dispatch runs: the commitment run
@@ -271,7 +272,7 @@ flushed as they are written; successfully exported days survive later failures.
 | `days.csv` | One row per successfully exported day, with interval count and timing totals |
 | `failures.csv` | One row per failed day, elapsed time and exception; created only on failure |
 | `outcome.toml` | Final completed/failed counts, elapsed time and stopping reason |
-| `worker_memory.csv` | One row per day the worker finished: `trading_day`, worker `pid`, live GC memory and resident set size in MiB (`rss_mib` is `NaN` without `/proc`) |
+| `worker_memory.csv` | One row per day the worker finished: `trading_day`, worker `pid`, live GC memory and resident set size in MiB (`rss_mib` is `NaN` where `ps` is unavailable) |
 | `run.log` | Detailed worker and PSI output |
 | `YYYY-MM-DD/` | Day's comparison CSVs, timings, violations and native PSI result stores |
 

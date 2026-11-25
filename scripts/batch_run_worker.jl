@@ -599,11 +599,14 @@ function serve(folder)
     return
 end
 
-# Resident set size in MiB from `/proc/self/statm`, or `NaN` where that file does not exist.
+# Resident set size of this process in MiB, read from `ps` (KiB on Linux and macOS), or `NaN` when `ps` fails.
 function _rss_mib()
-    isfile("/proc/self/statm") || return NaN
-    resident_pages = parse(Int, split(read("/proc/self/statm", String))[2])
-    return resident_pages * 4096 / 2^20
+    kib = try
+        parse(Float64, strip(readchomp(`ps -o rss= -p $(getpid())`)))
+    catch
+        return NaN
+    end
+    return kib / 2^10
 end
 
 end

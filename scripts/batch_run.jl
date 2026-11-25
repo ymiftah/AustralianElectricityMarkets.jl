@@ -25,7 +25,7 @@ function main(args = ARGS)
               --hive FOLDER         Existing local market cache (~/.nemdb_cache)
               --solver-threads N    HiGHS threads (1)
               --cache-size-mib N    PSI results write cache in MiB (64)
-              --time-series-in-memory B  hold time series in memory (false)
+              --time-series-in-memory B  hold time series in memory (true)
               --closed-loop B       start each interval from the previous solve, not AEMO's state (false);
                                     not allowed with --sample or --intervals-file
               --fast-start B        run NEMDE's two fast-start runs when the system has a fast-start unit (true);
