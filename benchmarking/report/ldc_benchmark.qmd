@@ -59,6 +59,8 @@ ic = rd("interconnector_errors.csv")
 viol = rd("constraint_violations.csv")
 ldc = rd("load_duration_curve.csv"; dir = RUN)
 manifest = TOML.parsefile(joinpath(AN, "manifest.toml"))
+# Runner-overhead measurement: the same sampled intervals on disk-backed and in-memory time series.
+const AB = get(ENV, "AEM_RUNTIME_AB_RUN", joinpath(homedir(), "aem_validation", "runtime-ab"))
 
 # Markdown pipe table of a DataFrame: no type row, no row numbers, 4 significant digits.
 function mdtable(df::AbstractDataFrame)
@@ -203,7 +205,7 @@ Eleven of the first draw (1.1%) fell on 2025-09-30 and 2025-10-01, where AEMO's 
 
 ## Execution
 
-The 1000 intervals were grouped by trading day into six shards and solved by six concurrent worker processes on one Apple M5 machine (10 cores, 32 GB). Each shard is a separate batch-runner process that runs its trading days in one persistent Julia worker, builds a system covering one interval, builds the PSI decision models, solves, extracts results and compares them to the published tables, then discards the simulation folder. Intervals are independent: none starts from another's solution, only from AEMO's observed initial state. This is the same independent-solve protocol as the nempy benchmark. The run took about 8.5 hours of wall time.
+The 1000 intervals were grouped by trading day into six shards and solved by six concurrent worker processes on one Apple M5 machine (10 cores, 32 GB). Each shard is a separate batch-runner process that started a fresh Julia worker process for each trading day and held the time series on disk, the runner's defaults at the time (@sec-overheads). For each interval the worker builds a system, builds the PSI decision models, solves, extracts results and compares them to the published tables, then discards the simulation folder. Intervals are independent: none starts from another's solution, only from AEMO's observed initial state. This is the same independent-solve protocol as the nempy benchmark. The run took about 8.5 hours of wall time.
 
 ## Comparison metrics
 
@@ -570,9 +572,71 @@ mdtable(select(first(slow, 6), :interval, :system_demand_mw, :execute_s, :timed_
 
 Six workers delivered `{julia} f2(nrow(rt) / (wall_h * 60))` intervals per minute (`{julia} fint(nrow(rt))` intervals in about `{julia} wall_h` hours), a per-interval cost of `{julia} f1(total)` s for each worker slot. Two observations qualify this figure.
 
-First, the cost is dominated by building rather than solving, because each interval here builds a fresh system and model. This protocol is deliberately the most expensive way to use the code: it pays the full construction cost once per interval so that intervals are statistically independent. In the whole-day mode, a single system and sequence of decision models are built once and stepped through the day with parameter updates, and the same replica solved a 288-interval trading day (2024-12-15) in about 1105 s of wall time in a single process, about 3.8 s per interval, over an uncontended machine. That figure comes from an earlier, separate run, not from the benchmark above, and is not a like-for-like comparison, but it shows the order of magnitude of the amortised cost.
+First, the cost is dominated by building rather than solving, because each interval here builds a fresh system and model, and in this run reads its time series from an HDF5 file one series at a time (@sec-overheads). This protocol is deliberately the most expensive way to use the code: it pays the full construction cost once per interval so that intervals are statistically independent. In the whole-day mode, a single system and sequence of decision models are built once and stepped through the day with parameter updates, and the same replica solved a 288-interval trading day (2024-12-15) in about 1105 s of wall time in a single process, about 3.8 s per interval, over an uncontended machine. That figure comes from an earlier, separate run, not from the benchmark above, and is not a like-for-like comparison, but it shows the order of magnitude of the amortised cost.
 
 Second, six concurrent processes share one machine and memory bandwidth, so per-process times here are inflated relative to a single uncontended process (our first single-process smoke test took about 50 s per interval). Each worker held about 2.4 to 3.1 GB at peak; six workers used roughly 12 to 15 GB in total with no swapping.
+
+## Runner overheads: process start and time-series storage {#sec-overheads}
+
+The benchmark above ran each trading day in a fresh Julia process and stored the system's time series in an HDF5 file. Two runner changes followed: one persistent worker per shard, and time series held in memory. To measure them, we solved the `{julia} n_ab_int` sampled intervals of `{julia} n_ab_days` trading days spread over 2025 (every 36th trading day of the sample, in date order) twice with the batch runner: once with disk-backed and once with in-memory time series. Each run used one persistent worker on an otherwise idle machine, and the worker's resident set size was sampled every second.
+
+```{julia}
+#| output: false
+ab_read(mode, name) = CSV.read(joinpath(AB, mode, name), DataFrame; stringtype = String)
+ab_rss(mode) = CSV.read(joinpath(AB, "$(mode)_rss.csv"), DataFrame)
+ab_first(mode) = minimum(ab_read(mode, "phases.csv").elapsed_s)
+function ab_summary(mode)
+    days = ab_read(mode, "days.csv")
+    first_day, warm = days[1, :], days[2:end, :]
+    n = sum(warm.intervals)
+    per(c) = sum(warm[!, c]) / n
+    return (;
+        mode, intervals = sum(days.intervals),
+        run_wall_s = TOML.parsefile(joinpath(AB, mode, "outcome.toml"))["elapsed_s"],
+        package_load_s = ab_first(mode), first_day_s = first_day.elapsed_s,
+        warm_per_interval_s = sum(warm.elapsed_s) / n, system_build_s = per("system_build_s"),
+        model_build_s = per("model_build_s"), execute_s = per("execute_s"), highs_s = per("timed_solve_s"),
+        peak_rss_mib = maximum(ab_rss(mode).rss_kib) / 1024,
+        end_of_day_rss_mib = median(ab_read(mode, "worker_memory.csv").rss_mib),
+    )
+end
+ab = DataFrame([ab_summary(m) for m in ("disk", "memory")])
+n_ab_int = ab.intervals[1]
+n_ab_days = nrow(ab_read("disk", "days.csv"))
+ab_day_prices(mode) = reduce(vcat, [ab_read(mode, joinpath(string(d), "comparison_prices.csv")) for d in ab_read(mode, "days.csv").trading_day])
+ab_prices = innerjoin(
+    ab_day_prices("disk"), ab_day_prices("memory");
+    on = [:SETTLEMENTDATE, :REGIONID], makeunique = true,
+)
+ab_max_diff = maximum(abs.(ab_prices.ROP_solved .- ab_prices.ROP_solved_1))
+ab_speedup = ab.run_wall_s[1] / ab.run_wall_s[2]
+ab_warm_speedup = ab.warm_per_interval_s[1] / ab.warm_per_interval_s[2]
+ab_rss_delta = ab.peak_rss_mib[2] - ab.peak_rss_mib[1]
+# Benchmark cost of one process per day: package load plus the first-interval excess over the day's later intervals.
+let r = sort(rt, [:trading_day, :interval])
+    r.k = [i == 1 || r.trading_day[i] != r.trading_day[i - 1] ? 1 : 0 for i in 1:nrow(r)]
+    global first_excess_s = median(r.total_s[r.k .== 1]) - median(r.total_s[r.k .== 0])
+    global n_rt_days = length(unique(r.trading_day))
+end
+per_day_overhead_h = n_rt_days * (ab.package_load_s[1] + first_excess_s) / 3600
+```
+
+```{julia}
+#| label: tbl-overheads
+#| tbl-cap: "Batch-runner cost of the same sampled intervals with disk-backed and in-memory time series, one persistent worker, one HiGHS thread. Per-interval columns are means over the warm days (every day after the first). Package load is the time to the first phase; the first day includes compilation on first use and is also the heaviest day of the ten."
+let
+    t = select(
+        ab, :mode, :run_wall_s, :package_load_s, :first_day_s, :warm_per_interval_s,
+        :system_build_s, :model_build_s, :execute_s, :highs_s, :peak_rss_mib, :end_of_day_rss_mib,
+    )
+    mapcols!(c -> c isa Vector{Float64} ? round.(c; sigdigits = 4) : c, t)
+    mdtable(t)
+end
+```
+
+Holding the time series in memory makes the run `{julia} f1(ab_speedup)` times faster end to end and a warm interval `{julia} f1(ab_warm_speedup)` times faster (`{julia} f1(ab.warm_per_interval_s[1])` s against `{julia} f1(ab.warm_per_interval_s[2])` s), with identical results: the largest difference between the two runs' `{julia} nrow(ab_prices)` solved regional prices is `{julia} ab_max_diff` \$/MWh. The time saved is in the system build, the model build and the parameter updates inside the solve phase, not in HiGHS (`{julia} f1(ab.highs_s[1])` s and `{julia} f1(ab.highs_s[2])` s per interval). A sampled profile of the disk-backed run located the cost in the time-series storage: InfrastructureSystems opens and closes the HDF5 file for every series it reads when no file handle is held open, and the model build and the parameter updates read one series per component and parameter. Keeping the file open for the whole build and solve (`open_time_series_store!`) was slower still in a separate test, so the in-memory store is the remedy, and it is now the runner's default. Peak resident memory differs by `{julia} f1(ab_rss_delta)` MiB (`{julia} fint(ab.peak_rss_mib[1])` against `{julia} fint(ab.peak_rss_mib[2])` MiB): a sampled interval's time series are small next to the loaded packages and the optimisation models. The end-of-day resident memory, measured after a garbage collection, stays flat across the days of both runs.
+
+The persistent worker saves less. Package loading takes `{julia} f1(ab.package_load_s[2])` s. Compilation on first use shows in the benchmark itself: the first interval of a day took a median `{julia} f1(first_excess_s)` s longer than the day's later intervals, so starting a process for each of the `{julia} n_rt_days` trading days cost about `{julia} f1(per_day_overhead_h)` hours of the `{julia} f1(sum(rt.total_s) / 3600)` process-hours. With both changes, the warm cost of an interval outside the solver falls from `{julia} f1(ab.warm_per_interval_s[1] - ab.highs_s[1])` s to `{julia} f1(ab.warm_per_interval_s[2] - ab.highs_s[2])` s on an idle machine. The run-time figures of @tbl-runtime, measured with the old runner and six workers sharing the machine, therefore overstate the cost of the current runner.
 
 # Sources of difference from NEMDE {#sec-sources}
 
@@ -785,7 +849,7 @@ let
 end
 ```
 
-The benchmark runs in five steps. Steps 1 and 2 populate the cache, draw the load-duration-stratified sample, solve it in parallel shards and write the analysis files that this notebook reads. Step 3 builds the probe targets from those files, step 4 probes the optimal-price ranges of the differing prices, and step 5 renders this report.
+The benchmark runs in six steps. Steps 1 and 2 populate the cache, draw the load-duration-stratified sample, solve it in parallel shards and write the analysis files that this notebook reads. Step 3 builds the probe targets from those files, step 4 probes the optimal-price ranges of the differing prices, step 5 measures the runner overheads and step 6 renders this report. Set `AEM_RUNTIME_AB_RUN` to read the overhead measurement from another folder.
 
 ```sh
 # 1. populate the cache, draw the sample and solve it in parallel shards
@@ -830,7 +894,31 @@ CSV.write(joinpath(analysis, "dual_ranges.csv"), reduce(vcat, [CSV.read(f, DataF
 ```
 
 ```sh
-# 5. this report
+# 5. the runner-overhead measurement (@sec-overheads): ten spread trading days, disk then memory
+julia --project=docs -e 'using DuckDB, DataFrames, Dates
+    s = DataFrame(DuckDB.execute(DuckDB.DB(), "SELECT interval FROM read_csv(\'$(homedir())/aem_validation/ldc-2025/analysis/ldc_sample.csv\') ORDER BY interval"))
+    s.day = Date.(s.interval .- Minute(5) .- Hour(4)); days = sort(unique(s.day))[1:36:end]
+    mkpath(joinpath(homedir(), "aem_validation", "runtime-ab"))
+    open(joinpath(homedir(), "aem_validation", "runtime-ab", "intervals.csv"), "w") do io
+        println(io, "interval"); foreach(t -> println(io, Dates.format(t, "yyyy-mm-ddTHH:MM:SS")), s.interval[in.(s.day, Ref(days))])
+    end'
+for mode in disk memory; do
+    julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/batch_run.jl \
+        --intervals-file "$HOME/aem_validation/runtime-ab/intervals.csv" --hours 24 \
+        --time-series-in-memory $([ $mode = memory ] && echo true || echo false) \
+        --output "$HOME/aem_validation/runtime-ab/$mode" &
+    # sample the worker's resident set size every second while the run lasts
+    echo "t_s,pid,rss_kib" > "$HOME/aem_validation/runtime-ab/${mode}_rss.csv"; t0=$(date +%s)
+    while kill -0 $! 2>/dev/null; do
+        for pid in $(pgrep -f "worker-loop $HOME/aem_validation/runtime-ab/$mode"); do
+            echo "$(( $(date +%s) - t0 )),$pid,$(ps -o rss= -p $pid | tr -d ' ')" >> "$HOME/aem_validation/runtime-ab/${mode}_rss.csv"
+        done; sleep 1
+    done
+done
+```
+
+```sh
+# 6. this report
 quarto render benchmarking/report/ldc_benchmark.qmd
 ```
 
