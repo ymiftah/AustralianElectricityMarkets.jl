@@ -1,0 +1,65 @@
+if !isdefined(@__MODULE__, :BatchRunWorker)
+    include(joinpath(@__DIR__, "..", "..", "scripts", "batch_run.jl"))
+    include(joinpath(@__DIR__, "..", "..", "scripts", "batch_run_worker.jl"))
+end
+using .BatchRunWorker: _problem_day, _round_utc_offset, _rss_mib, _utc_offset
+
+@testset "worker resident set size is read from ps" begin
+    rss = _rss_mib()
+    @test Sys.iswindows() ? isnan(rss) : 0 < rss < Sys.total_memory() / 2^20
+end
+
+@testset "interval timing UTC offset is rounded to quarter hours" begin
+    @test _round_utc_offset(36_000_000 + 400_000) == Millisecond(36_000_000)
+    @test _round_utc_offset(36_000_000 + 500_000) == Millisecond(36_900_000)
+    @test _round_utc_offset(-19_800_000 - 20_000) == Millisecond(-19_800_000)
+    @test iszero(Dates.value(_utc_offset()) % 900_000)
+end
+
+@testset "interval timings come from native PSI records" begin
+    # No run-side override of the PSI methods the timings used to wrap.
+    @test which(PSI.update_model!, (PSI.DecisionModel, PSI.Simulation)).module === PowerSimulations
+    @test which(PSI.solve_impl!, (PSI.DecisionModel,)).module === PowerSimulations
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_NEMDE_HIVE_DIR, filesystem = "file"))
+    t1, t2 = DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 10)
+    d = mktempdir()
+    result = _problem_day(
+        db, t1:Minute(5):t2, d; optimizer = nemde_optimizer(), time_series_in_memory = true, cache_size_mib = 64,
+    )
+    paths = [joinpath(root, f) for (root, _, files) in walkdir(d) for f in files if f == "interval_timings.csv"]
+    @test length(paths) == 1
+    lines = readlines(only(paths))
+    columns = split(lines[1], ',')
+    @test columns == [
+        "timestamp_utc", "interval_aest", "execution_count", "phase", "wall_s", "allocated_bytes",
+        "gc_s", "compilation_s", "timed_solve_s", "pricing_s", "auxiliary_s", "schema_version",
+    ]
+    rows = [Dict(zip(columns, split(line, ','))) for line in lines[2:end]]
+    intervals = [string(t1), string(t1 + Minute(5))]
+    @test [(r["interval_aest"], r["phase"]) for r in rows] ==
+        [(i, phase) for i in intervals for phase in ("parameter_update", "solve_and_write")]
+    @test all(==("2"), (r["schema_version"] for r in rows))
+    @test [parse(Int, r["execution_count"]) for r in rows] == [0, 0, 1, 1]
+    wall(r) = parse(Float64, r["wall_s"])
+    @test all(>=(0), wall.(rows))
+    solves = filter(r -> r["phase"] == "solve_and_write", rows)
+    @test all(>(0), wall.(solves))
+    @test wall(rows[3]) > 0
+    # Solver fields are the optimizer statistics of each executed step.
+    stats = PSI.read_optimizer_stats(
+        PSI.get_decision_problem_results(PSI.SimulationResults(only(result.chunks.folder), "problem_workflow"), "dispatch"),
+    )
+    fields = ("timed_solve_s", "pricing_s", "auxiliary_s", "allocated_bytes", "gc_s")
+    @test [parse(Float64, row[f]) for row in solves, f in fields] ≈ hcat(
+        stats.timed_solve_time, stats.timed_calculate_dual_variables, stats.timed_calculate_aux_variables,
+        stats.solve_bytes_alloc, stats.sec_in_gc,
+    )
+    @test parse(Float64, solves[1]["timed_solve_s"]) ≈ result.solver_stats.timed_solve_time[1]
+    @test all(
+        row -> all(isnan, parse.(Float64, (row["timed_solve_s"], row["compilation_s"], row["allocated_bytes"]))),
+        filter(r -> r["phase"] == "parameter_update", rows),
+    )
+end
+
+include("batch_run.jl")
+include("simulation_statistics.jl")

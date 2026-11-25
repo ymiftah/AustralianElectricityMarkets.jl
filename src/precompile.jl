@@ -1,0 +1,41 @@
+using PrecompileTools: @compile_workload
+
+function _precompile_workload()
+    sys = PSY.System(100.0; time_series_in_memory = true, runchecks = false)
+    bus = PSY.ACBus(;
+        number = 1, name = "precompile_bus", available = true,
+        bustype = PSY.ACBusTypes.REF, angle = 0.0, magnitude = 1.0,
+        voltage_limits = (min = 0.9, max = 1.1), base_voltage = 220.0,
+    )
+    PSY.add_component!(sys, bus)
+    generator = PSY.ThermalStandard(;
+        name = "precompile_generator", available = true, status = true, bus,
+        active_power = 0.0, reactive_power = 0.0, rating = 100.0,
+        active_power_limits = (min = 0.0, max = 100.0), reactive_power_limits = nothing,
+        ramp_limits = nothing, operation_cost = PSY.ThermalGenerationCost(nothing),
+        base_power = 100.0,
+    )
+    PSY.add_component!(sys, generator)
+    attach_nem_unit_data!(sys, generator)
+    stamps = [DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 10)]
+    rows = DataFrame(;
+        DUID = fill("precompile_generator", 2), BIDTYPE = fill(BidType.ENERGY, 2), DIRECTION = fill("GEN", 2),
+        INTERVAL_DATETIME = stamps, MAXAVAIL = [100.0, 100.0],
+        ROCUP = [1.0, 1.0], ROCDOWN = [1.0, 1.0], FIXEDLOAD = [missing, missing],
+        MINIMUMLOAD = [0.0, 0.0], DAILYENERGYCONSTRAINT = [missing, missing],
+        T1 = [missing, missing], T2 = [missing, missing], T3 = [missing, missing], T4 = [missing, missing],
+        NORMALSTATUS = ["ON", "ON"], ENERGYLIMIT = [missing, missing],
+    )
+    for i in 1:10
+        rows[!, PRICE_BAND_COLUMNS[i]] = fill(10.0 * i, 2)
+        rows[!, BAND_AVAIL_COLUMNS[i]] = fill(10.0, 2)
+    end
+    grid = [DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 10)]
+    _write_energy_bid!(sys, generator, BidDirection.GEN, _bid_on_grid(_with_has_row(rows), grid), first(grid), Minute(5))
+    return nothing
+end
+
+# Exercise in-memory bid conversion and attachment only while creating the package cache.
+@compile_workload begin
+    _precompile_workload()
+end
