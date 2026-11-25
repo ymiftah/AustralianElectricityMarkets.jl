@@ -150,7 +150,10 @@ end
                 day = strip(line)
                 isempty(day) && continue
                 day == "2026-01-03" && exit(2)
-                write(joinpath(ARGS[1], day, "worker_outcome.toml"), "pid = \$(Libc.getpid())\\n")
+                # Published through a rename, as the real worker does, so the supervisor never reads a partial file.
+                tmp = joinpath(ARGS[1], day, "worker_outcome.toml.tmp")
+                write(tmp, "pid = \$(Libc.getpid())\\n")
+                Base.Filesystem.rename(tmp, joinpath(ARGS[1], day, "worker_outcome.toml"))
             end
             """
         )
@@ -212,7 +215,9 @@ end
                     write(tmp, "boom\\n")
                     Base.Filesystem.rename(tmp, joinpath(ARGS[1], day, "worker_error.txt"))
                 else
-                    write(joinpath(ARGS[1], day, "worker_outcome.toml"), "pid = \$(Libc.getpid())\\n")
+                    tmp = joinpath(ARGS[1], day, "worker_outcome.toml.tmp")
+                    write(tmp, "pid = \$(Libc.getpid())\\n")
+                    Base.Filesystem.rename(tmp, joinpath(ARGS[1], day, "worker_outcome.toml"))
                 end
             end
             """
