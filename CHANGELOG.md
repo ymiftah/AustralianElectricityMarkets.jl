@@ -153,6 +153,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `scripts/dual_range_probe.jl` brackets the optimal prices of benchmark intervals within ±1e-4 to ±10 MW of the operating point, by moving the right-hand side of each price's rows and reading the dual of the fixed LP; rows record the commit, and whether the fixed LP dual matches the simulation's price.
+
 - `AreaBalanceSlack` is exported, and `DecisionModel{NEMDispatchProblem}` takes `area_balance_slacks::Bool = true`: `true` replaces the balance slacks of an `AreaBalancePowerModel` network model by `AreaBalanceSlack` priced at the Market Price Cap; `false` keeps PowerSimulations' own balance slacks.
 
 - `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` now covers FY2021-22 to FY2023-24 (\$15,100, \$15,500, \$16,600/MWh), so runs from the start of 5-minute settlement (October 2021) build without a `"market_price_cap"` override.
@@ -562,6 +564,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The overnight batch runner keeps one persistent worker process per supervisor and runs its trading days in sequence, restarting the worker only if it dies, instead of starting a fresh Julia process per day.
 - The pinned PowerSimulations fork is the `aemsim/minimal` branch: upstream PowerSimulations `main` plus only the commits AEMSim needs (meta-keyed time-series parameters, infinite `Interval` row bounds, the dual LP fixes, the system-expression `OrderedDict`, the objective resync flag, and the time-series and cache speedups). The fork's constraint coefficient and bound parameters, `NetworkModel` `slack_cost` and time-series cost parameters are no longer included.
 - Every reader writes its query out in full instead of assembling it from SQL-building helpers, with run selection, version resolution and resolution buckets in the query itself. `read_fcas_prices` and `read_fcas_dispatch` unpivot in DuckDB, `read_fcas_bids` carries each coarse bucket's last-interval trapezium in the bid query, and `read_bids` / `read_offers` join price bands in one query. Outputs are unchanged on the real 2025-01-15 and 2026-03-10 caches; `read_offers` over six hours runs in 0.76 s instead of 0.96 s, and each row now owns its `PRICEBANDARRAY` vector.
 

@@ -92,7 +92,7 @@ The default command shuffles all 181 trading days from **2026-01-01 through
 2026-06-30**, without replacement, and starts days until ten hours have elapsed.
 It finishes the day already in progress, including exports and comparison, even
 if that takes the run past ten hours. It stops earlier if every day is attempted.
-The budget includes worker startup, package loading, compilation, system and model
+The budget includes the worker's one-time startup, package loading and compilation, system and model
 construction, execution, comparisons and exports. It is checked between days;
 there is no solver time limit.
 
@@ -101,9 +101,10 @@ julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/batch_r
     --output "$HOME/aem_validation/overnight-2026-01-to-06"
 ```
 
-The examples use `-O1` for Julia code optimisation. Each trading day runs in a
-fresh Julia process, so package loading and first-use compilation recur per day.
-This bounds native HDF5 and solver resource lifetimes. The supervisor checks one
+The examples use `-O1` for Julia code optimisation. Each supervisor starts one
+persistent Julia worker process that runs all of its trading days in sequence, so
+package loading and first-use compilation happen once per worker. The worker is
+restarted only if it dies, and the day it was running is recorded as failed. The supervisor checks one
 monotonic admission deadline and never kills the final admitted day at that deadline.
 
 `--output` is required and names the new run folder, which must not already exist. The script prints
@@ -176,7 +177,7 @@ julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/batch_r
     --output "$HOME/aem_validation/sample-1000"
 ```
 
-The selected intervals are grouped by trading day, and each day is one worker. Each selected interval is
+The selected intervals are grouped by trading day, and the days run in the supervisor's persistent worker. Each selected interval is
 its own chunk, with a system built over that interval alone and a one-step open-loop simulation of
 `nem_dispatch_sequence`, built from AEMO's observed state: NEMDE's commitment and dispatch runs when the
 system has a fast-start unit, one model otherwise. This is the same independent solve as the nempy
@@ -216,8 +217,9 @@ launches retain their own dependency versions.
 - Historical metered `INITIALMW` at each interval, rather than the previous
   replica's dispatch target.
 - File-backed system time series and a 64 MiB PSI results write cache, limiting
-  memory retained for time series and buffered results. Each worker exits
-  after its day.
+  memory retained for time series and buffered results. The worker process is
+  reused for every day of the run; PSI timers are reset between days, so a sampled
+  day's first timer file does not hold the previous day's last build.
 
 Each selected trading day contains **288 interval-ending timestamps**, from
 04:05 AEST on that date through 04:00 AEST the following date. Market timestamps
@@ -269,6 +271,7 @@ flushed as they are written; successfully exported days survive later failures.
 | `days.csv` | One row per successfully exported day, with interval count and timing totals |
 | `failures.csv` | One row per failed day, elapsed time and exception; created only on failure |
 | `outcome.toml` | Final completed/failed counts, elapsed time and stopping reason |
+| `worker_memory.csv` | One row per day the worker finished: `trading_day`, worker `pid`, live GC memory and resident set size in MiB (`rss_mib` is `NaN` without `/proc`) |
 | `run.log` | Detailed worker and PSI output |
 | `YYYY-MM-DD/` | Day's comparison CSVs, timings, violations and native PSI result stores |
 
@@ -286,7 +289,8 @@ Timing columns in `days.csv`:
 | `elapsed_s` | Whole day, including CSV exports |
 
 First-use compilation is included in the phase where it happens. Daily elapsed
-time includes worker startup and package loading; supervisor setup and between-day
+time excludes the worker's startup and package loading, which happen once per worker: the first day
+of a run, or the day after a restart. Supervisor setup and between-day
 overhead explain the remainder in overall run wall time. The fields describe overlapping measurements: do not add
 `execute_s`, `solver_s`, `timed_solve_s` and `dual_calculation_s` together.
 Daily timing totals become available when a day finishes. While it is running,
@@ -384,8 +388,10 @@ failed days are retained without retrying. Keep the checkout unchanged during a 
 so code cannot change while a worker loads it.
 
 `phases.csv` separates system/preprocessing, model build, execution, comparison and export.
-Each day's provenance, `runner_source/` and `package_source/` snapshots identify
-the scripts, package sources, actual worker revision and dirty checkout state.
+Each worker's `runner_source/` and `package_source/` snapshots, under
+`worker_<pid>/`, identify the scripts, package sources, actual worker revision and
+dirty checkout state. Each day's `provenance.toml` records the worker's PID, start
+time and snapshot paths, so all days of one worker share them.
 
 Per-model `interval_timings.csv` is derived after `execute!` from PSI's native
 records, without wrapping any PSI method. Each executed step writes two rows, a
@@ -422,3 +428,7 @@ execution timers' state update from it. The statistics report refuses to pool sc
 and schema 2 runs. Add the unmeasured residual
 to reconcile phase totals with overall wall time; compilation/GC measurements are not
 whole-run coverage.
+
+## Dual price range probe
+
+`scripts/dual_range_probe.jl <targets.csv> <out.csv> [hive_location]` brackets the optimal prices of benchmark intervals whose solved price differs from AEMO's, within ±h MW of the operating point; the `targets.csv` columns are `interval,market,region,published,solved`.

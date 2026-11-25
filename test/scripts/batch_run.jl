@@ -140,37 +140,122 @@ end
     end
 end
 
-@testset "day workers have independent process lifetimes" begin
+@testset "one persistent worker serves its days and restarts after a crash" begin
     mktempdir() do folder
-        polled = Int[]
-        worker(code) = BatchRunSupport.run_worker(
-            `$(Base.julia_cmd()) --startup-file=no -e $code`, folder, time_ns();
-            poll_seconds = 0.01, notice = false, on_poll = pid -> push!(polled, pid),
+        # Writes each day's outcome with this process's PID; exits without an outcome on 2026-01-03.
+        fake = joinpath(folder, "fake_worker.jl")
+        write(
+            fake, """
+            for line in eachline(stdin)
+                day = strip(line)
+                isempty(day) && continue
+                day == "2026-01-03" && exit(2)
+                write(joinpath(ARGS[1], day, "worker_outcome.toml"), "pid = \$(Libc.getpid())\\n")
+            end
+            """
         )
-        first_pid = worker("sleep(0.5)")
-        second_pid = worker("sleep(0.5)")
-        @test first_pid != second_pid
-        @test first_pid in polled && second_pid in polled
-        @test !isfile(joinpath(folder, "memory.csv"))
-        @test_throws ProcessFailedException worker("exit(2)")
-        # A long poll interval does not delay the return after the worker exits.
-        elapsed = @elapsed BatchRunSupport.run_worker(
-            `$(Base.julia_cmd()) --startup-file=no -e '1'`, folder, time_ns(); poll_seconds = 30.0, notice = false,
-        )
-        @test elapsed < 25
+        command = `$(Base.julia_cmd()) --startup-file=no $fake $folder`
+        worker = Ref{Union{Nothing, Base.Process}}(nothing)
+        function serve_day(day)
+            day_folder = joinpath(folder, string(day))
+            mkpath(day_folder)
+            BatchRunSupport.run_day!(
+                worker, command, folder, day, day_folder, time_ns(), devnull; poll_seconds = 0.01, notice = false,
+            )
+            return parse(Int, last(split(read(joinpath(day_folder, "worker_outcome.toml"), String))))
+        end
+        first_pid = serve_day(Date(2026, 1, 1))
+        second_pid = serve_day(Date(2026, 1, 2))
+        @test first_pid == second_pid == getpid(worker[])
+        @test_throws ProcessFailedException serve_day(Date(2026, 1, 3))
+        @test isnothing(worker[])
+        restarted_pid = serve_day(Date(2026, 1, 4))
+        @test restarted_pid != first_pid
+        @test restarted_pid == getpid(worker[])
+        # Closing stdin ends the worker's loop, as the supervisor does at the end of a run.
+        close(worker[].in)
+        wait(worker[])
     end
 end
 
 @testset "a supervisor failure reaps its owned child" begin
     mktempdir() do folder
+        day_folder = joinpath(folder, "2026-01-01")
+        mkpath(day_folder)
+        worker = Ref{Union{Nothing, Base.Process}}(nothing)
         owned = Ref(0)
-        @test_throws ErrorException BatchRunSupport.run_worker(
-            `$(Base.julia_cmd()) --startup-file=no -e 'sleep(30)'`, folder, time_ns();
-            poll_seconds = 0.01, notice = false, on_poll = pid -> (owned[] = pid; error("polling failed"))
+        @test_throws ErrorException BatchRunSupport.run_day!(
+            worker, `$(Base.julia_cmd()) --startup-file=no -e 'sleep(30)'`, folder, Date(2026, 1, 1), day_folder,
+            time_ns(), devnull; poll_seconds = 0.01, notice = false,
+            on_poll = proc -> (owned[] = getpid(proc); error("polling failed")),
         )
-        @test owned[] > 0
+        # The supervisor's `finally` stops the worker it still holds, without waiting for it to exit.
+        @test owned[] > 0 && !isnothing(worker[]) && process_running(worker[])
+        BatchRunSupport._stop_worker!(worker; graceful = false)
+        @test isnothing(worker[])
         # `kill -0` probes the process without signalling it; it fails once the child is reaped.
         @test !success(ignorestatus(`kill -0 $(owned[])`))
+    end
+end
+
+@testset "a worker error fails only its day and the same worker serves the next" begin
+    mktempdir() do folder
+        # Publishes worker_error.txt for 2026-01-02 and an outcome with this process's PID otherwise.
+        fake = joinpath(folder, "fake_error_worker.jl")
+        write(
+            fake, """
+            for line in eachline(stdin)
+                day = strip(line)
+                isempty(day) && continue
+                if day == "2026-01-02"
+                    tmp = joinpath(ARGS[1], day, "worker_error.txt.tmp")
+                    write(tmp, "boom\\n")
+                    Base.Filesystem.rename(tmp, joinpath(ARGS[1], day, "worker_error.txt"))
+                else
+                    write(joinpath(ARGS[1], day, "worker_outcome.toml"), "pid = \$(Libc.getpid())\\n")
+                end
+            end
+            """
+        )
+        command = `$(Base.julia_cmd()) --startup-file=no $fake $folder`
+        worker = Ref{Union{Nothing, Base.Process}}(nothing)
+        function serve_day(day)
+            day_folder = joinpath(folder, string(day))
+            mkpath(day_folder)
+            BatchRunSupport.run_day!(
+                worker, command, folder, day, day_folder, time_ns(), devnull; poll_seconds = 0.01, notice = false,
+            )
+            return parse(Int, last(split(read(joinpath(day_folder, "worker_outcome.toml"), String))))
+        end
+        first_pid = serve_day(Date(2026, 1, 1))
+        @test_throws ErrorException serve_day(Date(2026, 1, 2))
+        @test read(joinpath(folder, "2026-01-02", "worker_error.txt"), String) == "boom\n"
+        @test serve_day(Date(2026, 1, 3)) == first_pid == getpid(worker[])
+        BatchRunSupport._stop_worker!(worker; graceful = true)
+        @test isnothing(worker[])
+    end
+end
+
+@testset "_stop_worker! exits an idle worker through stdin and reaps a busy one" begin
+    mktempdir() do folder
+        idle = joinpath(folder, "idle_worker.jl")
+        write(idle, "for line in eachline(stdin) end\n")
+        idle_ref = Ref{Union{Nothing, Base.Process}}(
+            open(pipeline(`$(Base.julia_cmd()) --startup-file=no $idle`; stdout = devnull, stderr = devnull), "w"),
+        )
+        idle_process = idle_ref[]
+        BatchRunSupport._stop_worker!(idle_ref; graceful = true)
+        # Exit status 0 shows the worker left its loop on stdin EOF rather than being signalled.
+        @test success(idle_process)
+        @test isnothing(idle_ref[])
+
+        busy_ref = Ref{Union{Nothing, Base.Process}}(
+            open(pipeline(`$(Base.julia_cmd()) --startup-file=no -e 'sleep(60)'`; stdout = devnull, stderr = devnull), "w"),
+        )
+        busy_process = busy_ref[]
+        BatchRunSupport._stop_worker!(busy_ref; graceful = false)
+        @test !process_running(busy_process)
+        @test isnothing(busy_ref[])
     end
 end
 

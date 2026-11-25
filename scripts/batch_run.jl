@@ -1,5 +1,6 @@
-# Overnight batch runner for run dispatch. The supervisor samples trading days and runs each in a
-# worker process (`--worker <folder> <day>`), which loads the market and optimisation packages.
+# Overnight batch runner for run dispatch. The supervisor samples trading days and runs them in one
+# persistent worker process per supervisor (`--worker-loop <folder>`, days on stdin), which loads the
+# market and optimisation packages.
 isdefined(@__MODULE__, :BatchRunSupport) || include("batch_run_support.jl")
 using .BatchRunSupport
 using Dates
@@ -41,9 +42,9 @@ function main(args = ARGS)
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__
-    if length(ARGS) == 3 && ARGS[1] == "--worker"
+    if length(ARGS) == 2 && ARGS[1] == "--worker-loop"
         include("batch_run_worker.jl")
-        BatchRunWorker.main(ARGS[2], Date(ARGS[3]))
+        BatchRunWorker.serve(ARGS[2])
     else
         main()
     end

@@ -286,7 +286,7 @@ function analyse(options)
         catch
             ""
         end,
-        "raw_per_day_files" => ["comparison_*.csv", "solver_stats.csv", "chunks.csv", "constraint_violations.csv", "ramp_violations.csv", "skipped_constraints.csv", "provenance.toml", "package_source/"],
+        "raw_per_day_files" => ["comparison_*.csv", "solver_stats.csv", "chunks.csv", "constraint_violations.csv", "ramp_violations.csv", "skipped_constraints.csv", "provenance.toml"],
     )
     open(io -> TOML.print(io, manifest), joinpath(analysis, "manifest.toml"), "w")
     println("Analysis written to ", analysis)
